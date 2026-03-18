@@ -1,0 +1,14 @@
+herbie-data
+casadi
+xarray
+netcdf4
+h5py
+geojson
+geopandas
+copernicusmarine
+requests
+cartopy
+metpy
+
+
+

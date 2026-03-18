@@ -1,0 +1,8 @@
+dash==3.2.0
+dash-leaflet
+dash-mantine-components
+dash-iconify
+eumdac
+cdsapi
+pillow
+flask
