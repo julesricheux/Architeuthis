@@ -19,7 +19,7 @@ routes under real-world constraints.
 
 __author__ = "Jules Richeux"
 __company__ = "NEOLINE"
-__version__ = 0.1
+__version__ = "0.1.3"
 
 __meet_Architeuthis__ = "https://en.wikipedia.org/wiki/Giant_squid"
 __documentation__ = None # TODO
