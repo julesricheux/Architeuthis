@@ -30,6 +30,7 @@ and this project follows Semantic Versioning https://semver.org
 
 ### Added
 - Satellite module with classes ArchiteuthisSatelliteData and inherited, for satellite data download.
+- Example for ASCAT to model comparison.
 
 ---
 
