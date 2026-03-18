@@ -7,14 +7,14 @@ and this project follows Semantic Versioning https://semver.org
 
 ---
 
-## v0.0.0 - 2025-12-16
+## [Unrealeased v0.0.0] - 2025-12-16
 
 ### First steps
 - Vessel data reading, forecast downloading, short-term weather routing in one file
 
 ---
 
-## v0.1.0 - 2026-01-19
+## [Unrealeased v0.1.0] - 2026-01-19
 
 ### Added
 - Common module with abstract classes ArchiteuthisObject, ArchiteuthisData, ArchiteuthisSpatialData
@@ -26,14 +26,14 @@ and this project follows Semantic Versioning https://semver.org
 
 ---
 
-## v0.1.1 - 2026-02-09
+## [Unrealeased v0.1.1] - 2026-02-09
 
 ### Added
 - Satellite module with classes ArchiteuthisSatelliteData and inherited, for satellite data download.
 
 ---
 
-## v0.1.2 - 2026-02-09
+## [Unrealeased v0.1.2] - 2026-02-09
 
 ### Added
 
