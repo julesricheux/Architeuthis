@@ -1,0 +1,8 @@
+/* custom weather tooltip */
+.leaflet-tooltip.weather-tooltip {
+    border: 0px solid #fff !important;
+    background-color: rgba(0,0,0,0.33) !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.0) !important;
+    color: #fff !important;
+	margin-left: -20px !important;
+}
