@@ -10,12 +10,12 @@ Date retrieved: 2026-03-21
 AeroSandbox is distributed under its original MIT license.
 All credit for the underlying methods and implementations belongs to the original author.
 """
-from architeuthis.common import ArchibaldObject
+# from architeuthis.common import ArchiteuthisObject
 from abc import abstractmethod
 import architeuthis.numpy as np
 
 
-class SurrogateModel(ArchibaldObject):
+class SurrogateModel():
     """
     A SurrogateModel is effectively a callable; it only has the __call__ method, and all subclasses must explicitly
     overwrite this. The only reason it is not a callable is that you want to be able to save it to disk (via

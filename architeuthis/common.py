@@ -10,10 +10,11 @@ import os
 from abc import ABC, abstractmethod
 
 import architeuthis.numpy as np
+from architeuthis.modeling import InterpolatedModel
 
 from casadi import interpolant
 
-from typing import Union, Sequence
+from typing import Union, Sequence, Literal
 from pandas import Timestamp
 from datetime import datetime
 
@@ -108,14 +109,18 @@ class ArchiteuthisData(ArchiteuthisObject):
         coord_dims: Sequence[str],
         coord_slices: Sequence [str],
         var_key: str,
-        method: str,
+        method: Literal["bspline", "linear", "nearest"] = "linear",
         fac: float = 1.0,
     ):
         if var_key in self.var_keys:
             print(f"🟦 {var_key} already in {self.name} interpolators.")
         else:
-            x = [self.data.coords[dim].values[sel] for dim, sel in zip(coord_dims, coord_slices)]
-    
+            # build interpolator x
+            x = [
+                np.asarray(self.data.coords[dim].values[sel])
+                for dim, sel in zip(coord_dims, coord_slices)
+            ]
+            
             # build interpolator f
             f = np.nan_to_num(
                 self.data[var_dim].to_numpy().squeeze()[*coord_slices].ravel(order='F'),
@@ -130,7 +135,28 @@ class ArchiteuthisData(ArchiteuthisObject):
                 f,
                 # jit=True,
             )
-            self.var_keys.add(var_key)
+            
+            # TODO get up and running
+            # # build interpolator x
+            # x = {
+            #     dim: np.asarray(self.data.coords[dim].values[sel])
+            #     for dim, sel in zip(coord_dims, coord_slices)
+            # }
+            
+            # # build interpolator f
+            # f = np.nan_to_num(
+            #     self.data[var_dim].to_numpy().squeeze()[*coord_slices],
+            #     nan=0.
+            # ) * fac # apply correction factor if specified
+            
+            # # build interpolator
+            # self.interpolators[var_key] = InterpolatedModel(
+            #     x_data_coordinates=x,
+            #     y_data_structured=f,
+            #     method=method,
+            #     fill_value=np.nan
+            # )
+            # self.var_keys.add(var_key)
             
             print(f"➕ Added {var_key}: {var_dim} to {self.name} interpolators.")
     
