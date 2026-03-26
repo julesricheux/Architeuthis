@@ -185,3 +185,75 @@ class InterpolatedModel(SurrogateModel):
         except UnboundLocalError:
             return output
 
+
+if __name__=="__main__":
+    
+    X = np.linspace(-10, 10, 5)
+    Y = np.linspace(-10, 10, 10)
+    XX, YY = np.meshgrid(X, Y, indexing="ij")
+    f = (-XX - 2.)**3. + YY**3.
+    
+    interp = InterpolatedModel(
+        x_data_coordinates={
+            "x": X,
+            "y": Y,
+        },
+        y_data_structured=f,
+        method="bspline",
+        # method="linear",
+        # fill_value=0.
+    )
+
+    # from architeuthis.tools.pretty_plots import plt
+    import matplotlib.pyplot as plt
+
+    fig = plt.figure()
+    ax = fig.add_subplot(projection="3d")
+    # ax.plot_surface(X, Y, f, color="blue", alpha=0.2)
+    ax.scatter(XX.flatten(), YY.flatten(), f.flatten())
+    X_plot, Y_plot = np.meshgrid(
+        np.linspace(X.min(), X.max(), 100),
+        np.linspace(Y.min(), Y.max(), 100),
+        indexing="ij",
+    )
+    F_plot = interp(
+        {"x": X_plot.flatten(), "y": Y_plot.flatten()}
+    ).reshape(
+        X_plot.shape
+    )
+    
+    ax.plot_surface(
+        X_plot,
+        Y_plot,
+        F_plot,
+        color="red",
+        edgecolors=(1, 1, 1, 0.5),
+        linewidth=0.5,
+        alpha=0.2,
+        rcount=40,
+        ccount=40,
+        shade=True,
+    )
+    plt.xlabel("x")
+    plt.ylabel("y")
+    plt.show()
+
+    from architeuthis.optimization import Opti
+    import architeuthis.numpy as np
+
+    opti = Opti()
+    x = opti.variable(init_guess=0., lower_bound=-9, upper_bound=9)
+    y = 1.5
+    obj = 10.
+    opti.minimize((interp({"x": x, "y": y}) - obj)**2.)
+
+    sol = opti.solve(
+        options= {
+            "ipopt":{
+                "hessian_approximation": "limited-memory",
+            },
+        }
+    )
+    print(sol(x))
+    print(sol(y))
+    print(sol(interp({"x": x, "y": y})))

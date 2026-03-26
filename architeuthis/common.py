@@ -156,7 +156,7 @@ class ArchiteuthisData(ArchiteuthisObject):
             #     method=method,
             #     fill_value=np.nan
             # )
-            # self.var_keys.add(var_key)
+            self.var_keys.add(var_key)
             
             print(f"➕ Added {var_key}: {var_dim} to {self.name} interpolators.")
     
