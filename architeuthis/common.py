@@ -115,6 +115,7 @@ class ArchiteuthisData(ArchiteuthisObject):
         if var_key in self.var_keys:
             print(f"🟦 {var_key} already in {self.name} interpolators.")
         else:
+            # TODO for backup
             # build interpolator x
             x = [
                 np.asarray(self.data.coords[dim].values[sel])
@@ -183,6 +184,7 @@ class ArchiteuthisData(ArchiteuthisObject):
         # TODO test X size. Should be (q, n)
             
         return tall(self.interpolators[var_key](np.transpose(X)))
+        # return self.interpolators[var_key](X)
 
     
 class ArchiteuthisSpatialData(ArchiteuthisData):

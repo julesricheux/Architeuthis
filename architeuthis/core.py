@@ -424,6 +424,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         clon = midpoints(lon)
         clat = midpoints(lat)
         
+        # TODO for backup
         environment_query = np.concatenate([
             ctim, clat, clon,
         ], axis=1)
@@ -445,6 +446,38 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             ], axis=1)
         else:
             wave_query = environment_query
+            
+        # environment_query = {
+        #     "valid_time": ctim,
+        #     "latitude": clat,
+        #     "longitude": clon,
+        # }
+        
+        # if self.atmosphere_member is not None:
+        #     atm_mb = opti.parameter(n_params=npts-1)
+        #     opti.set_value(atm_mb, self.atmosphere_member)
+        
+        #     atmosphere_query = {
+        #         "valid_time": ctim,
+        #         "number": atm_mb,
+        #         "latitude": clat,
+        #         "longitude": clon,
+        #     }
+        # else:
+        #     atmosphere_query = environment_query
+        
+        # if self.wave_member is not None:
+        #     wav_mb = opti.parameter(n_params=npts-1)
+        #     opti.set_value(wav_mb, self.wave_member)
+        
+        #     wave_query = {
+        #         "valid_time": ctim,
+        #         "number": wav_mb,
+        #         "latitude": clat,
+        #         "longitude": clon,
+        #     }
+        # else:
+        #     wave_query = environment_query
         
         u10 = self.atmosphere("u10", atmosphere_query) # eastward tws10 in m/s
         v10 = self.atmosphere("v10", atmosphere_query) # northward tws10 in m/s
@@ -455,6 +488,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         uc = self.current("uo", environment_query) * 3600./1852. # eastward current in kts
         vc = self.current("vo", environment_query) * 3600./1852. # northward current in kts
         
+        # TODO for backup
         topography_query = np.concatenate([
             # lat,
             # lon,
@@ -463,6 +497,11 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             np.concatenate((lat[1:-1], clat)),
             np.concatenate((lon[1:-1], clon)),
         ], axis=1) # TODO need for higher topography resolution to avoid land
+        
+        # topography_query = {
+        #     "latitude": np.concatenate((lat[1:-1], clat)),
+        #     "longitude": np.concatenate((lon[1:-1], clon)),
+        # }
         
         z = self.topography("z", topography_query)
         
@@ -511,9 +550,18 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         
         # stw = sog
         
+        # TODO for backup
         vessel_query = np.concatenate([
             stw, tws, np.abs(twa), swh, np.abs(mwa),
         ], axis=1)
+        
+        # vessel_query = {
+        #     "stw": stw,
+        #     "tws": tws,
+        #     "twa": np.abs(twa),
+        #     "swh": swh,
+        #     "mwa": np.abs(mwa),
+        # }
         
         hotel_load = self.vessel.hotel_load # KW
         
