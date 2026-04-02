@@ -572,9 +572,9 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         
         sfc = self.vessel.sfc # g/kWh
         
-        consumption = np.sum(np.abs(avg_bhp + hotel_load) * dt) # kWh
+        consumption = np.abs(avg_bhp + hotel_load) * dt # kWh
         
-        fuel = consumption * sfc / 1e6 # tons
+        fuel = np.sum(consumption) * sfc / 1e6 # tons
         
         # TODO build interpolator for sfc
         
@@ -634,6 +634,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             "mwa" : sol(mwa),
             "z" : sol(z),
             "avg_bhp" : sol(avg_bhp),
+            "consumption" : consumption,
             "max_bhp" : sol(max_bhp),
             "sails_contribution" : sol(sc),
             "pos": [[la, lo] for la, lo in zip(sol(lat), sol(lon))],
