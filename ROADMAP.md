@@ -5,6 +5,7 @@
 - Create class Route
 - Create method compute_route
 - Integrate tall, wide and sigmoid to numpy
+- Improve IIP data retrieving to handle server shutdowns
 
 ## Medium term
 - Implement class Environment
