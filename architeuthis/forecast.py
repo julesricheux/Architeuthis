@@ -23,6 +23,10 @@ from scipy.ndimage import distance_transform_edt
 from architeuthis.common import ArchiteuthisSpatialData, Datetime, _CMEMS_USER, _CMEMS_PWD, _HOME, _TOPOGRAPHY_URL
 
 
+def preprocess(ds):
+    return ds.drop_vars("step", errors="ignore")
+
+
 class Topography(ArchiteuthisSpatialData):
     
     def __init__(
@@ -333,8 +337,10 @@ class DeterministicHerbieForecast(HerbieForecast):
             decode_times=True,
             combine="nested",
             concat_dim=["valid_time"],
-            coords="different",
+            # coords="different",
+            coords="minimal", # for concatenation compatibility
             compat="no_conflicts",
+            preprocess=preprocess, # for concatenation compatibility
         )
         
         
@@ -366,8 +372,10 @@ class EnsembleHerbieForecast(HerbieForecast):
             decode_times=True,
             combine="nested",
             concat_dim=["valid_time"],
-            coords="different",
+            # coords="different",
+            coords="minimal", # for concatenation compatibility
             compat="no_conflicts",
+            preprocess=preprocess, # for concatenation compatibility
             filter_by_keys={"dataType": "pf"},
         )
     
