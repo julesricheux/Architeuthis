@@ -601,8 +601,8 @@ def create_report_overlays(
                     f"{report['model']} "
                     f"{report['init_fac']} "
                     f"{report['vessel'][3:]} "
-                    f"{report['fuel']:.1f}"
-                    f"{report['member']}"
+                    f"{report['fuel']:.1f} "
+                    f"m{report['member']}"
                 ),
                 checked=bool(report["solve"]),
             )

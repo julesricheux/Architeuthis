@@ -75,6 +75,7 @@ def route_to_geojson(route: dict, valid_time: float | None = None, color: str = 
     max_bhp = route["max_bhp"]
     sc = route["sails_contribution"]
     fuel = route["fuel"]
+    member = route["member"]
     
     model = route['model']
     fac= route['init_fac']
@@ -110,7 +111,7 @@ def route_to_geojson(route: dict, valid_time: float | None = None, color: str = 
                     f"{pd.to_datetime(ctimi, unit='s').strftime('%Y-%m-%dT%H:%M')}<br>"
                     # f"Colloc. pt. {i}<br>"
                     # f"Lat: {cla:.3f}, Lon: {clo:.3f}<br>"
-                    f"{model} / {fac} / {vessel}<br>"
+                    f"{model} / {fac} / {vessel} / m{member}<br>"
                     f"SOG {sog[i]:.1f} / COG {cog[i]:.0f}<br>"
                     f"TWS {tws[i]:.1f} / TWA {twa[i]:.0f}<br>"
                     f"SWH {swh[i]:.1f} / MWA {mwa[i]:.0f}<br>"
