@@ -84,7 +84,11 @@ class ArchiteuthisData(ArchiteuthisObject):
     def load_data(self):
         self._locate_data()
         self._download_data()
+        
+        print(f"📦 Reading {self.name} data ...")
         self._read_data()
+        print("✅ Reading completed.")
+        
         self._convert_data()
         self._extend_data()
 

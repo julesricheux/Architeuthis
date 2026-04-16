@@ -281,7 +281,9 @@ class HerbieForecast(Forecast):
     def _download_data(self):
         if self.__FH is None:
             self.locate_data()
+        print(f"⬇️ Downloading {self.name} data ...")
         self.path = self.__FH.download(self.regex,)
+        print("✅ Download completed.")
         
     def _convert_data(self):
         self.data["longitude"] = ((self.data["longitude"] + 180.) % 360.) - 180.
