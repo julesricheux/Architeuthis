@@ -150,7 +150,8 @@ remove_white_pixels(SFC_URL, SFC_OUTPUT, WHITE_THRESHOLD)
 
 #%% PARAMETERS
 
-PRODUCT = "oper"
+# PRODUCT = "oper"
+PRODUCT = "enfo"
     
 minimum_longitude=-80.
 maximum_longitude=0.
@@ -178,13 +179,25 @@ steps_00_12 = list(range(0, 145, 3)) + list(range(150, 361, 6))
 # mirror_date = pd.Timestamp('2026-02-12 00:00:00')
 # mirror_end = pd.Timestamp('2026-01-31 23:00:00')
 
+recent = pd.Timestamp("now").floor("1d")
+
 # # IFS atmospheric data
-atmos = DeterministicHerbieForecast(
-    "wind", model="ifs", product="oper", regex=r":10[u|v]:|:msl:", fxx=steps_00_12,
-    min_lon=minimum_longitude, max_lon=maximum_longitude,
-    min_lat=minimum_latitude, max_lat=maximum_latitude,
-    # date=mirror_date
-)
+if PRODUCT == "oper":
+    atmos = DeterministicHerbieForecast(
+        "wind", model="ifs", product="oper", regex=r":10[u|v]:|:msl:", fxx=steps_00_12,
+        min_lon=minimum_longitude, max_lon=maximum_longitude,
+        min_lat=minimum_latitude, max_lat=maximum_latitude,
+        date=recent,
+    )
+elif PRODUCT == "enfo":
+    atmos = EnsembleHerbieForecast(
+        "wind_ens", model="ifs", product="enfo", regex=r":10[u|v]:|:msl:", fxx=steps_00_12,
+        min_lon=minimum_longitude, max_lon=maximum_longitude,
+        min_lat=minimum_latitude, max_lat=maximum_latitude,
+        date=recent,
+    )
+else:
+    raise(ValueError, "PRODUCT should be in ['enfo', 'oper']")
 
 # GFS atmospheric data
 # atmos = DeterministicHerbieForecast(
@@ -203,13 +216,35 @@ atmos.load_data()
 
 #%% BUILD WAVE INTERPOLATORS
 
-# IFS ocean data
-wave = DeterministicHerbieForecast(
-    "wave", model="ifs", product="wave", regex=r":swh:|:mwd:", fxx=steps_00_12,
-    min_lon=minimum_longitude, max_lon=maximum_longitude,
-    min_lat=minimum_latitude, max_lat=maximum_latitude,
-    # date=mirror_date
-)
+# # IFS ocean data
+# wave = DeterministicHerbieForecast(
+#     "wave", model="ifs", product="wave", regex=r":swh:|:mwd:", fxx=steps_00_12,
+#     min_lon=minimum_longitude, max_lon=maximum_longitude,
+#     min_lat=minimum_latitude, max_lat=maximum_latitude,
+#     # date=mirror_date
+# )
+
+
+recent = pd.Timestamp("now").floor("1d")
+
+# # IFS atmospheric data
+if PRODUCT == "oper":
+    wave = DeterministicHerbieForecast(
+        "wave", model="ifs", product="wave", regex=r":swh:|:mwd:", fxx=steps_00_12,
+        min_lon=minimum_longitude, max_lon=maximum_longitude,
+        min_lat=minimum_latitude, max_lat=maximum_latitude,
+        date=recent,
+    )
+elif PRODUCT == "enfo":
+    wave = EnsembleHerbieForecast(
+        "wave_ens", model="ifs", product="waef", regex=r":swh:|:mwd:", fxx=steps_00_12,
+        min_lon=minimum_longitude, max_lon=maximum_longitude,
+        min_lat=minimum_latitude, max_lat=maximum_latitude,
+        date=recent,
+    )
+else:
+    raise(ValueError, "PRODUCT should be in ['enfo', 'oper']")
+
 wave.load_data()
 
 # wave.add_interpolator("swh", "valid_time", "latitude", "longitude")
@@ -245,7 +280,12 @@ wave.load_data()
 
 #%%
 
-ds = xr.merge([atmos.data, wave.data]).expand_dims({"number": [1]})
+if PRODUCT == "oper":
+    ds = xr.merge([atmos.data, wave.data]).expand_dims({"number": [1]})
+elif PRODUCT == "enfo":
+    ds = xr.merge([atmos.data, wave.data])
+else:
+    raise(ValueError, "PRODUCT should be in ['enfo', 'oper']")
 
 ds.herbie.with_wind()
 
@@ -562,6 +602,7 @@ def create_report_overlays(
                     f"{report['init_fac']} "
                     f"{report['vessel'][3:]} "
                     f"{report['fuel']:.1f}"
+                    f"{report['member']}"
                 ),
                 checked=bool(report["solve"]),
             )
@@ -634,9 +675,9 @@ app.layout = dmc.MantineProvider(
                 dmc.Group([
                 
                     dmc.Select(id="model-select", data=[{"label": v, "value": v} for v in MODELS], value=MODELS[0], w=200, label="Model", allowDeselect=False),
-                    dmc.Select(id="product-select", data=[{"label": v, "value": v} for v in [PRODUCT]], value=PRODUCT, w=200, label="Product", allowDeselect=False, disabled=True),
+                    dmc.Select(id="product-select", data=[{"label": v, "value": v} for v in [PRODUCT]], value=PRODUCT, w=200, label="Product", allowDeselect=False, disabled=(PRODUCT != "enfo")),
                     # dmc.Select(id="product-select", data=[{"label": v, "value": v} for v in PRODUCTS[MODELS[0]].keys()], value=list(PRODUCTS[MODELS[0]].keys())[0], w=200, label="Product", allowDeselect=False),
-                    dmc.NumberInput(id="member-select", value=1, min=1, max=50, w=75, label="Member", disabled=True),
+                    dmc.NumberInput(id="member-select", value=1, min=1, max=50, w=75, label="Member", disabled=(PRODUCT != "enfo")),
                     
                     # dmc.ActionIcon([dmc.Paper(DashIconify(icon="material-symbols:downloading", width=25))], id="save-toggle", variant="transparent", size="lg", color="yellow"),
                     
