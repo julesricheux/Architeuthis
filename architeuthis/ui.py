@@ -941,15 +941,15 @@ def update_time_index(time_index, model):
         return updates
     
 
-
-@app.callback(
-    Output("member-select", "disabled"),
+# TODO set product list from model first
+# @app.callback(
+#     Output("member-select", "disabled"),
     
-    Input("model-select", "value"),
-    Input("product-select", "value"),
-)
-def update_weather_model(model, product):
-    return not PRODUCTS[model][product]["ens"]
+#     Input("model-select", "value"),
+#     Input("product-select", "value"),
+# )
+# def update_weather_model(model, product):
+#     return not PRODUCTS[model][product]["ens"]
 
 
 # @app.callback(
