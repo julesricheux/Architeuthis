@@ -60,9 +60,15 @@ MEMBER_DIM = "number"
 LAT_NAME = "latitude"
 LON_NAME = "longitude"
 DEFAULT_MEMBER=1
+DEFAULT_MODEL="ifs"
 # ----------------------------
 
-MODELS = ["ifs"]
+PRODUCT = "oper"
+MODELS = ["ifs", "gfs"]
+
+# PRODUCT = "enfo"
+# MODELS = ["ifs"]
+
 PRODUCTS = {
     "ifs":{
         "oper": {"ens": False},
@@ -149,9 +155,6 @@ remove_white_pixels(SFC_URL, SFC_OUTPUT, WHITE_THRESHOLD)
 
 
 #%% PARAMETERS
-
-# PRODUCT = "oper"
-PRODUCT = "enfo"
     
 minimum_longitude=-80.
 maximum_longitude=0.
@@ -181,16 +184,27 @@ steps_00_12 = list(range(0, 145, 3)) + list(range(150, 361, 6))
 
 recent = pd.Timestamp("now").floor("1d")
 
+ATMOS = {}
+
 # # IFS atmospheric data
 if PRODUCT == "oper":
-    atmos = DeterministicHerbieForecast(
-        "wind", model="ifs", product="oper", regex=r":10[u|v]:|:msl:", fxx=steps_00_12,
+    # IFS atmospheric data
+    ATMOS["ifs"] = DeterministicHerbieForecast(
+        "wind_ifs", model="ifs", product="oper", regex=r":10[u|v]:|:msl:", fxx=steps_00_12,
         min_lon=minimum_longitude, max_lon=maximum_longitude,
         min_lat=minimum_latitude, max_lat=maximum_latitude,
         date=recent,
     )
+    # GFS atmospheric data
+    ATMOS["gfs"] = DeterministicHerbieForecast(
+        "wind_gfs", model="gfs", product="pgrb2.0p25", regex=r"(?:U|V)GRD:10 m|PRMSL", fxx=steps_00_12,
+        min_lon=minimum_longitude, max_lon=maximum_longitude,
+        min_lat=minimum_latitude, max_lat=maximum_latitude,
+        date=recent,
+    )
+    
 elif PRODUCT == "enfo":
-    atmos = EnsembleHerbieForecast(
+    ATMOS["ifs"] = EnsembleHerbieForecast(
         "wind_ens", model="ifs", product="enfo", regex=r":10[u|v]:|:msl:", fxx=steps_00_12,
         min_lon=minimum_longitude, max_lon=maximum_longitude,
         min_lat=minimum_latitude, max_lat=maximum_latitude,
@@ -199,16 +213,11 @@ elif PRODUCT == "enfo":
 else:
     raise(ValueError, "PRODUCT should be in ['enfo', 'oper']")
 
-# GFS atmospheric data
-# atmos = DeterministicHerbieForecast(
-#     "wind_gfs", model="gfs", product="pgrb2.0p25", regex=r"(?:U|V)GRD:10 m|PRMSL", fxx=steps_00_12,
-#     min_lon=minimum_longitude, max_lon=maximum_longitude,
-#     min_lat=minimum_latitude, max_lat=maximum_latitude,
-#     # date=mirror_date,
-# )
-# atmos.data["msl"] = atmos.data["prmsl"]
 
-atmos.load_data()
+for model in MODELS:
+    ATMOS[model].load_data()
+    
+ATMOS["gfs"].data["msl"] = ATMOS["gfs"].data["prmsl"]
 
 # atmos.add_interpolator("u10", "valid_time", "latitude", "longitude")
 # atmos.add_interpolator("v10", "valid_time", "latitude", "longitude")
@@ -227,16 +236,26 @@ atmos.load_data()
 
 recent = pd.Timestamp("now").floor("1d")
 
+WAVE = {}
+
 # # IFS atmospheric data
 if PRODUCT == "oper":
-    wave = DeterministicHerbieForecast(
-        "wave", model="ifs", product="wave", regex=r":swh:|:mwd:", fxx=steps_00_12,
+    # IFS wave data
+    WAVE["ifs"] = DeterministicHerbieForecast(
+        "wave_ifs", model="ifs", product="wave", regex=r":swh:|:mwd:", fxx=steps_00_12,
         min_lon=minimum_longitude, max_lon=maximum_longitude,
         min_lat=minimum_latitude, max_lat=maximum_latitude,
         date=recent,
     )
+    # GFS wave data
+    WAVE["gfs"] = DeterministicHerbieForecast(
+        "wave_gfs", model="gfs_wave", product="global.0p25", regex=r":HTSGW:|:DIRPW:", fxx=steps_00_12,
+        min_lon=minimum_longitude, max_lon=maximum_longitude,
+        min_lat=minimum_latitude, max_lat=maximum_latitude,
+        date=recent
+    )
 elif PRODUCT == "enfo":
-    wave = EnsembleHerbieForecast(
+    WAVE["ifs"] = EnsembleHerbieForecast(
         "wave_ens", model="ifs", product="waef", regex=r":swh:|:mwd:", fxx=steps_00_12,
         min_lon=minimum_longitude, max_lon=maximum_longitude,
         min_lat=minimum_latitude, max_lat=maximum_latitude,
@@ -245,7 +264,10 @@ elif PRODUCT == "enfo":
 else:
     raise(ValueError, "PRODUCT should be in ['enfo', 'oper']")
 
-wave.load_data()
+for model in MODELS:
+    WAVE[model].load_data()
+    
+WAVE["gfs"].data["mwd"] = WAVE["gfs"].data["dirpw"]
 
 # wave.add_interpolator("swh", "valid_time", "latitude", "longitude")
 # wave.add_interpolator("mwd", "valid_time", "latitude", "longitude")
@@ -280,16 +302,21 @@ wave.load_data()
 
 #%%
 
+DS = {}
+
 if PRODUCT == "oper":
-    ds = xr.merge([atmos.data, wave.data]).expand_dims({"number": [1]})
+    for model in MODELS:
+        DS[model] = xr.merge([ATMOS[model].data, WAVE[model].data]).expand_dims({"number": [1]})
 elif PRODUCT == "enfo":
-    ds = xr.merge([atmos.data, wave.data])
+    for model in MODELS:    
+        DS[model] = xr.merge([ATMOS[model].data, WAVE[model].data])
 else:
     raise(ValueError, "PRODUCT should be in ['enfo', 'oper']")
 
-ds.herbie.with_wind()
+for model in MODELS:
+    DS[model].herbie.with_wind()
 
-times = pd.to_datetime(ds[TIME_DIM].to_numpy().astype("datetime64[s]"))
+times = pd.to_datetime(DS[MODELS[0]][TIME_DIM].to_numpy().astype("datetime64[s]"))
 
 marks = [
     {"value":i, "label":  t.strftime("%Y-%m-%d")}
@@ -325,12 +352,13 @@ countries_layer = dl.GeoJSON(
 )
 
 # sanity checks
-assert LAT_NAME in ds.coords, f"Dataset must have coordinate '{LAT_NAME}'"
-assert LON_NAME in ds.coords, f"Dataset must have coordinate '{LON_NAME}'"
-assert TIME_DIM in ds.dims, f"Dataset must have time dimension '{TIME_DIM}'"
+for model in MODELS:
+    assert LAT_NAME in DS[model].coords, f"Dataset must have coordinate '{LAT_NAME}'"
+    assert LON_NAME in DS[model].coords, f"Dataset must have coordinate '{LON_NAME}'"
+    assert TIME_DIM in DS[model].dims, f"Dataset must have time dimension '{TIME_DIM}'"
 
-n_time = ds.sizes[TIME_DIM]
-vars_available = list(ds.data_vars.keys())
+n_time = DS[MODELS[0]].sizes[TIME_DIM]
+vars_available = list(DS[MODELS[0]].data_vars.keys())
 RASTER_VARS = list(set(DEFAULT_RASTER_VARS).intersection(vars_available))
 QUIVER_VARS = list(set(DEFAULT_QUIVER_VARS).intersection(vars_available))
 
@@ -351,17 +379,18 @@ def wind_arrows():
     qvar = request.args.get("qvar", DEFAULT_QUIVER_VAR)
     density = int(request.args.get("density", "10"))
     m = int(request.args.get("member", DEFAULT_MEMBER))
+    model = request.args.get("model", DEFAULT_MODEL)
     
     # print(m)
     
-    q = ds[qvar].isel({TIME_DIM: time_index}).sel({MEMBER_DIM: m})
-    s = ds[dir_to_speed[qvar]].isel({TIME_DIM: time_index}).sel({MEMBER_DIM: m})
+    q = DS[model][qvar].isel({TIME_DIM: time_index}).sel({MEMBER_DIM: m})
+    s = DS[model][dir_to_speed[qvar]].isel({TIME_DIM: time_index}).sel({MEMBER_DIM: m})
     
     q_arr = np.asarray(q.values)
     s_arr = np.asarray(s.values)
     
-    lats = np.asarray(ds[LAT_NAME].values)
-    lons = np.asarray(ds[LON_NAME].values)
+    lats = np.asarray(DS[model][LAT_NAME].values)
+    lons = np.asarray(DS[model][LON_NAME].values)
 
     lat_idx = np.arange(0, lats.size, max(1, density))
     lon_idx = np.arange(0, lons.size, max(1, density))
@@ -457,10 +486,11 @@ def contour_field():
     var = request.args.get("var", DEFAULT_VECTOR_VAR)
     t   = int(request.args.get("time", 0))
     m   = int(request.args.get("member", DEFAULT_MEMBER))
+    model = request.args.get("model", DEFAULT_MODEL)
 
-    da = ds[var].isel({TIME_DIM: t}).sel({MEMBER_DIM: m}).values / 1e2
-    lats = ds[LAT_NAME].values
-    lons = ds[LON_NAME].values
+    da = DS[model][var].isel({TIME_DIM: t}).sel({MEMBER_DIM: m}).values / 1e2
+    lats = DS[model][LAT_NAME].values
+    lons = DS[model][LON_NAME].values
     
     # lons, lats = lonlat_to_web_mercator(lons, lats)
     
@@ -518,10 +548,11 @@ def raster_png():
     var = request.args.get("var", DEFAULT_RASTER_VAR)
     t   = int(request.args.get("time", 0))
     m   = int(request.args.get("member", DEFAULT_MEMBER))
+    model = request.args.get("model", DEFAULT_MODEL)
 
-    da = ds[var].isel({TIME_DIM: t}).sel({MEMBER_DIM: m}).values
-    lats = ds[LAT_NAME].values
-    lons = ds[LON_NAME].values
+    da = DS[model][var].isel({TIME_DIM: t}).sel({MEMBER_DIM: m}).values
+    lats = DS[model][LAT_NAME].values
+    lons = DS[model][LON_NAME].values
     
     lons, lats = lonlat_to_web_mercator(lons, lats)
     
@@ -713,7 +744,7 @@ app.layout = dmc.MantineProvider(
                 ),
                 
                 dmc.Group([
-                    dmc.Text(f"Forecast time: {str(ds.time.data)[:16]}"),
+                    dmc.Text(f"Forecast time: {str(DS[MODELS[0]].time.data)[:16]}"),
                     dmc.Text("Valid time: -", id="fxx-valid-time",),
                 ]),
             ]),
@@ -742,8 +773,8 @@ app.layout = dmc.MantineProvider(
                             id="raster",
                             url=f"/raster.png?var={initial_raster}&time=0",
                             bounds=[
-                                [float(ds[LAT_NAME].min()), float(ds[LON_NAME].min())],
-                                [float(ds[LAT_NAME].max()), float(ds[LON_NAME].max())],
+                                [float(DS[MODELS[0]][LAT_NAME].min()), float(DS[MODELS[0]][LON_NAME].min())],
+                                [float(DS[MODELS[0]][LAT_NAME].max()), float(DS[MODELS[0]][LON_NAME].max())],
                             ],
                             zIndex=1,
                         ), name="contour", checked=True),
@@ -835,9 +866,10 @@ app.layout = dmc.MantineProvider(
     Input("member-select", "value"),
     Input("sensor", "clickData"),
     Input("time-slider", "value"),
+    Input("model-select", "value"),
     State("sensor", "position"),
 )
-def display_data(m, click_data, time_index, pos):
+def display_data(m, click_data, time_index, model, pos):
     
     if click_data is not None:
         # print(click_data["latlng"])
@@ -849,7 +881,7 @@ def display_data(m, click_data, time_index, pos):
         # Extract variables (nearest-neighbour selection)
         # try:
         # subDs = ds.isel({"TIME_DIM":time}).sel({"longitude":lon, "latitude":lat}, method="nearest")
-        subDs = ds.isel({TIME_DIM:time_index}).sel({MEMBER_DIM: m}).interp(longitude=[lon], latitude=[lat], method="linear")
+        subDs = DS[model].isel({TIME_DIM:time_index}).sel({MEMBER_DIM: m}).interp(longitude=[lon], latitude=[lat], method="linear")
         si10 = float(subDs["si10"].values.squeeze()) / 0.51444
         wdir10 = float(subDs["wdir10"].values.squeeze())
         swh = float(subDs["swh"].values.squeeze())
@@ -897,10 +929,11 @@ def display_data(m, click_data, time_index, pos):
 
 @app.callback(
     [Output(f"route-geojson-{i}", "data") for i in range(len(reports))],
-    Input("time-slider", "value")
+    Input("time-slider", "value"),
+    Input("model-select", "value"),
 )
-def update_time_index(time_index):
-    valid_time = ds.valid_time.data[time_index]
+def update_time_index(time_index, model):
+    valid_time = DS[model].valid_time.data[time_index]
     updates = tuple(route_to_geojson(report, valid_time=valid_time, color=color) for report, color in zip(reports, COLORS))
     if len(reports) == 1:
         return updates[0]
@@ -930,18 +963,20 @@ def update_weather_model(model, product):
     Input("member-select", "value"),
     Input("raster-var", "value"),
     Input("time-slider", "value"),
+    Input("model-select", "value"),
 )
-def update_raster(m, var, time_index):
-    return f"/raster.png?var={var}&time={time_index}&member={m}"
+def update_raster(m, var, time_index, model):
+    return f"/raster.png?var={var}&time={time_index}&member={m}&model={model}"
 
 
 @app.callback(
     Output("field", "data"),
     Input("member-select", "value"),
     Input("time-slider", "value"),
+    Input("model-select", "value"),
 )
-def update_contour(m, time_index):
-    url = f"/contour_field.geojson?var={DEFAULT_VECTOR_VAR}&time={time_index}&member={m}"
+def update_contour(m, time_index, model):
+    url = f"/contour_field.geojson?var={DEFAULT_VECTOR_VAR}&time={time_index}&member={m}&model={model}"
     
     with server.test_request_context(url):
         resp = contour_field()
@@ -951,9 +986,10 @@ def update_contour(m, time_index):
 @app.callback(
     Output("fxx-valid-time", "children"),
     Input("time-slider", "value"),
+    Input("model-select", "value"),
 )
-def update_valid_time(time_index):
-    vt = pd.to_datetime(ds.valid_time.data[time_index], unit="s").strftime("%Y-%m-%dT%H:%M")
+def update_valid_time(time_index, model):
+    vt = pd.to_datetime(DS[model].valid_time.data[time_index], unit="s").strftime("%Y-%m-%dT%H:%M")
     return f"Valid time: {vt}"
 
 
@@ -962,15 +998,16 @@ def update_valid_time(time_index):
     Input("member-select", "value"),
     Input("quiver-var", "value"),
     Input("time-slider", "value"),
+    Input("model-select", "value"),
     Input("map", "zoom"),
 )
-def update_arrows(m, qvar, time_index, zoom):
+def update_arrows(m, qvar, time_index, model, zoom):
     
     density=density_from_zoom(zoom)
     
     url = (
         f"/wind_arrows.geojson"
-        f"?time={time_index}&qvar={qvar}&density={density}&member={m}"
+        f"?time={time_index}&qvar={qvar}&density={density}&member={m}&model={model}"
     )
 
     with server.test_request_context(url):
