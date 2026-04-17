@@ -306,10 +306,23 @@ DS = {}
 
 if PRODUCT == "oper":
     for model in MODELS:
-        DS[model] = xr.merge([ATMOS[model].data, WAVE[model].data]).expand_dims({"number": [1]})
+        for model in MODELS:
+            atm = ATMOS[model].data
+            wav = WAVE[model].data
+            DS[model] = xr.merge(
+                [atm, wav.interp_like(atm)],
+                join="exact",
+                compat="no_conflicts",
+            ).expand_dims({"number": [1]})
 elif PRODUCT == "enfo":
     for model in MODELS:    
-        DS[model] = xr.merge([ATMOS[model].data, WAVE[model].data])
+            atm = ATMOS[model].data
+            wav = WAVE[model].data
+            DS[model] = xr.merge(
+                [atm, wav.interp_like(atm)],
+            join="exact",
+            compat="no_conflicts",
+        )
 else:
     raise(ValueError, "PRODUCT should be in ['enfo', 'oper']")
 
