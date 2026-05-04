@@ -8,6 +8,7 @@ Created on Thu Jan 15 14:02:43 2026
 from __future__ import annotations
 
 import os
+import cdsapi
 import requests
 import copernicusmarine
 
@@ -20,6 +21,7 @@ from matplotlib.path import Path
 from typing import Sequence, Union
 from herbie import HerbieLatest, FastHerbie
 from scipy.ndimage import distance_transform_edt
+from architeuthis.toolbox.string_formatting import get_request_id
 from architeuthis.common import ArchiteuthisSpatialData, Datetime, _CMEMS_USER, _CMEMS_PWD, _HOME, _TOPOGRAPHY_URL
 
 
@@ -304,7 +306,6 @@ class HerbieForecast(Forecast):
         self.data["valid_time"] = self.data["valid_time"].astype(f"datetime64[{self.time_unit}]").astype(float)
         
         time = self.data["valid_time"].to_numpy()
-        # expanded_time = np.append(time, [time.max()+pd.Timedelta(1, unit="h").total_seconds(), 1e10])
         expanded_time = np.append(time, [time.max()+1e6, time.max()+1e7])
 
         self.data = self.data.reindex(
@@ -501,7 +502,7 @@ class CopernicusForecast(Forecast):
         self.data["time"] = self.data["time"].astype(f"datetime64[{self.time_unit}]").astype(float)
         
         time = self.data["time"].to_numpy()
-        expanded_time = np.append(time, [time.max()+pd.Timedelta(1, unit="h").total_seconds(), 1e10])
+        expanded_time = np.append(time, [time.max()+1e6, time.max()+1e7])
 
         self.data = self.data.reindex(
             {"time": expanded_time},
@@ -509,7 +510,122 @@ class CopernicusForecast(Forecast):
         )
         
         self.data = self.data.rename({"time": "valid_time"})
+
+
+class CDSForecast(Forecast):
+    def __init__(
+        self,
+        name: str,
+        dataset: str,
+        product: str,
+        variables: Sequence[str],
+        start: Union[Datetime, list[Datetime]] = None,
+        end: Union[Datetime, list[Datetime]] = None,
+        freq: str = "h",
+        min_lon: float = -180.,
+        max_lon: float = 180.,
+        min_lat: float = -90.,
+        max_lat: float = 90.,
+        time_unit: str = "s",
+        verbose: bool = True,
+        compression_level: int = 1,
+        file_format: str = "grib",
+    ):
+        if file_format == "netcdf":
+            self._ext = "nc"
+            self.engine = "netcdf4"
+        elif file_format == "grib":
+            self._ext = "grib"
+            self.engine = "cfgrib"
+        else:
+            raise(ValueError, f"{name} file_format is {file_format} but should be in ['netcdf', 'grib']")
         
+        self.file_format = file_format
+        
+        self.dataset = dataset
+        self.product = product
+        self.variables = variables
+        
+        self.freq = freq
+        
+        super().__init__(name, start, None, min_lon, max_lon, min_lat, max_lat, time_unit, verbose)
+        
+        if end == None:
+            self.f99 = self.f00 + pd.Timedelta(1, unit="h")
+        
+    def _find_latest(self):
+        print(f"📅 Date is not specified. Retrieving latest {self.dataset} {ANSI.orange}NetCDF4 files.{ANSI.reset}")
+        return pd.Timestamp.today().floor("10d").normalize()
+    
+    def _generate_request(self):
+        DATE_RANGE = pd.date_range(
+            self.f00.floor("h"),
+            self.f99.ceil("h"),
+            freq=self.freq
+        )
+        
+        self.request = {
+            "product_type": [self.product],
+            "variable": self.variables,
+            "year":  sorted(DATE_RANGE.strftime("%Y").unique().tolist()),
+            "month": sorted(DATE_RANGE.strftime("%m").unique().tolist()),
+            "day":   sorted(DATE_RANGE.strftime("%d").unique().tolist()),
+            "time":  sorted(DATE_RANGE.strftime("%H:%M").unique().tolist()),
+            "data_format": self.engine,
+            "download_format": "unarchived",
+            "area": [
+                self.max_lat,
+                self.min_lon,
+                self.min_lat,
+                self.max_lon
+            ]
+        }
+    
+    def _download_data(self):
+        self._generate_request()
+        
+        local_filename = f"cds_{get_request_id(self.request)}.{self._ext}"
+        directory = os.path.join(_HOME, "cds")
+        path = os.path.join(directory, local_filename)
+
+        # Check existence locally
+        if os.path.exists(path):
+            print(f"✅ Data already exists: {local_filename}")
+            print("Skipping synchronization and download.")
+        else:
+            print("🚀 Data not found locally. Starting synchronization...")
+            
+            # Talk to the server
+            os.makedirs(directory, exist_ok=True)
+            
+            client = cdsapi.Client()
+            client.retrieve(self.dataset, self.request).download(target=path)
+            
+            print(f"Successfully downloaded: {path}")
+            
+        self.path = path
+        
+    def _read_data(self):
+        self.data = xr.open_dataset(self.path, engine=self.engine)
+
+    def _convert_data(self):
+        self.data = self.data.drop_vars(["valid_time", "step"], errors="ignore")
+        self.data["time"] = self.data["time"].astype(f"datetime64[{self.time_unit}]").astype(float)
+        
+        self.data["longitude"] = ((self.data["longitude"] + 180.) % 360.) - 180.
+        self.data = self.data.sortby("time")
+        self.data = self.data.sortby("latitude")
+        self.data = self.data.sortby("longitude")
+        
+        time = self.data["time"].to_numpy()
+        expanded_time = np.append(time, [time.max()+1e6, time.max()+1e7])
+
+        self.data = self.data.reindex(
+            {"time": expanded_time},
+            fill_value=0.
+        )
+        
+        self.data = self.data.rename({"time": "valid_time"})
         
 # for images and data not reachable Herbie or another API
 # TODO generalize to RasterForecast?
@@ -542,7 +658,7 @@ class OceanographicForecast(Forecast):
     ):
         super().__init__()
 
-
+#%%
 if __name__ == "__main__":
     
     # IFS atmospheric data
@@ -567,3 +683,19 @@ if __name__ == "__main__":
         "longitude_topography_earth2014_egm2008_lmax_2048_lmax_2048",
         var_key="z"
     )
+    
+    # ERA5 Reanalysis
+    era5 = CDSForecast(
+        "test_era5",
+        "reanalysis-era5-single-levels",
+        "reanalysis",
+        variables=["10m_u_component_of_wind"],
+        min_lon=-80.,
+        max_lon=0.,
+        min_lat=30.,
+        max_lat=60.
+    )
+    era5.load_data()
+    
+    era5.add_interpolator("u10", "valid_time", "latitude", "longitude",)
+    

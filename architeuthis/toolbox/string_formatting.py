@@ -265,7 +265,7 @@ def get_request_id(
     # sort keys to ensure the same dictionary always results in the same hash
     request_string = json.dumps(request_dict, sort_keys=True).encode('utf-8')
     
-    return hashlib.md5(request_string).hexdigest()
+    return hashlib.sha1(request_string).hexdigest()
 
 
 if __name__ == "__main__":
