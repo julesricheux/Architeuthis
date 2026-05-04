@@ -1,3 +1,4 @@
+import json
 import hashlib
 import architeuthis.numpy as np
 
@@ -252,6 +253,19 @@ def wrap_text_ignoring_mathtext(
     output = "\n".join([line.strip() for line in output.split("\n")])
 
     return output
+
+
+def get_request_id(
+        request_dict
+) -> str:
+    """
+    Generates a unique, repeatable ID for a given request.
+    
+    """
+    # sort keys to ensure the same dictionary always results in the same hash
+    request_string = json.dumps(request_dict, sort_keys=True).encode('utf-8')
+    
+    return hashlib.md5(request_string).hexdigest()
 
 
 if __name__ == "__main__":
