@@ -590,18 +590,16 @@ class CDSForecast(Forecast):
 
         # Check existence locally
         if os.path.exists(path):
-            print(f"✅ Data already exists: {local_filename}")
-            print("Skipping synchronization and download.")
+            print(f"💾 {self.name} data already downloaded.")
         else:
-            print("🚀 Data not found locally. Starting synchronization...")
-            
+            print(f"⬇️ Downloading {self.name} data ...")
             # Talk to the server
             os.makedirs(directory, exist_ok=True)
             
             client = cdsapi.Client()
             client.retrieve(self.dataset, self.request).download(target=path)
             
-            print(f"Successfully downloaded: {path}")
+            print("✅ Download completed.")
             
         self.path = path
         

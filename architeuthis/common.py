@@ -20,9 +20,11 @@ from datetime import datetime
 
 Datetime = Union[datetime, Timestamp, str]
 
+_USER = os.path.expanduser("~")
+
 #TODO should probably be in __init__
 _HOME = os.path.join(
-    os.path.expanduser("~"),
+    _USER,
     "data",
 )
 _CMEMS_USER = "jricheux1"
@@ -30,6 +32,26 @@ _CMEMS_PWD = "..."
 
 _EUMDAC_USER = "..."
 _EUMDAC_PWD = "..."
+
+_CDS_URL = "https://cds.climate.copernicus.eu/api"
+_CDS_KEY = "..."
+
+file_path = os.path.join(
+    _USER,
+    ".cdsapirc",
+)
+
+if not os.path.exists(file_path):
+    content = f"""url: {_CDS_URL}
+    key: {_CDS_KEY}
+    """
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"Successfully created {file_path}")
+    except OSError as e:
+        print(f"Error: Could not write to {file_path}. {e}")
+
 
 _EUMDAC_CREDENTIALS = (_EUMDAC_USER, _EUMDAC_PWD)
 
