@@ -389,7 +389,10 @@ def deviated_gc_segment(lat0, lon0, lat1, lon1, divergence):
 #     return route
 
 
-def poly_deviated_route(lats, lons, divergences):
+def poly_deviated_route(lats, lons, divergences=None):
+    
+    if divergences == None:
+        divergences = np.zeros(len(lats) - 1)
 
     assert len(lats) == len(lons)
     assert len(divergences) == len(lats) - 1
