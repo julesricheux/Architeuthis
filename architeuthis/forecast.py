@@ -554,8 +554,8 @@ class CDSForecast(Forecast):
             self.f99 = self.f00 + pd.Timedelta(1, unit="h")
         
     def _find_latest(self):
-        print(f"📅 Date is not specified. Retrieving latest {self.dataset} {ANSI.orange}NetCDF4 files.{ANSI.reset}")
-        return pd.Timestamp.today().floor("10d").normalize()
+        print(f"📅 Date is not specified. Retrieving latest {self.dataset} {ANSI.orange}NetCDF4 files{ANSI.reset}.")
+        return (pd.Timestamp.today() - pd.Timedelta("5d")).floor("6h").normalize()
     
     def _generate_request(self):
         DATE_RANGE = pd.date_range(
