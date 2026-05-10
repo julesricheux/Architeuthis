@@ -552,6 +552,8 @@ class CDSForecast(Forecast):
         
         if end == None:
             self.f99 = self.f00 + pd.Timedelta(1, unit="h")
+        else:
+            self.f99 = end
         
     def _find_latest(self):
         print(f"📅 Date is not specified. Retrieving latest {self.dataset} {ANSI.orange}NetCDF4 files{ANSI.reset}.")
