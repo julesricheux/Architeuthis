@@ -63,11 +63,11 @@ DEFAULT_MEMBER=1
 DEFAULT_MODEL="ifs"
 # ----------------------------
 
-PRODUCT = "oper"
-MODELS = ["ifs", "gfs"]
+# PRODUCT = "oper"
+# MODELS = ["ifs", "gfs"]
 
-# PRODUCT = "enfo"
-# MODELS = ["ifs"]
+PRODUCT = "enfo"
+MODELS = ["ifs"]
 
 PRODUCTS = {
     "ifs":{
@@ -217,7 +217,8 @@ else:
 for model in MODELS:
     ATMOS[model].load_data()
     
-ATMOS["gfs"].data["msl"] = ATMOS["gfs"].data["prmsl"]
+if PRODUCT == "oper":
+    ATMOS["gfs"].data["msl"] = ATMOS["gfs"].data["prmsl"] # TODO find a better fix
 
 # atmos.add_interpolator("u10", "valid_time", "latitude", "longitude")
 # atmos.add_interpolator("v10", "valid_time", "latitude", "longitude")
@@ -267,7 +268,8 @@ else:
 for model in MODELS:
     WAVE[model].load_data()
     
-WAVE["gfs"].data["mwd"] = WAVE["gfs"].data["dirpw"]
+if PRODUCT == "oper":
+    WAVE["gfs"].data["mwd"] = WAVE["gfs"].data["dirpw"] # TODO find a better fix
 
 # wave.add_interpolator("swh", "valid_time", "latitude", "longitude")
 # wave.add_interpolator("mwd", "valid_time", "latitude", "longitude")
@@ -311,18 +313,18 @@ if PRODUCT == "oper":
             wav = WAVE[model].data
             DS[model] = xr.merge(
                 [atm, wav.interp_like(atm)],
-                join="exact",
-                compat="no_conflicts",
-            ).expand_dims({"number": [1]})
+                    join="exact",
+                    compat="no_conflicts",
+                ).expand_dims({"number": [1]})
 elif PRODUCT == "enfo":
     for model in MODELS:    
             atm = ATMOS[model].data
             wav = WAVE[model].data
             DS[model] = xr.merge(
                 [atm, wav.interp_like(atm)],
-            join="exact",
-            compat="no_conflicts",
-        )
+                join="exact",
+                compat="no_conflicts",
+            )
 else:
     raise(ValueError, "PRODUCT should be in ['enfo', 'oper']")
 
