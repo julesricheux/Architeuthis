@@ -568,13 +568,13 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         # leeway = vessel("leeway", vessel_query)        
         sc = self.vessel("sails_contribution", vessel_query)
         
-        hotel_load = self.vessel.hotel_load(avg_bhp) # KW
+        hotel_load = self.vessel.hotel_load(avg_bhp) # kW
         
         sfc = self.vessel.sfc(avg_bhp+hotel_load) # g/kWh
         
         consumption = np.abs(avg_bhp + hotel_load) * dt # kWh
         
-        fuel = np.sum(consumption) * sfc / 1e6 # tons # TODO get rid of sfc to rather have f(power) = cons
+        fuel = np.sum(consumption * sfc) / 1e6 # tons # TODO get rid of sfc to rather have f(power) = cons
         
         cons = []
         
