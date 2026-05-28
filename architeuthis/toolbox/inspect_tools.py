@@ -5,6 +5,12 @@ from architeuthis.toolbox.string_formatting import has_balanced_parentheses
 import architeuthis.numpy as np
 
 
+def ensure_callable(val):
+        if isinstance(val, (int, float)):
+            return lambda *args, **kwargs: val
+        return val
+
+
 def get_caller_source_location(
     stacklevel: int = 1,
     truncate_stacklevel: bool = False,
@@ -525,7 +531,7 @@ def codegen(
     #     else:
     #         return code
     # else:
-    #     return code, _required_imports
+    #     return code, _required_import
 
 
 if __name__ == "__main__":

@@ -563,20 +563,18 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         #     "mwa": np.abs(mwa),
         # }
         
-        hotel_load = self.vessel.hotel_load # KW
-        
         avg_bhp = self.vessel("bhp", vessel_query)
         max_bhp = self.vessel("max_bhp", vessel_query)
         # leeway = vessel("leeway", vessel_query)        
         sc = self.vessel("sails_contribution", vessel_query)
         
-        sfc = self.vessel.sfc # g/kWh
+        hotel_load = self.vessel.hotel_load(avg_bhp) # KW
+        
+        sfc = self.vessel.sfc(avg_bhp+hotel_load) # g/kWh
         
         consumption = np.abs(avg_bhp + hotel_load) * dt # kWh
         
-        fuel = np.sum(consumption) * sfc / 1e6 # tons
-        
-        # TODO build interpolator for sfc
+        fuel = np.sum(consumption) * sfc / 1e6 # tons # TODO get rid of sfc to rather have f(power) = cons
         
         cons = []
         

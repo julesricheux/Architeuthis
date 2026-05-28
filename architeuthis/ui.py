@@ -63,11 +63,11 @@ DEFAULT_MEMBER=1
 DEFAULT_MODEL="ifs"
 # ----------------------------
 
-# PRODUCT = "oper"
-# MODELS = ["ifs", "gfs"]
+PRODUCT = "oper"
+MODELS = ["ifs", "gfs"]
 
-PRODUCT = "enfo"
-MODELS = ["ifs"]
+# PRODUCT = "enfo"
+# MODELS = ["ifs"]
 
 PRODUCTS = {
     "ifs":{

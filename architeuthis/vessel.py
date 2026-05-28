@@ -12,6 +12,10 @@ import os
 import xarray as xr
 import architeuthis.numpy as np
 
+from typing import Union
+from collections.abc import Callable
+from architeuthis.toolbox.inspect_tools import ensure_callable
+
 # from typing import Sequence
 from architeuthis.common import ArchiteuthisData
 
@@ -25,17 +29,21 @@ class Vessel(ArchiteuthisData):
         self,
         name: str,
         filepath: str,
-        hotel_load: float, # kW
-        max_power: float, # kW
-        sfc: float = 200., # g/kWh
+        hotel_load: Union[Callable, float, int] = 0., # kW
+        max_power: Union[Callable, float, int] = 1e12, # kW
+        sfc: Union[Callable, float, int] = 0., # g/kWh
         verbose: bool = True,
     ):
         super().__init__(name, verbose)
         
         self.path = filepath
         
-        self.sfc = sfc # TODO should be replaced by a function to depoend on the sailing conditions
-        self.hotel_load = hotel_load # TODO should be replaced by a function to depoend on the sailing conditions      
+        self.hotel_load = ensure_callable(hotel_load) # TODO to define with kwargs to be more flexible
+        self.sfc = ensure_callable(sfc) # TODO to define with kwargs to be more flexible
+        # self.max_power = ensure_callable(max_power)
+        
+        # self.sfc = sfc 
+        # self.hotel_load = hotel_load   
         self.max_power = max_power
         
     def _locate_data(self):
@@ -77,7 +85,7 @@ class Vessel(ArchiteuthisData):
 if __name__=="__main__":
     
     # vessel_data = "C:\\Users\\jules\\output_sails.nc"
-    vessel_data = r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_30up_23down_10buff_5m_eff45.nc"
+    vessel_data = r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff100.nc"
     # vessel_data = "C:\\Users\\jrich\\output_sails.nc"
     
     columns = ["bhp", "max_bhp", "leeway"]
