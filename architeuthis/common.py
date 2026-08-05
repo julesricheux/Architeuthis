@@ -6,7 +6,7 @@ Created on Thu Jan 15 12:44:25 2026
 """
 
 import os
-import logging
+
 from abc import ABC, abstractmethod
 
 import architeuthis.numpy as np
@@ -18,14 +18,6 @@ from typing import Union, Sequence, Literal
 from pandas import Timestamp
 from datetime import datetime
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    force=True,
-)
-log = logging.getLogger(__name__)
-
 Datetime = Union[datetime, Timestamp, str]
 
 _USER = os.path.expanduser("~")
@@ -35,38 +27,14 @@ _HOME = os.path.join(
     _USER,
     "data",
 )
+_CMEMS_USER = "jricheux1"
+_CMEMS_PWD = "..."
 
-def _get_env_var(key):
-    if key in os.environ:
-        return os.environ[key]
-    else:
-        return None
-    
+_EUMDAC_USER = "..."
+_EUMDAC_PWD = "..."
+
 _CDS_URL = "https://cds.climate.copernicus.eu/api"
-_CDS_API_KEY = _get_env_var("CDS_API_KEY")
-if _CDS_API_KEY is None:
-    log.info("CDS API key was not specified. Copernicus atmosphere data will be unavailable.")
-
-_CMEMS_USER = _get_env_var("CMEMS_USER")
-_CMEMS_PWD = _get_env_var("CMEMS_PWD")
-if (_CMEMS_USER is None) or (_CMEMS_PWD is None):
-    log.info("CMEMS credentials are incomplete. Copernicus marine service data will be unavailable.")
-
-_EUMDAC_USER = _get_env_var("EUMDAC_USER")
-_EUMDAC_PWD = _get_env_var("EUMDAC_PWD")
-if (_EUMDAC_USER is None) or (_EUMDAC_PWD is None):
-    log.info("EUMDAC credentials are incomplete. Corresponding satellite data will be unavailable.")
-
-_EUMDAC_CREDENTIALS = (_EUMDAC_USER, _EUMDAC_PWD)
-
-# _CMEMS_USER = "jricheux1"
-# _CMEMS_PWD = "..."
-
-# _EUMDAC_USER = "..."
-# _EUMDAC_PWD = "..."
-
-# _CDS_URL = "https://cds.climate.copernicus.eu/api"
-# _CDS_API_KEY = "..."
+_CDS_KEY = "..."
 
 file_path = os.path.join(
     _USER,
@@ -75,7 +43,7 @@ file_path = os.path.join(
 
 if not os.path.exists(file_path):
     content = f"""url: {_CDS_URL}
-    key: {_CDS_API_KEY}
+    key: {_CDS_KEY}
     """
     try:
         with open(file_path, "w", encoding="utf-8") as f:
@@ -83,6 +51,9 @@ if not os.path.exists(file_path):
         print(f"Successfully created {file_path}")
     except OSError as e:
         print(f"Error: Could not write to {file_path}. {e}")
+
+
+_EUMDAC_CREDENTIALS = (_EUMDAC_USER, _EUMDAC_PWD)
 
 _TOPOGRAPHY_URL = "https://data.mondaic.com/topography-data/topography_earth2014_egm2008_lmax_2048.nc"
 
