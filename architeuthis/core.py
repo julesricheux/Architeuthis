@@ -586,6 +586,8 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             "mwd": sol(mwd),
             "mwa": sol(mwa),
             "z": sol(z),
+            "cs": cs,
+            "cd": cd,
             "avg_bhp": sol(avg_bhp),
             "max_bhp": sol(max_bhp),
             "sails_contribution": sol(sc),
