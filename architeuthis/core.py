@@ -530,6 +530,8 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             "swh": swh,
             "mwa": mwa,
             "cog": cog,
+            "cs": cs,
+            "cd": cd,
             "lat": lat,
             "lon": lon,
             "opti": opti,
