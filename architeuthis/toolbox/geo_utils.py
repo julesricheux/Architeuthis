@@ -117,6 +117,33 @@ def midpoints(pts):
     return (pts[:-1] + pts[1:]) / 2
 
 
+def resample_coordinates(lat, lon, n):
+    
+    if n <= 0:
+        return lat, lon
+
+    # Calculate step fractions (e.g., for n=1: t_vals = [0.0, 0.5])
+    t_vals = np.linspace(0, 1, n + 2)[:-1]
+    
+    new_lats = []
+    new_lons = []
+    
+    # lat.shape[0] safely gets the length of a CasADi vector or Numpy array
+    num_points = lat.shape[0]
+    
+    # Build the interpolation point-by-point
+    for i in range(num_points - 1):
+        for t in t_vals:
+            new_lats.append(lat[i] * (1 - t) + lat[i+1] * t)
+            new_lons.append(lon[i] * (1 - t) + lon[i+1] * t)
+            
+    # Append the final destination point
+    new_lats.append(lat[-1])
+    new_lons.append(lon[-1])
+    
+    return np.concatenate(new_lats), np.concatenate(new_lons)
+
+
 def great_circle_path_points(
         p1,
         p2,

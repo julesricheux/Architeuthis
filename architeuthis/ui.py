@@ -161,10 +161,15 @@ remove_white_pixels(SFC_URL, SFC_OUTPUT, WHITE_THRESHOLD)
 # minimum_latitude=30.
 # maximum_latitude=60.
 
+# minimum_longitude=-90.
+# maximum_longitude=-72.
+# minimum_latitude=9.
+# maximum_latitude=18.
+
 minimum_longitude=-90.
-maximum_longitude=-72.
-minimum_latitude=9.
-maximum_latitude=18.
+maximum_longitude=-50.
+minimum_latitude=10.
+maximum_latitude=50.
 
 steps_00_12 = list(range(0, 145, 3)) + list(range(150, 361, 6))
 
@@ -1036,4 +1041,4 @@ def update_arrows(m, qvar, time_index, model, zoom):
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=8053)
+    app.run(debug=True, port=8052)
