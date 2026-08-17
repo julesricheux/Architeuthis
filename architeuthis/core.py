@@ -436,7 +436,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         tlat, tlon = resample_coordinates(
             lat[1:-1],
             lon[1:-1],
-            n=6,
+            n=3,
         )
         
         # print(tlon)
