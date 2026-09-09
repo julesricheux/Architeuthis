@@ -13,7 +13,7 @@ import architeuthis.numpy as np
 from pyproj import Geod
 
 
-def great_circle_route(p1, p2, nPoints):
+def great_circle_route(p1, p2, nPoints, include_ends=True):
     # use great circle formula for a perfect sphere.
     a = 6378.137 / 1.852  # semi-major axis (equatorial radius) in nmi
     b = 6356.752 / 1.852  # semi-minor axis (polar radius) in nmi
@@ -26,13 +26,17 @@ def great_circle_route(p1, p2, nPoints):
     az12, az21, dist = gc.inv(lon1, lat1, lon2, lat2)
     # npoints = np.ceil((dist + 0.5 * 1000. * del_s) / (1000. * del_s))
     lonlats = gc.npts(lon1, lat1, lon2, lat2, nPoints-2)
-    lons = [lon1]
-    lats = [lat1]
+    lons = []
+    lats = []
+    if include_ends:
+        lons.append(lon1)
+        lats.append(lat1)
     for lon, lat in lonlats:
         lons.append(lon)
         lats.append(lat)
-    lons.append(lon2)
-    lats.append(lat2)
+    if include_ends:
+        lons.append(lon2)
+        lats.append(lat2)
     
     return np.array(lats), np.array(lons), dist
 

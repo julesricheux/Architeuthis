@@ -161,15 +161,20 @@ remove_white_pixels(SFC_URL, SFC_OUTPUT, WHITE_THRESHOLD)
 # minimum_latitude=30.
 # maximum_latitude=60.
 
+minimum_longitude=-60.
+maximum_longitude=0.
+minimum_latitude=40.
+maximum_latitude=60.
+
 # minimum_longitude=-90.
 # maximum_longitude=-72.
 # minimum_latitude=9.
 # maximum_latitude=18.
 
-minimum_longitude=-90.
-maximum_longitude=-50.
-minimum_latitude=10.
-maximum_latitude=50.
+# minimum_longitude=-90.
+# maximum_longitude=-50.
+# minimum_latitude=10.
+# maximum_latitude=50.
 
 steps_00_12 = list(range(0, 145, 3)) + list(range(150, 361, 6))
 

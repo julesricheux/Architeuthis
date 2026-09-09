@@ -10,6 +10,8 @@ import json
 import architeuthis.numpy as np
 import xml.etree.ElementTree as ET
 
+import pandas as pd
+
 from datetime import datetime
 
 #%%
@@ -38,23 +40,18 @@ def save_gpx(
     trkseg = ET.SubElement(trk, "trkseg")
 
     for la, lo, t in zip(lat, lon, valid_time):
-
         trkpt = ET.SubElement(
             trkseg,
             "trkpt",
             lat=f"{float(la):.8f}",
             lon=f"{float(lo):.8f}"
         )
-
         time_el = ET.SubElement(trkpt, "time")
-
-        # Robust time handling
-        if isinstance(t, np.datetime64):
-            t = t.astype("datetime64[ms]").astype(datetime)
-        elif isinstance(t, str):
-            t = datetime.fromisoformat(t)
-
-        time_el.text = t.strftime("%Y-%m-%dT%H:%M:%SZ")
+    
+        ts = pd.to_datetime(t)  # handles datetime64, str, Timestamp, epoch float/int...
+        if pd.isna(ts):
+            raise ValueError(f"Invalid/NaT time value encountered: {t!r}")
+        time_el.text = ts.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     tree = ET.ElementTree(gpx)
     tree.write(filename, encoding="utf-8", xml_declaration=True)
