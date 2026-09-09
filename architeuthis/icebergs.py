@@ -67,7 +67,8 @@ def get_iip_zone_from_bulletin(text):
     # western_coords = parse_coords(western_block)
     western_coords = [
         [iceberg_coords[-1][0], iceberg_coords[-1][1] - 10.],
-        [iceberg_coords[0][0], iceberg_coords[0][1] - 10.],
+        [iceberg_coords[-1][0] - 1., iceberg_coords[-1][1] - 10.],
+        # [iceberg_coords[0][0], iceberg_coords[0][1] - 10.],
     ]
     
     # 5) Combine into closed polygon
