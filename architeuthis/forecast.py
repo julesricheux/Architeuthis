@@ -150,7 +150,7 @@ class Topography(ArchiteuthisSpatialData):
             -dist_to_white
         ) + self.z_margin
         
-        signed_dist_np = np.fmax(signed_dist_np, 0.)
+        # signed_dist_np = np.fmax(signed_dist_np, 0.)
     
         signed_dist = xr.DataArray(
             signed_dist_np,
