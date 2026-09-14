@@ -54,7 +54,8 @@ class Topography(ArchiteuthisSpatialData):
         self.path = os.path.join(
             _HOME,
             "topo",
-            "topography_earth2014_egm2008_lmax_2048.nc"
+            # "topography_earth2014_egm2008_lmax_2048.nc"
+            "ETOPO_2022_v1_60s_N90W180_surface.nc"
         )
         
     def _download_data(self):
@@ -81,16 +82,20 @@ class Topography(ArchiteuthisSpatialData):
                 print(f"💔 Topography could not be downloaded {e}")
 
     def _read_data(self):
-        self.data = xr.open_dataset(self.path)[["topography_earth2014_egm2008_lmax_2048_lmax_2048",]]
+        # self.data = xr.open_dataset(self.path)[["topography_earth2014_egm2008_lmax_2048_lmax_2048",]]
+        self.data = xr.open_dataset(self.path)[["z",]]
 
     def _convert_data(self):
         # =====================================================================
         # INITIAL CONVERSION
         # =====================================================================
         
-        suffix = "topography_earth2014_egm2008_lmax_2048_lmax_2048"
-        lat = "latitude_" + suffix
-        lon = "longitude_" + suffix
+        # suffix = "topography_earth2014_egm2008_lmax_2048_lmax_2048"
+        # lat = "latitude_" + suffix
+        # lon = "longitude_" + suffix
+        suffix = "z"
+        lat = "lat"
+        lon = "lon"
     
         self.data = self.data.transpose(lat, lon)
     
