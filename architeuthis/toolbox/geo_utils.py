@@ -7,7 +7,7 @@ Created on Fri Dec 12 14:18:00 2025
 
 
 import casadi as ca
-from typing import Sequence
+from typing import Union, Sequence
 import architeuthis.numpy as np
 
 from pyproj import Geod
@@ -491,8 +491,8 @@ def lonlat_to_web_mercator(lon, lat):
 
 
 def calculate_geographic_bounding_box(
-    latitudes: Sequence[float], 
-    longitudes: Sequence[float]
+    latitudes: Union[np.ndarray, Sequence[float], float] = None, 
+    longitudes: Union[np.ndarray, Sequence[float], float] = None,
 ) -> tuple[float, float, float, float]:
     """
     Computes the standard geographic (EPSG:4326) bounding box.
@@ -505,7 +505,7 @@ def calculate_geographic_bounding_box(
         A tuple containing the bounding box in decimal degrees:
         (minimum_longitude, minimum_latitude, maximum_longitude, maximum_latitude).
     """
-    if not latitudes or not longitudes:
+    if latitudes is None or longitudes is None:
         raise ValueError("Latitude and longitude sequences cannot be empty.")
         
     return (

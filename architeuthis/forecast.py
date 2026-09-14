@@ -517,7 +517,7 @@ class CDSForecast(Forecast):
         self,
         name: str,
         dataset: str,
-        product: str,
+        products: Union[str, Sequence[str]],
         variables: Sequence[str],
         start: Union[Datetime, list[Datetime]] = None,
         end: Union[Datetime, list[Datetime]] = None,
@@ -540,10 +540,13 @@ class CDSForecast(Forecast):
         else:
             raise(ValueError, f"{name} file_format is {file_format} but should be in ['netcdf', 'grib']")
         
+        if type(products) == str:
+            products = [products]
+        
         self.file_format = file_format
         
         self.dataset = dataset
-        self.product = product
+        self.products = products
         self.variables = variables
         
         self.freq = freq
@@ -567,7 +570,7 @@ class CDSForecast(Forecast):
         )
         
         self.request = {
-            "product_type": [self.product],
+            "product_type": self.products,
             "variable": self.variables,
             "year":  sorted(DATE_RANGE.strftime("%Y").unique().tolist()),
             "month": sorted(DATE_RANGE.strftime("%m").unique().tolist()),
