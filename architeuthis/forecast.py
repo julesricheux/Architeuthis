@@ -21,7 +21,6 @@ from matplotlib.path import Path
 from typing import Sequence, Union
 from herbie import HerbieLatest, FastHerbie
 from scipy.ndimage import distance_transform_edt
-from architeuthis.toolbox.geo_utils import geo_distance_transform_edt
 from architeuthis.toolbox.string_formatting import get_request_id
 from architeuthis.common import ArchiteuthisSpatialData, Datetime, _CMEMS_USER, _CMEMS_PWD, _HOME, _TOPOGRAPHY_URL
 
@@ -55,7 +54,6 @@ class Topography(ArchiteuthisSpatialData):
         self.path = os.path.join(
             _HOME,
             "topo",
-            # "topography_earth2014_egm2008_lmax_2048.nc"
             "ETOPO_2022_v1_60s_N90W180_surface.nc"
         )
         
@@ -83,7 +81,6 @@ class Topography(ArchiteuthisSpatialData):
                 print(f"💔 Topography could not be downloaded {e}")
 
     def _read_data(self):
-        # self.data = xr.open_dataset(self.path)[["topography_earth2014_egm2008_lmax_2048_lmax_2048",]]
         self.data = xr.open_dataset(self.path)[["z",]]
 
     def _convert_data(self):
@@ -91,9 +88,6 @@ class Topography(ArchiteuthisSpatialData):
         # INITIAL CONVERSION
         # =====================================================================
         
-        # suffix = "topography_earth2014_egm2008_lmax_2048_lmax_2048"
-        # lat = "latitude_" + suffix
-        # lon = "longitude_" + suffix
         suffix = "z"
         lat = "lat"
         lon = "lon"
@@ -705,9 +699,6 @@ if __name__ == "__main__":
         "distance_to_iso0",
         "lat",
         "lon",
-        # "distance_to_iso0",
-        # "latitude_topography_earth2014_egm2008_lmax_2048_lmax_2048",
-        # "longitude_topography_earth2014_egm2008_lmax_2048_lmax_2048",
         var_key="z"
     )
     

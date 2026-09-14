@@ -75,7 +75,6 @@ if not os.path.exists(file_path):
     except OSError as e:
         print(f"Error: Could not write to {file_path}. {e}")
 
-# _TOPOGRAPHY_URL = "https://data.mondaic.com/topography-data/topography_earth2014_egm2008_lmax_2048.nc"
 _TOPOGRAPHY_URL = "https://www.ngdc.noaa.gov/thredds/fileServer/global/ETOPO2022/60s/60s_surface_elev_netcdf/ETOPO_2022_v1_60s_N90W180_surface.nc"
 
 _banner = """
