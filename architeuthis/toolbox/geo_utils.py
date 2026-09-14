@@ -7,7 +7,7 @@ Created on Fri Dec 12 14:18:00 2025
 
 
 import casadi as ca
-# import jax.numpy as jnp
+from typing import Sequence
 import architeuthis.numpy as np
 
 from pyproj import Geod
@@ -488,3 +488,29 @@ def lonlat_to_web_mercator(lon, lat):
     x = np.radians(lon) * R
     y = np.log(np.tan(np.pi/4 + np.radians(lat)/2)) * R
     return x, y
+
+
+def calculate_geographic_bounding_box(
+    latitudes: Sequence[float], 
+    longitudes: Sequence[float]
+) -> tuple[float, float, float, float]:
+    """
+    Computes the standard geographic (EPSG:4326) bounding box.
+    
+    Args:
+        latitudes: A sequence of latitude values in decimal degrees.
+        longitudes: A sequence of longitude values in decimal degrees.
+        
+    Returns:
+        A tuple containing the bounding box in decimal degrees:
+        (minimum_longitude, minimum_latitude, maximum_longitude, maximum_latitude).
+    """
+    if not latitudes or not longitudes:
+        raise ValueError("Latitude and longitude sequences cannot be empty.")
+        
+    return (
+        float(np.min(longitudes)), 
+        float(np.min(latitudes)), 
+        float(np.max(longitudes)), 
+        float(np.max(latitudes))
+    )

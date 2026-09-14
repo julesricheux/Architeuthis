@@ -52,7 +52,8 @@ def default_routing_constraints(ctx: dict) -> list:
     """Default constraints function for RoutingAnalysis."""
     return [
         ctx["max_bhp"] < ctx["vessel"].max_power,
-        (wide(ctx["z"]) @ tall(ctx["z"])) == 0.,
+        # (wide(ctx["z"]) @ tall(ctx["z"])) == 0.,
+        ctx["z"] < 0.,
     ]
 
 DEFAULT_SOLVER_OPTIONS = {
