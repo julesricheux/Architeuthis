@@ -21,6 +21,7 @@ from matplotlib.path import Path
 from typing import Sequence, Union
 from herbie import HerbieLatest, FastHerbie
 from scipy.ndimage import distance_transform_edt
+from architeuthis.toolbox.geo_utils import geo_distance_transform_edt
 from architeuthis.toolbox.string_formatting import get_request_id
 from architeuthis.common import ArchiteuthisSpatialData, Datetime, _CMEMS_USER, _CMEMS_PWD, _HOME, _TOPOGRAPHY_URL
 
@@ -145,9 +146,24 @@ class Topography(ArchiteuthisSpatialData):
         
         white = (topo >= -self.depth_offset)
         black = ~white
+        
+        dlat_deg = float(np.abs(np.mean(np.diff(LATS_1D))))
+        dlon_deg = float(np.abs(np.mean(np.diff(LONS_1D))))
+        mean_lat = float(np.mean(LATS_1D))
+
+        NM_PER_DEG_LAT = 60.
+        
+        # Anisotropic sampling (nm per grid step) so the "which pixel is
+        # nearest" search isn't fooled by longitude cells shrinking at
+        # higher latitude.
+        sampling = (
+            dlat_deg * NM_PER_DEG_LAT,
+            dlon_deg * NM_PER_DEG_LAT * np.cos(np.radians(mean_lat)),
+        )
     
-        dist_to_black = np.sqrt(distance_transform_edt(white))
-        dist_to_white = np.sqrt(distance_transform_edt(black))
+        # dist_to_black = np.sqrt(distance_transform_edt(white))
+        dist_to_black = distance_transform_edt(white, sampling=sampling)
+        dist_to_white = distance_transform_edt(black, sampling=sampling)
     
         signed_dist_np = np.where(
             white,
@@ -683,12 +699,15 @@ if __name__ == "__main__":
     fc.add_interpolator("uo", "valid_time", "latitude", "longitude", latitude_slice=slice(None, None, 2))
     
     # Topography
-    t = Topography("topo", min_lon=-80., max_lon=0., min_lat=30., max_lat=60., depth_offset=10.)
+    t = Topography("topo", min_lon=-80., max_lon=0., min_lat=30., max_lat=60., depth_offset=0.)
     t.load_data()
     t.add_interpolator(
         "distance_to_iso0",
-        "latitude_topography_earth2014_egm2008_lmax_2048_lmax_2048",
-        "longitude_topography_earth2014_egm2008_lmax_2048_lmax_2048",
+        "lat",
+        "lon",
+        # "distance_to_iso0",
+        # "latitude_topography_earth2014_egm2008_lmax_2048_lmax_2048",
+        # "longitude_topography_earth2014_egm2008_lmax_2048_lmax_2048",
         var_key="z"
     )
     
