@@ -254,18 +254,71 @@ def wrap_text_ignoring_mathtext(
 
     return output
 
+import json
+import hashlib
+from decimal import Decimal
 
-def get_request_id(
-        request_dict
-) -> str:
+
+def _canonicalize(obj):
+    """
+    Recursively convert obj into a structure that serializes
+    identically regardless of dict/set iteration order or object identity.
+    """
+    if isinstance(obj, dict):
+        # sort_keys=True in json.dumps handles dict key order,
+        # but we still need to canonicalize the values recursively
+        return {str(k): _canonicalize(v) for k, v in obj.items()}
+
+    if isinstance(obj, (set, frozenset)):
+        # sets have no inherent order -> sort the canonicalized elements
+        return sorted((_canonicalize(v) for v in obj), key=lambda x: json.dumps(x, sort_keys=True))
+
+    if isinstance(obj, (list, tuple)):
+        # lists/tuples ARE ordered and that order is meaningful,
+        # so we do NOT sort them, just canonicalize each element
+        return [_canonicalize(v) for v in obj]
+
+    if isinstance(obj, Decimal):
+        return str(obj)
+
+    if isinstance(obj, float):
+        # avoid float repr inconsistencies (e.g. 1.0 vs 1)
+        return repr(obj)
+
+    if isinstance(obj, (str, int, bool)) or obj is None:
+        return obj
+
+    # Fallback for objects without a stable, content-based repr
+    # (datetime, custom classes, etc.) — adapt as needed for your types
+    if hasattr(obj, "isoformat"):  # datetime/date
+        return obj.isoformat()
+
+    # last resort: fail loudly rather than silently hash an unstable id()
+    raise TypeError(
+        f"Cannot canonicalize object of type {type(obj)!r} for request_id hashing: {obj!r}"
+    )
+
+
+def get_request_id(request_dict: dict) -> str:
     """
     Generates a unique, repeatable ID for a given request.
-    
+    Deterministic regardless of set/dict iteration order or object identity.
     """
-    # sort keys to ensure the same dictionary always results in the same hash
-    request_string = json.dumps(request_dict, sort_keys=True).encode('utf-8')
-    
+    canonical = _canonicalize(request_dict)
+    request_string = json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha1(request_string).hexdigest()
+
+# def get_request_id(
+#         request_dict
+# ) -> str:
+#     """
+#     Generates a unique, repeatable ID for a given request.
+    
+#     """
+#     # sort keys to ensure the same dictionary always results in the same hash
+#     request_string = json.dumps(request_dict, sort_keys=True).encode('utf-8')
+    
+#     return hashlib.sha1(request_string).hexdigest()
 
 
 if __name__ == "__main__":
