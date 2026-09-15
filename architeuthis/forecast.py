@@ -635,15 +635,16 @@ class CDSForecast(Forecast):
         self.data = self.data.sortby("latitude")
         self.data = self.data.sortby("longitude")
         
-        time = self.data["time"].to_numpy()
-        expanded_time = np.append(time, [time.max()+1e6, time.max()+1e7])
-
-        self.data = self.data.reindex(
-            {"time": expanded_time},
-            fill_value=0.
-        )
-        
         self.data = self.data.rename({"time": "valid_time"})
+        
+    # def _extend_data(self):
+    #     time = self.data["valid_time"].to_numpy()
+    #     expanded_time = np.append(time, [time.max()+1e6, time.max()+1e7])
+
+    #     self.data = self.data.reindex(
+    #         {"valid_time": expanded_time},
+    #         fill_value=0.
+    #     )
         
 # for images and data not reachable Herbie or another API
 # TODO generalize to RasterForecast?
