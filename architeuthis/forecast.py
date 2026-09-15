@@ -8,6 +8,8 @@ Created on Thu Jan 15 14:02:43 2026
 from __future__ import annotations
 
 import os
+import logging
+
 import cdsapi
 import requests
 import copernicusmarine
@@ -23,6 +25,10 @@ from herbie import HerbieLatest, FastHerbie
 from scipy.ndimage import distance_transform_edt
 from architeuthis.toolbox.string_formatting import get_request_id
 from architeuthis.common import ArchiteuthisSpatialData, Datetime, _CMEMS_USER, _CMEMS_PWD, _HOME, _TOPOGRAPHY_URL
+
+
+logging.getLogger("cdsapi").handlers.clear()
+logging.getLogger("copernicusmarine").handlers.clear()
 
 
 def preprocess(ds):
