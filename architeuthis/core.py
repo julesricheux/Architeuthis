@@ -237,22 +237,13 @@ class Voyage(ArchiteuthisObject):
         self.leg = Leg(f"{name}_leg", departure, arrival, verbose)
         self.schedule = Schedule(f"{name}_schedule", etd, eta, verbose)
         
-        self.distance = np.sum(
-            distances(
-                *route_ortho(
-                    np.linspace(0, 1, 1_000)
-                )
-            )
-        )
-        
         self.transit_time = (eta-etd)/3600.
-        self.transit_sog = self.distance * 3600 / (eta-etd)
+        self.transit_sog = self.leg.distance * 3600 / (eta-etd)
         
         _default_route_function = poly_deviated_route(
             [self.departure[0], self.arrival[0]],
             [self.departure[1], self.arrival[1]],
-            [0.]
-        )
+            [0.])
         
         if route_minus is None:
             route_minus = _default_route_function
@@ -275,9 +266,9 @@ class Voyage(ArchiteuthisObject):
     def arrival(self):
         return self.leg.arrival
         
-    # @property
-    # def distance(self):
-    #     return self.leg.distance
+    @property
+    def distance(self):
+        return self.leg.distance
     
     @property
     def etd(self):
@@ -342,8 +333,6 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             
         etd = self.voyage.etd
         eta = self.voyage.eta
-        # departure = self.voyage.departure
-        # arrival = self.voyage.arrival
         
         dist0 = self.voyage.distance
         transit_time = self.voyage.transit_time
