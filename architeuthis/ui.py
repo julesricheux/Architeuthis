@@ -161,9 +161,9 @@ remove_white_pixels(SFC_URL, SFC_OUTPUT, WHITE_THRESHOLD)
 # minimum_latitude=30.
 # maximum_latitude=60.
 
-minimum_longitude=-60.
-maximum_longitude=0.
-minimum_latitude=40.
+minimum_longitude=-70
+maximum_longitude=5.
+minimum_latitude=30.
 maximum_latitude=60.
 
 # minimum_longitude=-90.

@@ -1,0 +1,33 @@
+name: py313-architeuthis
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  - spyder
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - sympy
+  - cython
+  - pip
+  - pip:
+      - casadi
+      - xarray
+      - geojson
+      - pillow
+      - seaborn
+      - flask
+      - herbie-data
+      - copernicusmarine
+      - requests
+      - dash==3.2.0
+      - dash-leaflet
+      - dash-mantine-components
+      - dash-iconify
+      - cartopy
+      - metpy
+      - netcdf4
+      - geopandas
+      - eumdac
+      - h5py
