@@ -13,9 +13,6 @@ import requests
 
 import pandas as pd
 import geopandas as gpd
-import dash_leaflet as dl
-
-from dash import Dash
 from pathlib import Path
 
 from architeuthis.common import _HOME
@@ -79,16 +76,21 @@ def get_iip_zone_from_bulletin(text):
     return polygon
 
 def get_latest_iip_zone():
-    # Download the iceberg bulletin
+    # Download the iceberg bulletin with browser headers and fallback handling
     url = "https://www.navcen.uscg.gov/sites/default/files/iip/bulletin/IcebergBulletin.txt"
-    resp = requests.get(url)
-    resp.raise_for_status()
-    text = resp.text
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     
-    return get_iip_zone_from_bulletin(text)
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        return get_iip_zone_from_bulletin(resp.text)
+    except Exception as e:
+        print(f"Warning: Could not fetch latest IIP iceberg bulletin ({e}). Using empty polygon fallback.")
+        return []
 
 polygon = get_latest_iip_zone()
-# polygon = get_iip_zone_from_bulletin(text)
 
 
 # ---------------------------------------------------------------------
@@ -181,6 +183,9 @@ berg_zone = polygon
 
 
 if __name__ == "__main__":
+    
+    from dash import Dash
+    import dash_leaflet as dl
     
     # ---------------------------------------------------------------------
     # DASH APP
