@@ -547,13 +547,14 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             opti.subject_to(cons)
             opti.minimize(fuel)
         
-        if self.verbose:
-            print(_banner)
+        # if self.verbose:
+        print(_banner)
         
         sol = opti.solve(
             max_iter=max_iter,
             behavior_on_failure="return_last",
             options=solver_options,
+            verbose=self.verbose,
         )
         
         status = 1 if opti.return_status() in SOLVED else 2

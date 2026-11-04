@@ -65,7 +65,8 @@ DEFAULT_MODEL="ifs"
 # ----------------------------
 
 PRODUCT = "oper"
-MODELS = ["ifs", "gfs"]
+# MODELS = ["ifs", "gfs"]
+MODELS = ["gfs"]
 
 # PRODUCT = "enfo"
 # MODELS = ["ifs"]
