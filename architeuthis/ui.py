@@ -26,7 +26,8 @@ from dash_iconify import DashIconify
 from dash_extensions.enrich import DashProxy
 from flask import send_file, request, jsonify
 
-from herbie.toolbox import ccrs
+# from herbie.toolbox import ccrs
+import cartopy.crs as ccrs
 from architeuthis.toolbox.windy_colormaps import get_wind_cmap, get_wave_cmap
 
 import architeuthis.numpy as np
