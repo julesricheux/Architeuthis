@@ -89,6 +89,8 @@ _banner = """
 ===================================================================
 """
 
+GUST_DEFAULT_RATIO = 1.23 # (https://cimmse.wordpress.com/2013/09/20/a-wind-gust-factor-database-of-marine-observations-from-10-tropical-cyclones-2/)
+
 
 def tall(array):
     return np.reshape(array, (-1, 1))

@@ -15,7 +15,7 @@ from architeuthis.common import _banner
 from architeuthis.optimization import Opti
 from architeuthis.icebergs import berg_zone
 from architeuthis.forecast import Forecast, Topography
-from architeuthis.common import ArchiteuthisObject, Datetime
+from architeuthis.common import ArchiteuthisObject, Datetime, GUST_DEFAULT_RATIO
 from architeuthis.toolbox.geo_utils import (
     great_circle_route,
     distances,
@@ -294,6 +294,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         atmosphere_member: float = None,
         wave_member: float = None,
         constraints: Optional[Callable[[dict], list]] = default_routing_constraints,
+        options: dict = {"include_gusts": True},
         verbose: bool = True,
     ):
         self.vessel = vessel
@@ -306,6 +307,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         self.atmosphere_member = atmosphere_member
         self.wave_member = wave_member
         self.constraints = constraints
+        self.options = options
         
         super().__init__(name, verbose)
         
@@ -330,6 +332,12 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         solve: bool = True,
         constraints: Optional[Union[Callable[[dict], list], list]] = None,
     ):
+        
+        include_gusts = ("include_gusts" in self.options.keys() and self.options["include_gusts"])
+        interpolate_gust = include_gusts and "gust" in self.atmosphere.interpolators.keys()
+        
+        if include_gusts and not interpolate_gust:
+            print("🌪️ Info: gust not found in interpolators. Defaulting to the standard ratio.")
             
         etd = self.voyage.etd
         eta = self.voyage.eta
@@ -452,6 +460,11 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         tws = np.sqrt(u10**2. + v10**2.) * 3600./1852.
         twd = np.mod(np.arctan2d(u10, v10)+180., 360.)
         
+        if include_gusts and interpolate_gust:
+            tws_gust = self.atmosphere("gust", atmosphere_query) * 3600./1852.
+        else:
+            tws_gust = tws * GUST_DEFAULT_RATIO
+        
         # TODO find why east/north wave generates unstability
         # swh = np.sqrt(uw**2. + vw**2.)
         # mwd = np.mod(np.arctan2d(uw, vw)+180, 360.)
@@ -478,9 +491,16 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         u_aw = tws * np.sind(twa)
         v_aw = tws * np.cosd(twa) + sog
         
+        if include_gusts:
+            u_aw_gust = tws_gust * np.sind(twa)
+            v_aw_gust = tws_gust * np.cosd(twa) + sog
+        
         # Apparent Wind Speed (AWS) and Apparent Wind Angle (AWA)
         aws = np.sqrt(u_aw**2. + v_aw**2.)
         awa = np.arctan2d(u_aw, v_aw)
+        
+        if include_gusts:
+            aws_gust = np.sqrt(u_aw_gust**2. + v_aw_gust**2.)
         
         # Current Speed (CS) and Current direction (CD)
         cs = np.sqrt(uc**2. + vc**2.) # current speed in kts
@@ -532,6 +552,12 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             "lon": lon,
             "opti": opti,
         }
+        
+        if include_gusts:
+            ctx |= {
+                "tws_gust": tws_gust,
+                "aws_gust": aws_gust,
+            }
 
         # Resolve active constraints
         active_constraints = constraints if constraints is not None else self.constraints
@@ -563,7 +589,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         self.sol = sol
         self.status = status
         
-        return {
+        output = {
             "etd": etd,
             "eta": eta,
             "transit_sog": sog0,
@@ -600,3 +626,11 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             "dist_rel": sol(np.sum(d)/dist0),
             "status": status,
         }
+        
+        if include_gusts:
+            output |= {
+                "tws_gust": sol(tws_gust),
+                "aws_gust": sol(aws_gust),
+            }
+        
+        return output
