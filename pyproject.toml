@@ -1,20 +1,24 @@
 [build-system]
-requires = ["setuptools>=61.0.0", "wheel"]
+requires = ["setuptools>=77.0.0", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "architeuthis"
-version = "0.1.0"
+dynamic = ["version"]  # derived from the git tag (e.g. v0.1.4 -> 0.1.4)
 description = "Meteorological, oceanographic, and geospatial processing library for Architeuthis."
-readme = "../README.md"  # Pulls the root GitHub repository README
-requires-python = ">=3.13"
-license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Jules Richeux", email = "j.richeux@neoline.eu" }
 ]
+keywords = ["meteorology", "oceanography", "geospatial", "weather routing", "xarray"]
 classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
 dependencies = [
@@ -22,21 +26,15 @@ dependencies = [
     "scipy",
     "pandas",
     "matplotlib",
+    "seaborn",
     "sympy",
-    "cython",
     "casadi",
     "xarray",
     "geojson",
     "pillow",
-    "seaborn",
-    "flask",
+    "requests",
     "herbie-data",
     "copernicusmarine",
-    "requests",
-    "dash==3.2.0",
-    "dash-leaflet",
-    "dash-mantine-components",
-    "dash-iconify",
     "cartopy",
     "metpy",
     "netcdf4",
@@ -45,5 +43,21 @@ dependencies = [
     "h5py",
 ]
 
+[project.optional-dependencies]
+app = [
+    "flask",
+    "dash>=3.2,<4",
+    "dash-leaflet",
+    "dash-mantine-components",
+    "dash-iconify",
+]
+
+[project.urls]
+Homepage = "https://github.com/julesricheux/Architeuthis"
+Repository = "https://github.com/julesricheux/Architeuthis"
+Issues = "https://github.com/julesricheux/Architeuthis/issues"
+
 [tool.setuptools.packages.find]
 include = ["architeuthis*"]
+
+[tool.setuptools_scm]
