@@ -3,7 +3,7 @@ name: Publish Architeuthis to PyPI
 on:
   push:
     tags:
-      - 'architeuthis-v*' # Triggers on tags like architeuthis-v0.1.0
+      - 'v*'
 
 jobs:
   build:
