@@ -1,0 +1,173 @@
+# Architeuthis
+
+Open-source marine weather and decision-making framework for hybrid sailing ships. It couples mesh-free, fully differentiable methods in a unified optimization environment to compute optimal routes under real-world constraints.
+
+"Mesh-free" means routes are not searched on a graph: waypoints are continuous decision variables in a single nonlinear program (NLP). Weather, bathymetry and vessel polars are differentiable lookup tables queried at those waypoints. CasADi differentiates through everything and IPOPT solves it.
+
+## Conventions
+
+- **Unified math:** use `import architeuthis.numpy as np` in anything that may run symbolically.
+- **Differentiable first:** no branching on values that may be symbolic, and prefer smooth formulations. Use `np.where`, `np.softmax`, `np.softmin`, `np.blend` and `np.sigmoid` rather than `if`, boolean masks or in-place assignment.
+- **Object model:** domain objects inherit from `ArchiteuthisObject` (`common.py`), which takes `name` and `verbose`. Data-backed objects inherit from `ArchiteuthisData` or `ArchiteuthisSpatialData`. Analyses inherit from `ArchiteuthisAnalysis` (`core.py`).
+- **Naming:** PEP8 with descriptive names. Use keyword arguments unless self-explanatory, and one parameter per line in long signatures and calls.
+- **Maritime abbreviations** are the accepted exception to descriptive names; see the glossary below.
+- **Console output:** user-facing status goes through `print` with the existing emoji vocabulary (📦 ✅ ⬇️ ➕ ➖ 🟦 💔 ⚠️).
+- **Project docs:** record notable changes in `CHANGELOG.md` (Keep a Changelog, SemVer) and planned work in `ROADMAP.md`.
+- **Vendored code:** `numpy/`, `optimization/` and `modeling/` are adapted from [AeroSandbox](https://github.com/peterdsharpe/AeroSandbox) 4.2.9 (MIT). Keep the attribution headers and make domain changes outside these packages where possible. Docstrings there still say `asb.`.
+
+## Environment and commands
+
+Python >= 3.13 with conda (`environment.yaml` creates `py313-architeuthis`). Line endings are LF for `.py`, `.md` and `.txt`.
+
+The package does not need installing for development: **run everything from the repository root** using `python -m ...`. `pip install -e ".[test]"` is the alternative, and it is what CI does.
+
+```bash
+conda env create -f environment.yaml
+```
+
+```bash
+python -m pytest
+```
+
+A single test: `python -m pytest tests/optimization/test_opti_rosenbrock.py::test_2D_rosenbrock`. Only the end-to-end routing tests: `python -m pytest -m integration`. The suite takes under a minute and needs no network or credentials. There is no linter or formatter configuration.
+
+Credentials come from environment variables, and each is only needed for its provider: `CDS_API_KEY`, `CMEMS_USER`, `CMEMS_PWD`, `EUMDAC_USER`, `EUMDAC_PWD`. Herbie sources (IFS, GFS, HRDPS) need none.
+
+Downloads are cached under `~/data/` (`common._HOME`) in `topo/`, `cmems/`, `cds/`, `eumetsat/` and `iip/`. The UI reads routes from `routes/`. Vessel polars are NetCDF files that are not in the repository.
+
+Development is Spyder-based: scripts use `#%%` cells and many modules have a `__main__` block used as a manual check.
+
+Branches: work on `develop`, PRs target `main`.
+
+## Architecture
+
+```text
+architeuthis.numpy         NumPy/CasADi unified math (AeroSandbox)
+architeuthis.optimization  Opti (cas.Opti subclass), OptiSol (AeroSandbox)
+architeuthis.modeling      Fitted/interpolated models, black_box (AeroSandbox)
+        |
+common.py      ArchiteuthisObject > ArchiteuthisData > ArchiteuthisSpatialData
+        |       load_data() pipeline, add_interpolator(), __call__(), credentials
+        +-- vessel.py     Vessel: polars NetCDF + hotel_load, sfc, max_power
+        +-- forecast.py   Topography; Forecast > Herbie (deterministic, ensemble),
+        |                 Copernicus (CMEMS), CDS (ERA5)
+        +-- satellite.py  EUMETSATData > ASCATData, PoseidonData (validation)
+        |
+icebergs.py    IIP iceberg limit: berg_zone polygon, berg_geojson
+        |
+core.py        Leg, Schedule, Voyage, RoutingAnalysis, exclusion_zones
+        |
+ui.py          Dash/Leaflet viewer of forecast fields and saved route reports
+
+toolbox/       geo_utils (route geometry), plot_utils, inspect_tools, string_formatting...
+wrappers/      json_wrapper (report JSON, GeoJSON), legacy provider wrappers
+examples/      short_term_routing.py, comparison_ascat_models.py
+tests/         numpy, optimization, modeling (AeroSandbox), domain (Architeuthis)
+```
+
+Stubs that are not functional yet: `route.Route`, `environment.Environment` (also has a broken bare import), `ECMWFForecast`, `AtmosphericForecast`, `OceanographicForecast`. `architeuthis/__init__.py` exports only `Opti` and `OptiSol`, so import everything else from submodules.
+
+### Data pipeline
+
+`ArchiteuthisData.load_data()` is a template method: `_locate_data` > `_download_data` > `_read_data` > `_convert_data` > `_extend_data`. A new data source overrides these hooks and must normalize to:
+
+- **Longitude** in [-180, 180) and sorted coordinates.
+- **Time** as a float epoch-seconds coordinate named `valid_time`.
+- **Dimension order** matching the `coord_dims` passed to `add_interpolator`.
+
+`add_interpolator` builds a CasADi `interpolant` from the array. Know these behaviours:
+
+- Dimensions are **positional**: the array is squeezed, sliced and raveled in Fortran order, so array dimension order must equal `coord_dims` order. The names only select coordinates.
+- **NaN becomes 0**, so land currents and missing values read as calm conditions.
+- Herbie and Copernicus forecasts append two fake time steps (+1e6 s, +1e7 s) filled with 0, so fields fade to zero past the horizon rather than failing. `RoutingAnalysis.check_valid_time` assumes this by treating `valid_time[-3]` as the last real step; `CDSForecast` does not pad, so the check is off by two steps there.
+- Calling `obj(var_key, X)` takes `X` with shape `(n_queries, n_dims)` and returns a column vector.
+
+`Topography` computes `distance_to_iso0`, normally registered with `var_key="z"`: a signed distance to the navigable boundary in **nautical miles**, positive on land or inside exclusion zones and negative at sea. `depth_offset` treats shallow water as land and `z_margin` adds clearance. Its coordinates are `lat` and `lon` (ETOPO 2022), unlike the `latitude` and `longitude` of forecasts. Exclusion zones are `[lat, lon]` polygons rasterized into this field; the caller must pass them to `Topography`, typically `core.exclusion_zones`.
+
+### Routing problem (`RoutingAnalysis.run`)
+
+- **Objective:** minimize total fuel, `sum((bhp + hotel_load) * dt * sfc) / 1e6` in tonnes.
+- **Fixed:** ETD, ETA, departure and arrival, so the schedule is a hard requirement and speed is an outcome (`sog = distance / dt`).
+- **Time grid:** comes from the atmospheric forecast. Segment centers (`ctim`) are the `valid_time` values strictly between ETD and ETA, and nodes (`tim`) are ETD, their midpoints and ETA. `skip_tim` thins them.
+- **Decision variables:** `vlat` and `vlon`, offsets of interior nodes from a reference route. With `vary_fac=True`, also `deviation_fac`, which blends `Voyage.route_minus`, `route_ortho` and `route_plus` (-1, 0, +1).
+- **Evaluation:** weather is sampled at segment midpoints, topography at nodes resampled with `n=3`, and the vessel with `[stw, tws, |twa|, swh, |mwa|]`.
+- **Constraints:** a callable `ctx -> list` or a plain list, given to the constructor or to `run`. `ctx` exposes the symbolic quantities plus `vessel` and `opti`. The default is `max_bhp < vessel.max_power` and `z < 0`.
+- **`solve=False`:** evaluates the reference route without optimizing it, giving a baseline for comparison.
+- **Output:** `run` returns a plain dict of numeric arrays and scalars.
+
+Required interpolator keys:
+
+| Object | Keys | Units |
+| --- | --- | --- |
+| `atmosphere` | `u10`, `v10`, optional `gust` (otherwise `tws * GUST_DEFAULT_RATIO`) | m/s, converted to kt |
+| `wave` | `swh`, `mwd` | m, deg |
+| `current` | `uo`, `vo` | m/s, converted to kt |
+| `topography` | `z` | nm |
+| `vessel` | `bhp`, `max_bhp`, `sails_contribution`; axes `stw, tws, twa, hs, wa` | kW; kt, kt, deg, m, deg |
+
+Modelling choices to preserve or change deliberately: wind and wave angles are relative to COG, apparent wind uses SOG rather than STW, and leeway is not modelled.
+
+### Glossary and units
+
+Speeds in knots, distances in nautical miles, angles in degrees, time in float epoch seconds, power in kW. Positions are always `[lat, lon]`, latitude first. A `c` prefix (`clat`, `ctim`) marks a segment center.
+
+| Term | Meaning | Term | Meaning |
+| --- | --- | --- | --- |
+| `stw`, `sog` | speed through water, over ground | `swh`, `hs` | significant wave height |
+| `cog`, `ctw` | course over ground, through water | `mwd`, `mwa` | mean wave direction, angle |
+| `tws`, `twd`, `twa` | true wind speed, direction, angle | `cs`, `cd` | current speed, direction (going to) |
+| `aws`, `awa` | apparent wind speed, angle | `bhp`, `sfc` | brake power, specific fuel consumption (g/kWh) |
+| `etd`, `eta` | departure, arrival time | `f00`, `fxx` | forecast base time, lead times |
+
+## Pitfalls
+
+**Import side effects**
+
+- `architeuthis.common` calls `logging.basicConfig(force=True)` and writes `~/.cdsapirc` if it is missing, with `key: None` when `CDS_API_KEY` is unset.
+- `architeuthis.icebergs` runs at import: it fetches the IIP bulletin (falls back to `berg_zone = []`), then downloads a shapefile zip with no fallback. So `import architeuthis.core` **needs network access** and an existing `~/data/`.
+- The empty fallback then breaks `Topography` when `core.exclusion_zones` is used, because `Path([])` raises `ValueError`.
+- `architeuthis/ui.py` is a script, not a library: importing it downloads forecasts and needs a report JSON in `~/data/routes/`. Run it from inside `architeuthis/` because of `./assets/` relative paths; it serves on port 8052.
+- `ui.py` overwrites the tracked `assets/noaa_overlay.png` at every start, so that file often shows as modified. Do not include it in unrelated commits.
+
+**Symbolic code**
+
+- `architeuthis.numpy` begins with `from numpy import *`, so any function it does not override is plain NumPy and can fail or misbehave on CasADi types. Check the overrides when using a less common function.
+- `toolbox/geo_utils.py` is mixed. `distances`, `headings`, `midpoints` and `resample_coordinates` work symbolically. `poly_deviated_route`, `deviated_gc_segment` and `great_circle_route` are numeric only and may only build reference routes before optimization.
+- `core.py` itself uses non-smooth `np.mod`, `np.abs`, `np.fmax` and `np.fmin`. This is existing behaviour, not a pattern to extend.
+- `headings` is a local flat approximation and nothing unwraps longitude, so routes crossing the antimeridian are unsupported.
+
+**Solver**
+
+- `DEFAULT_SOLVER_OPTIONS` uses `linear_solver: spral`. With casadi 3.7.2 on Windows, `run(solve=False)` with these defaults crashes the process with an access violation. Pass `linear_solver: mumps` for baselines, as `examples/short_term_routing.py` does.
+- `acceptable_tol` is `1e9` and `Solved_To_Acceptable_Level` counts as solved, so `status == 1` is weak evidence of optimality. The solve uses `behavior_on_failure="return_last"`, so failures return a possibly infeasible route with `status == 2`. Check `status` and `max(z)`.
+
+**API traps**
+
+- `Voyage` type hints say `Datetime`, but `etd` and `eta` must be float epoch seconds because the code does arithmetic on them. Use `pd.to_datetime(...).timestamp()`.
+- `Vessel.hotel_load` and `Vessel.sfc` are wrapped into callables, while `Vessel.max_power` stays a raw value. `sfc` defaults to 0, which makes the objective zero.
+- `EnsembleHerbieForecast.add_interpolator` takes dimensions as (member, time, lat, lon), but `RoutingAnalysis` queries (time, member, lat, lon). No active code exercises this path, so verify the order before using ensemble members.
+- Report consumers (`json_wrapper.route_to_geojson`) need `model` and `member` keys that `run` does not produce; callers add them. Nothing in the package saves reports to `~/data/routes/`: use `json_wrapper.CustomEncoder` to write them.
+
+## Testing
+
+Tests live in `tests/`, configured in `pyproject.toml`. `.github/workflows/tests.yml` runs them with coverage on every push, on Ubuntu and Windows.
+
+- **`tests/numpy`, `tests/optimization`, `tests/modeling`:** vendored from AeroSandbox, including the `import architeuthis as asb` style.
+- **`tests/domain`:** Architeuthis code. `test_routing.py` runs `RoutingAnalysis` end to end, marked `integration`.
+- **Expected failure:** `test_black_box_nonsmooth_function` is `xfail` because IPOPT can fail on the kink of `abs()`.
+
+Rules for new tests:
+
+- **Stay offline.** `tests/conftest.py` points `HOME` at a temporary folder, removes credentials and replaces `architeuthis.icebergs` with a stub. Mock providers with `patch("architeuthis.forecast.<name>")`.
+- **Use synthetic data.** The fixtures in `tests/domain/conftest.py` provide forecasts, topographies and a vessel: assign a dataset to `.data`, skip `load_data()`, then call `add_interpolator`.
+- **Pass `linear_solver: mumps`** in routing tests, because of the `spral` crash described under Pitfalls.
+- **Do not change `--tb=native`.** Other traceback styles parse `casadi.py`, which raises `MemoryError` and aborts the session.
+
+Not covered: `icebergs.py` (its import needs the network), `ui.py`, `satellite.py`, `wrappers/json_wrapper.route_to_geojson`, and the default `spral` solver options.
+
+## Known inconsistencies
+
+- `examples/short_term_routing.py` is an operational script rather than a clean example: hard-coded local polar paths, bare `from geo_utils import` and `from plot_utils import` that need `toolbox/` on the path, and legacy Earth2014 dimension names for `Topography`, which now needs `"lat"` and `"lon"`.
+- Versions disagree: `pyproject.toml` 0.1.0, `__init__.py` 0.1.3, `CHANGELOG.md` v0.1.4dev.
+- `tall` and `wide` are duplicated in `common.py` and `core.py`, and `core.py` defines an unused `sigmoid`, `transform` and `added_wave_load`. `ROADMAP.md` plans to move these helpers into `numpy`.
+- `raise(ValueError, "...")` appears in `forecast.py` and `ui.py`. In Python 3 this raises `TypeError` rather than the intended error.
