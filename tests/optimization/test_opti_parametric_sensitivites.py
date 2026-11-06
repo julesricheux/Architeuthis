@@ -2,7 +2,7 @@ import architeuthis as asb
 import architeuthis.numpy as np
 import pytest
 
-from architeuthis.tools.pretty_plots import plt
+import matplotlib.pyplot as plt
 
 """
 This test solves the 2-dimensional Rosenbrock problem constrained to a circle centered on the origin:

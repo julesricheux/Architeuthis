@@ -1,4 +1,4 @@
 # Ship only the architeuthis package (README, LICENSE and pyproject.toml are added automatically)
 graft architeuthis
-prune architeuthis/tests
+prune tests
 global-exclude *.py[cod] __pycache__ .DS_Store

@@ -17,7 +17,7 @@ Open-source marine weather and decision-making framework for hybrid sailing ship
 
 ## Environment and commands
 
-Python >= 3.13 with conda (`environment.yaml` creates `py313-architeuthis`). Line endings are LF for `.py`, `.md` and `.txt`.
+Python >= 3.11, developed on 3.13 with conda (`environment.yaml` creates `py313-architeuthis`). Line endings are LF for `.py`, `.md` and `.txt`.
 
 The package does not need installing for development: **run everything from the repository root** using `python -m ...`. `pip install -e ".[test]"` is the alternative, and it is what CI does.
 
@@ -134,11 +134,12 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 - `architeuthis.numpy` begins with `from numpy import *`, so any function it does not override is plain NumPy and can fail or misbehave on CasADi types. Check the overrides when using a less common function.
 - `toolbox/geo_utils.py` is mixed. `distances`, `headings`, `midpoints` and `resample_coordinates` work symbolically. `poly_deviated_route`, `deviated_gc_segment` and `great_circle_route` are numeric only and may only build reference routes before optimization.
 - `core.py` itself uses non-smooth `np.mod`, `np.abs`, `np.fmax` and `np.fmin`. This is existing behaviour, not a pattern to extend.
+- casadi 3.8 raises a `FutureWarning` when a NumPy function receives a casadi value (`core.py` at `np.fmax`, `geo_utils.distances` and `headings`, and parts of `numpy/` and `Opti.variable`). This works through casadi's legacy behaviour, which a later release may change.
 - `headings` is a local flat approximation and nothing unwraps longitude, so routes crossing the antimeridian are unsupported.
 
 **Solver**
 
-- `DEFAULT_SOLVER_OPTIONS` uses `linear_solver: spral`. With casadi 3.7.2 on Windows, `run(solve=False)` with these defaults crashes the process with an access violation. Pass `linear_solver: mumps` for baselines, as `examples/short_term_routing.py` does.
+- `DEFAULT_SOLVER_OPTIONS` uses `linear_solver: spral`. With casadi 3.7.2 on Windows, `run(solve=False)` with these defaults crashes the process with an access violation; casadi 3.8.2 does not. Pass `linear_solver: mumps` for baselines, as `examples/short_term_routing.py` does.
 - `acceptable_tol` is `1e9` and `Solved_To_Acceptable_Level` counts as solved, so `status == 1` is weak evidence of optimality. The solve uses `behavior_on_failure="return_last"`, so failures return a possibly infeasible route with `status == 2`. Check `status` and `max(z)`.
 
 **API traps**
@@ -150,7 +151,9 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 
 ## Testing
 
-Tests live in `tests/`, configured in `pyproject.toml`. `.github/workflows/tests.yml` runs them with coverage on every push, on Ubuntu and Windows.
+Tests live in `tests/`, configured in `pyproject.toml`. `.github/workflows/tests.yml` runs them with coverage on every push, on Ubuntu (Python 3.11 to 3.13) and Windows (3.13). `publish.yml` releases to PyPI from `v*` tags and does not depend on the tests.
+
+CI installs the latest dependencies, so it can differ from a local environment. In particular, casadi 3.7 and 3.8 do not always converge the same way, so keep test objectives reasonably well conditioned.
 
 - **`tests/numpy`, `tests/optimization`, `tests/modeling`:** vendored from AeroSandbox, including the `import architeuthis as asb` style.
 - **`tests/domain`:** Architeuthis code. `test_routing.py` runs `RoutingAnalysis` end to end, marked `integration`.
@@ -161,6 +164,7 @@ Rules for new tests:
 - **Stay offline.** `tests/conftest.py` points `HOME` at a temporary folder, removes credentials and replaces `architeuthis.icebergs` with a stub. Mock providers with `patch("architeuthis.forecast.<name>")`.
 - **Use synthetic data.** The fixtures in `tests/domain/conftest.py` provide forecasts, topographies and a vessel: assign a dataset to `.data`, skip `load_data()`, then call `add_interpolator`.
 - **Pass `linear_solver: mumps`** in routing tests, because of the `spral` crash described under Pitfalls.
+- **Keep the checkout clean.** Importing `wrappers/json_wrapper.py` or `ui.py` writes `assets/dashExtensions_default.js` to the working directory, so import them from a temporary folder, as `tests/domain/test_toolbox.py` does.
 - **Do not change `--tb=native`.** Other traceback styles parse `casadi.py`, which raises `MemoryError` and aborts the session.
 
 Not covered: `icebergs.py` (its import needs the network), `ui.py`, `satellite.py`, `wrappers/json_wrapper.route_to_geojson`, and the default `spral` solver options.
@@ -168,6 +172,6 @@ Not covered: `icebergs.py` (its import needs the network), `ui.py`, `satellite.p
 ## Known inconsistencies
 
 - `examples/short_term_routing.py` is an operational script rather than a clean example: hard-coded local polar paths, bare `from geo_utils import` and `from plot_utils import` that need `toolbox/` on the path, and legacy Earth2014 dimension names for `Topography`, which now needs `"lat"` and `"lon"`.
-- Versions disagree: `pyproject.toml` 0.1.0, `__init__.py` 0.1.3, `CHANGELOG.md` v0.1.4dev.
+- Versions disagree: `pyproject.toml` 0.1.4, `__init__.py` 0.1.3.
 - `tall` and `wide` are duplicated in `common.py` and `core.py`, and `core.py` defines an unused `sigmoid`, `transform` and `added_wave_load`. `ROADMAP.md` plans to move these helpers into `numpy`.
 - `raise(ValueError, "...")` appears in `forecast.py` and `ui.py`. In Python 3 this raises `TypeError` rather than the intended error.

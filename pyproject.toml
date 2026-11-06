@@ -41,15 +41,26 @@ dependencies = [
     "geopandas",
     "eumdac",
     "h5py",
+    "cdsapi",
+    "cfgrib",
+    "pyproj",
+    "sortedcontainers",
+    "tqdm",
 ]
 
 [project.optional-dependencies]
 app = [
     "flask",
     "dash>=3.2,<4",
+    "dash-extensions",
     "dash-leaflet",
     "dash-mantine-components",
     "dash-iconify",
+]
+test = [
+    "architeuthis[app]",
+    "pytest>=8",
+    "pytest-cov",
 ]
 
 [project.urls]
@@ -60,3 +71,26 @@ Issues = "https://github.com/julesricheux/Architeuthis/issues"
 [tool.setuptools.packages.find]
 include = ["architeuthis*"]
 exclude = ["*tests*"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+# tests/modeling holds the dataset_temperature helper imported by its tests.
+pythonpath = [".", "tests/modeling"]
+# --tb=native: pytest's own formatters parse each source file in a traceback, and
+# casadi.py is so large that this raises MemoryError and aborts the whole session.
+addopts = [
+    "--tb=native",
+    "--import-mode=importlib",
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+]
+markers = [
+    "integration: solves a full routing problem end to end on synthetic data",
+]
+
+[tool.coverage.run]
+source = ["architeuthis"]
+branch = true
+omit = ["*/integrate_discrete_derivations/*", "*/derivative_discrete_derivations/*"]
