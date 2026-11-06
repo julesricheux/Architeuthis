@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "architeuthis"
 version = "0.1.0"
 description = "Meteorological, oceanographic, and geospatial processing library for Architeuthis."
-readme = "README.md"
+readme = "../README.md"  # Pulls the root GitHub repository README
 requires-python = ">=3.13"
 license = { text = "MIT" }
 authors = [
