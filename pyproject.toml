@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "architeuthis"
-version = "0.1.4"  # must match the release tag: v0.1.4
+version = "0.1.4b"  # must match the release tag
 description = "Meteorological, oceanographic, and geospatial processing library for Architeuthis."
 readme = "README.md"
 requires-python = ">=3.11"
