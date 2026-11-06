@@ -9,15 +9,21 @@ Created on Mon Jan 19 15:54:06 2026
 import architeuthis.numpy as np
 
 from abc import abstractmethod
-from typing import Sequence, Union
+from typing import Callable, Optional, Sequence, Union
 from architeuthis.vessel import Vessel
 from architeuthis.common import _banner
 from architeuthis.optimization import Opti
 from architeuthis.icebergs import berg_zone
 from architeuthis.forecast import Forecast, Topography
-from architeuthis.common import ArchiteuthisObject, Datetime
-from architeuthis.toolbox.geo_utils import great_circle_route, distances, midpoints, headings, poly_deviated_route
-
+from architeuthis.common import ArchiteuthisObject, Datetime, GUST_DEFAULT_RATIO
+from architeuthis.toolbox.geo_utils import (
+    great_circle_route,
+    distances,
+    midpoints,
+    headings,
+    poly_deviated_route,
+    resample_coordinates,
+)
 
 # Useful for broadcasting with matrices later.
 def tall(array):
@@ -42,6 +48,13 @@ def transform(x, delta):
     # return 2 * (np.sigmoid(x) - 0.5) * delta
     return (sigmoid(x)) * tall(delta)
 
+def default_routing_constraints(ctx: dict) -> list:
+    """Default constraints function for RoutingAnalysis."""
+    return [
+        ctx["max_bhp"] < ctx["vessel"].max_power,
+        # (wide(ctx["z"]) @ tall(ctx["z"])) == 0.,
+        ctx["z"] < 0.,
+    ]
 
 DEFAULT_SOLVER_OPTIONS = {
     "ipopt":{
@@ -123,31 +136,32 @@ exclusion_zones = [
         [46.6484934, -53.0879974],
         [46.6475507, -53.0879974]
     ],
-    # [
-    #     [47.234906794905456, -2.298894594711654],
-    #     [47.25856998567288, -2.4325583888579034],
-    #     [47.29283375261824, -2.547348407391687],
-    #     [47.472965041672204, -3.132757632163045],
-    #     [47.643448179530274, -3.2076668170178877],
-    #     [47.700395091200015, -3.368297468536256],
-    #     [47.69636166917016, -3.4548323100507234],
-    #     [47.79791598030666, -3.8522262539473218],
-    #     [47.85365939763104, -3.980613066215874],
-    #     [47.84328834623138, -4.041571653262067],
-    #     [47.79730758529769, -4.187810231946969],
-    #     [47.7951034723181, -4.380102394509618],
-    #     [48.04251441805747, -4.732749036488459],
-    #     [48.271675251256646, -4.616214170859991],
-    #     [48.33235206326594, -4.766668801789211],
-    #     [48.51970337432375, -4.781458461018697],
-    #     [48.67589361128423, -4.353382869976883],
-    #     [48.75347516979233, -4.009457823390732],
-    #     [48.84141631708758, -3.5046081884123716],
-    #     [48.89654815888168, -3.0605321526173523],
-    #     [48.560105723588045, -2.671292321902763],
-    #     [48.685993556279584, -2.318443857961514],
-    #     [47.234906794905456, -2.298894594711654],
-    # ],
+    
+    [
+        [47.234906794905456, -2.298894594711654],
+        [47.25856998567288, -2.4325583888579034],
+        [47.29283375261824, -2.547348407391687],
+        [47.472965041672204, -3.132757632163045],
+        [47.643448179530274, -3.2076668170178877],
+        [47.700395091200015, -3.368297468536256],
+        [47.69636166917016, -3.4548323100507234],
+        [47.79791598030666, -3.8522262539473218],
+        [47.85365939763104, -3.980613066215874],
+        [47.84328834623138, -4.041571653262067],
+        [47.79730758529769, -4.187810231946969],
+        [47.7951034723181, -4.380102394509618],
+        [48.04251441805747, -4.732749036488459],
+        [48.271675251256646, -4.616214170859991],
+        [48.33235206326594, -4.766668801789211],
+        [48.51970337432375, -4.781458461018697],
+        [48.67589361128423, -4.353382869976883],
+        [48.75347516979233, -4.009457823390732],
+        [48.84141631708758, -3.5046081884123716],
+        [48.89654815888168, -3.0605321526173523],
+        [48.560105723588045, -2.671292321902763],
+        [48.685993556279584, -2.318443857961514],
+        [47.234906794905456, -2.298894594711654],
+    ],
     berg_zone,
 ]
 
@@ -273,18 +287,18 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         name: str,
         vessel: Vessel,
         voyage: Voyage,
-        # environment: Environment, # TODO rather use the Environment object? Find a way to handle the layers
         atmosphere: Forecast,
         wave: Forecast,
         current: Forecast,
         topography: Topography,
         atmosphere_member: float = None,
         wave_member: float = None,
+        constraints: Optional[Callable[[dict], list]] = default_routing_constraints,
+        options: dict = {"include_gusts": True},
         verbose: bool = True,
     ):
         self.vessel = vessel
         self.voyage = voyage
-        # self.env = environment
         self.atmosphere = atmosphere
         self.wave = wave
         self.current = current
@@ -292,6 +306,8 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         
         self.atmosphere_member = atmosphere_member
         self.wave_member = wave_member
+        self.constraints = constraints
+        self.options = options
         
         super().__init__(name, verbose)
         
@@ -314,27 +330,25 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         max_iter: int = 1000,
         solver_options: dict = DEFAULT_SOLVER_OPTIONS,
         solve: bool = True,
+        constraints: Optional[Union[Callable[[dict], list], list]] = None,
     ):
+        
+        include_gusts = ("include_gusts" in self.options.keys() and self.options["include_gusts"])
+        interpolate_gust = include_gusts and "gust" in self.atmosphere.interpolators.keys()
+        
+        if include_gusts and not interpolate_gust:
+            print("🌪️ Info: gust not found in interpolators. Defaulting to the standard ratio.")
             
         etd = self.voyage.etd
         eta = self.voyage.eta
-        departure = self.voyage.departure
-        arrival = self.voyage.arrival
         
         dist0 = self.voyage.distance
-        
         transit_time = self.voyage.transit_time
         
         self.check_valid_time()
             
-        # f00 = self.atmosphere.data["valid_time"].values[0] # earliest wind forecast
-        # fxx = np.asarray(steps) * 3600 + f00 # TODO adapt steps to each analysis
         fxx = self.atmosphere.data.valid_time.values
-        # f99 = self.atmosphere.data["valid_time"].values[-3] # latest actual wind forecast
-        
-        ctim0 = fxx[(fxx>etd) * (fxx<eta)][skip_tim::1+skip_tim]
-        
-        # assert (ctim0[-1] < f99), "ETA later than furthest forecast"
+        ctim0 = fxx[(fxx > etd) * (fxx < eta)][skip_tim::1+skip_tim]
         
         tim0 = np.concatenate((
             [etd], 
@@ -343,71 +357,31 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         ))
         
         npts = len(tim0)
-        
-        curv_abc = (tim0 - etd)/(eta - etd)
-        
-        print((departure, arrival, npts))
-        _, _, dist0 = great_circle_route(departure, arrival, npts) # TODO initialize a sea route rather than a great circle route
-        
-        # TODO should port and starboard limits rather than loxo/ortho
+        curv_abc = (tim0 - etd) / (eta - etd)
         
         sog0 = self.voyage.transit_sog
-        
-        # TODO determine how much data can be handled at a time
-        
-        # xn = np.linspace(0, np.pi, npts)[1:-1]
         xn = np.linspace(0, 1., npts)[1:-1]
+        delta = 4 * xn * (1-xn) * 1.
         
-        delta = 4 * xn * (1-xn) * 1. #
-        
-        # initializing opti
+        # Initializing opti
         opti = Opti()
         
         if vary_fac and solve:
-            deviation_fac = opti.variable(init_guess=init_fac)#, lower_bound=0., upper_bound=2.)
+            deviation_fac = opti.variable(init_guess=init_fac)
         else:
             deviation_fac = opti.parameter(init_fac)
             
-        # init minus
         lat0minus, lon0minus = self.voyage.route_minus(curv_abc)
-        
-        # init ortho
         lat0ortho, lon0ortho = self.voyage.route_ortho(curv_abc)
-        
-        # init plus
         lat0plus, lon0plus = self.voyage.route_plus(curv_abc)
             
         lat0 = np.fmax(deviation_fac, 0) * lat0plus + (1-np.abs(deviation_fac)) * lat0ortho - np.fmin(deviation_fac, 0.) * lat0minus
         lon0 = np.fmax(deviation_fac, 0) * lon0plus + (1-np.abs(deviation_fac)) * lon0ortho - np.fmin(deviation_fac, 0.) * lon0minus
         
-        # # init ortho
-        # lat0ortho, lon0ortho = great_circle_path_points(departure, arrival, curv_abc)
-        
-        # # init loxo
-        # lat0loxo = departure[0] * (1-curv_abc) + arrival[0] * curv_abc
-        # lon0loxo = departure[1] * (1-curv_abc) + arrival[1] * curv_abc
-        
-        # lat0 = deviation_fac * lat0loxo + (1-deviation_fac) * lat0ortho
-        # lon0 = deviation_fac * lon0loxo + (1-deviation_fac) * lon0ortho
-        
-        # TODO is it okay to have these uncontrained?
+        # TODO no constraints so add an inside-bounds check at the end of the computation
         if solve:
             vlon = opti.variable(n_vars=npts-2, init_guess=0.,)
             vlat = opti.variable(n_vars=npts-2, init_guess=0.,)
-            # vlon = np.array([
-            #    opti.variable(
-            #         init_guess=0.,
-            #         # lower_bound=-dist0/60/2*delta[i-1],
-            #         # upper_bound=+dist0/60/2*delta[i-1],
-            #     ) for i in range(1, npts-1)
-            # ])
-            # vlat = np.array([
-            #    opti.variable(
-            #         init_guess=0.,
-            #         # lower_bound=-dist0/60/2*delta[i-1],
-            #         # upper_bound=+dist0/60/2*delta[i-1],
-            #     ) for i in range(1, npts-1)
-            # ])
         else:
             vlon = 0.
             vlat = 0.
@@ -446,116 +420,167 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         else:
             wave_query = environment_query
         
-        u10 = self.atmosphere("u10", atmosphere_query) # eastward tws10 in m/s
-        v10 = self.atmosphere("v10", atmosphere_query) # northward tws10 in m/s
+        u10 = self.atmosphere("u10", atmosphere_query)
+        v10 = self.atmosphere("v10", atmosphere_query)
         
         swh = self.wave("swh", wave_query)
         mwd = self.wave("mwd", wave_query)
+        # uw = self.wave("uw", wave_query)
+        # vw = self.wave("vw", wave_query)
         
-        uc = self.current("uo", environment_query) * 3600./1852. # eastward current in kts
-        vc = self.current("vo", environment_query) * 3600./1852. # northward current in kts
+        uc = self.current("uo", environment_query) * 3600./1852.
+        vc = self.current("vo", environment_query) * 3600./1852.
+        
+        # tlat = midpoints(np.concatenate((lat[1:-1], clat)))
+        # tlon = midpoints(np.concatenate((lon[1:-1], clon)))
+        
+        
+        # print("ntm")
+        
+        tlat, tlon = resample_coordinates(
+            lat[1:-1],
+            lon[1:-1],
+            n=3,
+        )
+        
+        # print(tlon)
+        # print(tlat)
+        
+        # tlat, tlon = lat[1:-1], lon[1:-1]
         
         topography_query = np.concatenate([
-            # lat,
-            # lon,
-            # clat,
-            # clon,
-            np.concatenate((lat[1:-1], clat)),
-            np.concatenate((lon[1:-1], clon)),
-        ], axis=1) # TODO need for higher topography resolution to avoid land
+            # np.concatenate((lat[1:-1], clat)),
+            # np.concatenate((lon[1:-1], clon)),
+            tlat,
+            tlon,
+        ], axis=1)
         
         z = self.topography("z", topography_query)
         
-        tws = np.sqrt(u10**2. + v10**2.) * 3600./1852. # wind speed in kts
-        twd = np.mod(np.arctan2d(u10, v10)+180., 360.) # wind direction from 0 to 360 deg
+        tws = np.sqrt(u10**2. + v10**2.) * 3600./1852.
+        twd = np.mod(np.arctan2d(u10, v10)+180., 360.)
+        
+        if include_gusts and interpolate_gust:
+            tws_gust = self.atmosphere("gust", atmosphere_query) * 3600./1852.
+        else:
+            tws_gust = tws * GUST_DEFAULT_RATIO
         
         # TODO find why east/north wave generates unstability
         # swh = np.sqrt(uw**2. + vw**2.)
         # mwd = np.mod(np.arctan2d(uw, vw)+180, 360.)
         
-        # tcs = np.sqrt(u10**2. + v10**2.) # current speed in kts
-        # tcd = np.mod(np.arctan2d(uc, vc), 360.) # current going to from 0 to 360 deg
-        
         cog = headings(lat, lon)
-        
-        # dlat = np.diff(lat)
-        # dlon = np.diff(lon) * np.cosd(clat) # local east–west distance correction
         
         twa = np.mod(twd-cog + 180., 360.) - 180
         mwa = np.mod(mwd-cog + 180., 360.) - 180
         
-        # twa = np.zeros(npts-1) + 90*np.ones(npts-1)
-        # mwa = np.zeros(npts-1)
         d = distances(lat, lon)
         dt = np.diff(tim) / 3600.
         sog = d/dt
         
-        # cog_r = np.radians(cog)
-        # tcd_r = np.radians(tcd)
+        duog = sog * np.sind(cog)
+        dvog = sog * np.cosd(cog)
         
-        duog = sog * np.sind(cog) # eastward sog in kts
-        dvog = sog * np.cosd(cog) # northward sog in kts
+        dutw = duog - uc
+        dvtw = dvog - vc
         
-        # norm = np.sqrt(dlat**2. + dlon**2. + 1e-9)
+        stw = np.sqrt(dutw**2. + dvtw**2.)
+        ctw = np.mod(np.arctan2d(dutw, dvtw), 360.)
         
-        # duog = sog * dlat / norm
-        # dvog = sog * dlon / norm
+        # Apparent wind components relative to vessel heading
+        u_aw = tws * np.sind(twa)
+        v_aw = tws * np.cosd(twa) + sog
         
-        dutw = duog - uc # eastward stw in kts
-        dvtw = dvog - vc # northward stw in kts
+        if include_gusts:
+            u_aw_gust = tws_gust * np.sind(twa)
+            v_aw_gust = tws_gust * np.cosd(twa) + sog
         
-        # TODO compute stw
+        # Apparent Wind Speed (AWS) and Apparent Wind Angle (AWA)
+        aws = np.sqrt(u_aw**2. + v_aw**2.)
+        awa = np.arctan2d(u_aw, v_aw)
         
-        stw = np.sqrt(dutw**2. + dvtw**2.) # stw norm in kts
-        ctw = np.mod(np.arctan2d(dutw, dvtw), 360.) # course through water from 0 to 360
+        if include_gusts:
+            aws_gust = np.sqrt(u_aw_gust**2. + v_aw_gust**2.)
         
-        # stw = sog
+        # Current Speed (CS) and Current direction (CD)
+        cs = np.sqrt(uc**2. + vc**2.) # current speed in kts
+        cd = np.mod(np.arctan2d(uc, vc), 360.) # current going to from 0 to 360 deg
         
         vessel_query = np.concatenate([
             stw, tws, np.abs(twa), swh, np.abs(mwa),
         ], axis=1)
         
-        hotel_load = self.vessel.hotel_load # KW
+        # vessel_query = {
+        #     "stw": stw,
+        #     "tws": tws,
+        #     "twa": np.abs(twa),
+        #     "swh": swh,
+        #     "mwa": np.abs(mwa),
+        # }
         
         avg_bhp = self.vessel("bhp", vessel_query)
         max_bhp = self.vessel("max_bhp", vessel_query)
         # leeway = vessel("leeway", vessel_query)        
         sc = self.vessel("sails_contribution", vessel_query)
         
-        sfc = self.vessel.sfc # g/kWh
+        hotel_load = self.vessel.hotel_load(avg_bhp) # kW
         
-        consumption = np.sum(np.abs(avg_bhp + hotel_load) * dt) # kWh
+        sfc = self.vessel.sfc(avg_bhp+hotel_load) # g/kWh
         
-        fuel = consumption * sfc / 1e6 # tons
+        consumption = np.abs(avg_bhp + hotel_load) * dt # kWh
         
-        # TODO build interpolator for sfc
+        fuel = np.sum(consumption * sfc) / 1e6 # tons # TODO get rid of sfc to rather have f(power) = cons
         
-        cons = []
+        # --- Dynamic Constraints Context ---
+        ctx = {
+            "vessel": self.vessel,
+            "max_bhp": max_bhp,
+            "avg_bhp": avg_bhp,
+            "z": z,
+            "sog": sog,
+            "stw": stw,
+            "tws": tws,
+            "twa": twa,
+            "aws": aws,
+            "awa": awa,
+            "swh": swh,
+            "mwa": mwa,
+            "cog": cog,
+            "cs": cs,
+            "cd": cd,
+            "lat": lat,
+            "lon": lon,
+            "opti": opti,
+        }
         
-        # cons.append(np.max(stranded) < minDepth) # TODO constraint land
-        # cons.append(lon >= minimum_longitude)
-        # cons.append(lon <= maximum_longitude)
-        # cons.append(lat >= minimum_latitude)
-        # cons.append(lat <= maximum_latitude)
+        if include_gusts:
+            ctx |= {
+                "tws_gust": tws_gust,
+                "aws_gust": aws_gust,
+            }
+
+        # Resolve active constraints
+        active_constraints = constraints if constraints is not None else self.constraints
         
-        # cons.append(stw <= maxSTW)
-        # cons.append(swh < maxSWH)
-        cons.append(max_bhp < self.vessel.max_power)
-        cons.append((wide(z) @ tall(z)) == 0.)
-        # cons.append(z == 0.)
+        if callable(active_constraints):
+            cons = active_constraints(ctx)
+        elif isinstance(active_constraints, list):
+            cons = active_constraints
+        else:
+            cons = []
         
         if solve:
             opti.subject_to(cons)
             opti.minimize(fuel)
         
-        if self.verbose:
-            print(_banner)
+        # if self.verbose:
+        print(_banner)
         
         sol = opti.solve(
             max_iter=max_iter,
             behavior_on_failure="return_last",
             options=solver_options,
-            # callback=callback,
+            verbose=self.verbose,
         )
         
         status = 1 if opti.return_status() in SOLVED else 2
@@ -564,30 +589,31 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         self.sol = sol
         self.status = status
         
-        # # reports = []
-        
-        return {
-            "etd" : etd,
-            "eta" : eta,
-            "transit_sog" : sog0,
-            "transit_time" : transit_time,
+        output = {
+            "etd": etd,
+            "eta": eta,
+            "transit_sog": sog0,
+            "transit_time": transit_time,
             "init_fac": init_fac,
-            "fuel" : sol(fuel),
-            "stw" : sol(stw),
-            "sog" : sol(sog),
-            "cog" : sol(cog),
-            "ctw" : sol(ctw),
-            # "leeway" : sol(leeway),
-            "tws" : sol(tws),
-            "twd" : sol(twd),
-            "twa" : sol(twa),
-            "swh" : sol(swh),
-            "mwd" : sol(mwd),
-            "mwa" : sol(mwa),
-            "z" : sol(z),
-            "avg_bhp" : sol(avg_bhp),
-            "max_bhp" : sol(max_bhp),
-            "sails_contribution" : sol(sc),
+            "fuel": sol(fuel),
+            "stw": sol(stw),
+            "sog": sol(sog),
+            "cog": sol(cog),
+            "ctw": sol(ctw),
+            "tws": sol(tws),
+            "twd": sol(twd),
+            "twa": sol(twa),
+            "aws": sol(aws),
+            "awa": sol(awa),
+            "swh": sol(swh),
+            "mwd": sol(mwd),
+            "mwa": sol(mwa),
+            "z": sol(z),
+            "cs": sol(cs),
+            "cd": sol(cd),
+            "avg_bhp": sol(avg_bhp),
+            "max_bhp": sol(max_bhp),
+            "sails_contribution": sol(sc),
             "pos": [[la, lo] for la, lo in zip(sol(lat), sol(lon))],
             "tim": sol(tim),
             "lat": sol(lat),
@@ -596,8 +622,15 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             "ctim": sol(ctim),
             "clat": sol(clat),
             "clon": sol(clon),
-            # "valid_time": sol(vtim),
             "dist": sol(np.sum(d)),
             "dist_rel": sol(np.sum(d)/dist0),
             "status": status,
         }
+        
+        if include_gusts:
+            output |= {
+                "tws_gust": sol(tws_gust),
+                "aws_gust": sol(aws_gust),
+            }
+        
+        return output

@@ -13,9 +13,6 @@ import requests
 
 import pandas as pd
 import geopandas as gpd
-import dash_leaflet as dl
-
-from dash import Dash
 from pathlib import Path
 
 from architeuthis.common import _HOME
@@ -27,13 +24,7 @@ from architeuthis.common import _HOME
 # PARSE TEXT BULLETIN
 # ---------------------------------------------------------------------
 
-# 1) Download the iceberg bulletin
-url = "https://www.navcen.uscg.gov/sites/default/files/iip/bulletin/IcebergBulletin.txt"
-resp = requests.get(url)
-resp.raise_for_status()
-text = resp.text
-
-# 2) Helper to extract coordinate block from start keyword to first period
+# Helper to extract coordinate block from start keyword to first period
 def extract_coord_block(text, start_phrase):
     # find start
     start_idx = text.find(start_phrase)
@@ -46,7 +37,7 @@ def extract_coord_block(text, start_phrase):
     block_text = text[start_idx:end_idx+1]
     return block_text
 
-# 3) Helper to parse coordinates from block
+# Helper to parse coordinates from block
 coord_pattern = re.compile(r"(\d{1,2}-\d{2}[NS])\s+(\d{2,3}-\d{2}[EW])")
 def parse_coords(block_text):
     coords = []
@@ -64,24 +55,42 @@ def parse_coords(block_text):
         coords.append([lat, lon])
     return coords
 
-# 4) Extract and parse the blocks
-iceberg_block = extract_coord_block(text, "ICEBERG LIMIT ALONG TRACKLINE JOINING")
-# western_block = extract_coord_block(text, "WESTERN ICEBERG LIMIT ALONG TRACKLINE JOINING")
+def get_iip_zone_from_bulletin(text):
+    # Extract and parse the blocks
+    iceberg_block = extract_coord_block(text, "ICEBERG LIMIT ALONG TRACKLINE JOINING")
+    # western_block = extract_coord_block(text, "WESTERN ICEBERG LIMIT ALONG TRACKLINE JOINING")
+    
+    iceberg_coords = parse_coords(iceberg_block)
+    # western_coords = parse_coords(western_block)
+    western_coords = [
+        [iceberg_coords[-1][0], iceberg_coords[-1][1] - 10.],
+        [iceberg_coords[-1][0] - 1., iceberg_coords[-1][1] - 10.],
+        # [iceberg_coords[0][0], iceberg_coords[0][1] - 10.],
+    ]
+    
+    # 5) Combine into closed polygon
+    polygon = iceberg_coords + western_coords
+    if polygon[0] != polygon[-1]:
+        polygon.append(polygon[0])
+        
+    return polygon
 
-iceberg_coords = parse_coords(iceberg_block)
-# western_coords = parse_coords(western_block)
-western_coords = [
-    [iceberg_coords[-1][0], iceberg_coords[-1][1] - 10.],
-    [iceberg_coords[0][0], iceberg_coords[0][1] - 10.],
-]
+def get_latest_iip_zone():
+    # Download the iceberg bulletin with browser headers and fallback handling
+    url = "https://www.navcen.uscg.gov/sites/default/files/iip/bulletin/IcebergBulletin.txt"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        return get_iip_zone_from_bulletin(resp.text)
+    except Exception as e:
+        print(f"Warning: Could not fetch latest IIP iceberg bulletin ({e}). Using empty polygon fallback.")
+        return []
 
-# 5) Combine into closed polygon
-polygon = iceberg_coords + western_coords
-if polygon[0] != polygon[-1]:
-    polygon.append(polygon[0])
-
-# print("Iceberg limit polygon (lon, lat):")
-# print(polygon)
+polygon = get_latest_iip_zone()
 
 
 # ---------------------------------------------------------------------
@@ -174,6 +183,9 @@ berg_zone = polygon
 
 
 if __name__ == "__main__":
+    
+    from dash import Dash
+    import dash_leaflet as dl
     
     # ---------------------------------------------------------------------
     # DASH APP

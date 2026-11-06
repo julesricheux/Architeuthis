@@ -7,13 +7,13 @@ Created on Fri Dec 12 14:18:00 2025
 
 
 import casadi as ca
-# import jax.numpy as jnp
+from typing import Union, Sequence
 import architeuthis.numpy as np
 
 from pyproj import Geod
 
 
-def great_circle_route(p1, p2, nPoints):
+def great_circle_route(p1, p2, nPoints, include_ends=True):
     # use great circle formula for a perfect sphere.
     a = 6378.137 / 1.852  # semi-major axis (equatorial radius) in nmi
     b = 6356.752 / 1.852  # semi-minor axis (polar radius) in nmi
@@ -26,13 +26,17 @@ def great_circle_route(p1, p2, nPoints):
     az12, az21, dist = gc.inv(lon1, lat1, lon2, lat2)
     # npoints = np.ceil((dist + 0.5 * 1000. * del_s) / (1000. * del_s))
     lonlats = gc.npts(lon1, lat1, lon2, lat2, nPoints-2)
-    lons = [lon1]
-    lats = [lat1]
+    lons = []
+    lats = []
+    if include_ends:
+        lons.append(lon1)
+        lats.append(lat1)
     for lon, lat in lonlats:
         lons.append(lon)
         lats.append(lat)
-    lons.append(lon2)
-    lats.append(lat2)
+    if include_ends:
+        lons.append(lon2)
+        lats.append(lat2)
     
     return np.array(lats), np.array(lons), dist
 
@@ -115,6 +119,33 @@ def headings(lats, lons):
 def midpoints(pts):
     
     return (pts[:-1] + pts[1:]) / 2
+
+
+def resample_coordinates(lat, lon, n):
+    
+    if n <= 0:
+        return lat, lon
+
+    # Calculate step fractions (e.g., for n=1: t_vals = [0.0, 0.5])
+    t_vals = np.linspace(0, 1, n + 2)[:-1]
+    
+    new_lats = []
+    new_lons = []
+    
+    # lat.shape[0] safely gets the length of a CasADi vector or Numpy array
+    num_points = lat.shape[0]
+    
+    # Build the interpolation point-by-point
+    for i in range(num_points - 1):
+        for t in t_vals:
+            new_lats.append(lat[i] * (1 - t) + lat[i+1] * t)
+            new_lons.append(lon[i] * (1 - t) + lon[i+1] * t)
+            
+    # Append the final destination point
+    new_lats.append(lat[-1])
+    new_lons.append(lon[-1])
+    
+    return np.concatenate(new_lats), np.concatenate(new_lons)
 
 
 def great_circle_path_points(
@@ -389,7 +420,10 @@ def deviated_gc_segment(lat0, lon0, lat1, lon1, divergence):
 #     return route
 
 
-def poly_deviated_route(lats, lons, divergences):
+def poly_deviated_route(lats, lons, divergences=None):
+    
+    if divergences is None:
+        divergences = np.zeros(len(lats) - 1)
 
     assert len(lats) == len(lons)
     assert len(divergences) == len(lats) - 1
@@ -454,3 +488,29 @@ def lonlat_to_web_mercator(lon, lat):
     x = np.radians(lon) * R
     y = np.log(np.tan(np.pi/4 + np.radians(lat)/2)) * R
     return x, y
+
+
+def calculate_geographic_bounding_box(
+    latitudes: Union[np.ndarray, Sequence[float], float] = None, 
+    longitudes: Union[np.ndarray, Sequence[float], float] = None,
+) -> tuple[float, float, float, float]:
+    """
+    Computes the standard geographic (EPSG:4326) bounding box.
+    
+    Args:
+        latitudes: A sequence of latitude values in decimal degrees.
+        longitudes: A sequence of longitude values in decimal degrees.
+        
+    Returns:
+        A tuple containing the bounding box in decimal degrees:
+        (minimum_longitude, minimum_latitude, maximum_longitude, maximum_latitude).
+    """
+    if latitudes is None or longitudes is None:
+        raise ValueError("Latitude and longitude sequences cannot be empty.")
+        
+    return (
+        float(np.min(longitudes)), 
+        float(np.min(latitudes)), 
+        float(np.max(longitudes)), 
+        float(np.max(latitudes))
+    )

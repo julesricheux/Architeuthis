@@ -8,6 +8,9 @@ Created on Thu Jan 15 14:02:43 2026
 from __future__ import annotations
 
 import os
+import logging
+
+import cdsapi
 import requests
 import copernicusmarine
 
@@ -20,7 +23,16 @@ from matplotlib.path import Path
 from typing import Sequence, Union
 from herbie import HerbieLatest, FastHerbie
 from scipy.ndimage import distance_transform_edt
+from architeuthis.toolbox.string_formatting import get_request_id
 from architeuthis.common import ArchiteuthisSpatialData, Datetime, _CMEMS_USER, _CMEMS_PWD, _HOME, _TOPOGRAPHY_URL
+
+
+logging.getLogger("cdsapi").handlers.clear()
+logging.getLogger("copernicusmarine").handlers.clear()
+
+
+def preprocess(ds):
+    return ds.drop_vars("step", errors="ignore")
 
 
 class Topography(ArchiteuthisSpatialData):
@@ -48,7 +60,7 @@ class Topography(ArchiteuthisSpatialData):
         self.path = os.path.join(
             _HOME,
             "topo",
-            "topography_earth2014_egm2008_lmax_2048.nc"
+            "ETOPO_2022_v1_60s_N90W180_surface.nc"
         )
         
     def _download_data(self):
@@ -75,16 +87,16 @@ class Topography(ArchiteuthisSpatialData):
                 print(f"💔 Topography could not be downloaded {e}")
 
     def _read_data(self):
-        self.data = xr.open_dataset(self.path)[["topography_earth2014_egm2008_lmax_2048_lmax_2048",]]
+        self.data = xr.open_dataset(self.path)[["z",]]
 
     def _convert_data(self):
         # =====================================================================
         # INITIAL CONVERSION
         # =====================================================================
         
-        suffix = "topography_earth2014_egm2008_lmax_2048_lmax_2048"
-        lat = "latitude_" + suffix
-        lon = "longitude_" + suffix
+        suffix = "z"
+        lat = "lat"
+        lon = "lon"
     
         self.data = self.data.transpose(lat, lon)
     
@@ -134,9 +146,24 @@ class Topography(ArchiteuthisSpatialData):
         
         white = (topo >= -self.depth_offset)
         black = ~white
+        
+        dlat_deg = float(np.abs(np.mean(np.diff(LATS_1D))))
+        dlon_deg = float(np.abs(np.mean(np.diff(LONS_1D))))
+        mean_lat = float(np.mean(LATS_1D))
+
+        NM_PER_DEG_LAT = 60.
+        
+        # Anisotropic sampling (nm per grid step) so the "which pixel is
+        # nearest" search isn't fooled by longitude cells shrinking at
+        # higher latitude.
+        sampling = (
+            dlat_deg * NM_PER_DEG_LAT,
+            dlon_deg * NM_PER_DEG_LAT * np.cos(np.radians(mean_lat)),
+        )
     
-        dist_to_black = np.sqrt(distance_transform_edt(white))
-        dist_to_white = np.sqrt(distance_transform_edt(black))
+        # dist_to_black = np.sqrt(distance_transform_edt(white))
+        dist_to_black = distance_transform_edt(white, sampling=sampling)
+        dist_to_white = distance_transform_edt(black, sampling=sampling)
     
         signed_dist_np = np.where(
             white,
@@ -144,7 +171,7 @@ class Topography(ArchiteuthisSpatialData):
             -dist_to_white
         ) + self.z_margin
         
-        signed_dist_np = np.fmax(signed_dist_np, 0.)
+        # signed_dist_np = np.fmax(signed_dist_np, 0.)
     
         signed_dist = xr.DataArray(
             signed_dist_np,
@@ -277,7 +304,9 @@ class HerbieForecast(Forecast):
     def _download_data(self):
         if self.__FH is None:
             self.locate_data()
+        print(f"⬇️ Downloading {self.name} data ...")
         self.path = self.__FH.download(self.regex,)
+        print("✅ Download completed.")
         
     def _convert_data(self):
         self.data["longitude"] = ((self.data["longitude"] + 180.) % 360.) - 180.
@@ -298,7 +327,6 @@ class HerbieForecast(Forecast):
         self.data["valid_time"] = self.data["valid_time"].astype(f"datetime64[{self.time_unit}]").astype(float)
         
         time = self.data["valid_time"].to_numpy()
-        # expanded_time = np.append(time, [time.max()+pd.Timedelta(1, unit="h").total_seconds(), 1e10])
         expanded_time = np.append(time, [time.max()+1e6, time.max()+1e7])
 
         self.data = self.data.reindex(
@@ -333,8 +361,10 @@ class DeterministicHerbieForecast(HerbieForecast):
             decode_times=True,
             combine="nested",
             concat_dim=["valid_time"],
-            coords="different",
+            # coords="different",
+            coords="minimal", # for concatenation compatibility
             compat="no_conflicts",
+            preprocess=preprocess, # for concatenation compatibility
         )
         
         
@@ -366,8 +396,10 @@ class EnsembleHerbieForecast(HerbieForecast):
             decode_times=True,
             combine="nested",
             concat_dim=["valid_time"],
-            coords="different",
+            # coords="different",
+            coords="minimal", # for concatenation compatibility
             compat="no_conflicts",
+            preprocess=preprocess, # for concatenation compatibility
             filter_by_keys={"dataType": "pf"},
         )
     
@@ -491,7 +523,7 @@ class CopernicusForecast(Forecast):
         self.data["time"] = self.data["time"].astype(f"datetime64[{self.time_unit}]").astype(float)
         
         time = self.data["time"].to_numpy()
-        expanded_time = np.append(time, [time.max()+pd.Timedelta(1, unit="h").total_seconds(), 1e10])
+        expanded_time = np.append(time, [time.max()+1e6, time.max()+1e7])
 
         self.data = self.data.reindex(
             {"time": expanded_time},
@@ -499,7 +531,126 @@ class CopernicusForecast(Forecast):
         )
         
         self.data = self.data.rename({"time": "valid_time"})
+
+
+class CDSForecast(Forecast):
+    def __init__(
+        self,
+        name: str,
+        dataset: str,
+        products: Union[str, Sequence[str]],
+        variables: Sequence[str],
+        start: Union[Datetime, list[Datetime]] = None,
+        end: Union[Datetime, list[Datetime]] = None,
+        freq: str = "h",
+        min_lon: float = -180.,
+        max_lon: float = 180.,
+        min_lat: float = -90.,
+        max_lat: float = 90.,
+        time_unit: str = "s",
+        verbose: bool = True,
+        compression_level: int = 1,
+        file_format: str = "grib",
+    ):
+        if file_format == "netcdf":
+            self._ext = "nc"
+            self.engine = "netcdf4"
+        elif file_format == "grib":
+            self._ext = "grib"
+            self.engine = "cfgrib"
+        else:
+            raise(ValueError, f"{name} file_format is {file_format} but should be in ['netcdf', 'grib']")
         
+        if type(products) == str:
+            products = [products]
+        
+        self.file_format = file_format
+        
+        self.dataset = dataset
+        self.products = products
+        self.variables = variables
+        
+        self.freq = freq
+        
+        super().__init__(name, start, None, min_lon, max_lon, min_lat, max_lat, time_unit, verbose)
+        
+        if end == None:
+            self.f99 = self.f00 + pd.Timedelta(1, unit="h")
+        else:
+            self.f99 = end
+        
+    def _find_latest(self):
+        print(f"📅 Date is not specified. Retrieving latest {self.dataset} {ANSI.orange}NetCDF4 files{ANSI.reset}.")
+        return (pd.Timestamp.today() - pd.Timedelta("5d")).floor("6h").normalize()
+    
+    def _generate_request(self):
+        DATE_RANGE = pd.date_range(
+            self.f00.floor("h"),
+            self.f99.ceil("h"),
+            freq=self.freq
+        )
+        
+        self.request = {
+            "product_type": self.products,
+            "variable": self.variables,
+            "year":  sorted(DATE_RANGE.strftime("%Y").unique().tolist()),
+            "month": sorted(DATE_RANGE.strftime("%m").unique().tolist()),
+            "day":   sorted(DATE_RANGE.strftime("%d").unique().tolist()),
+            "time":  sorted(DATE_RANGE.strftime("%H:%M").unique().tolist()),
+            "data_format": self.engine,
+            "download_format": "unarchived",
+            "area": [
+                self.max_lat,
+                self.min_lon,
+                self.min_lat,
+                self.max_lon
+            ]
+        }
+    
+    def _download_data(self):
+        self._generate_request()
+        
+        local_filename = f"cds_{get_request_id(self.request)}.{self._ext}"
+        directory = os.path.join(_HOME, "cds")
+        path = os.path.join(directory, local_filename)
+
+        # Check existence locally
+        if os.path.exists(path):
+            print(f"💾 {self.name} data already downloaded.")
+        else:
+            print(f"⬇️ Downloading {self.name} data ...")
+            # Talk to the server
+            os.makedirs(directory, exist_ok=True)
+            
+            client = cdsapi.Client()
+            client.retrieve(self.dataset, self.request).download(target=path)
+            
+            print("✅ Download completed.")
+            
+        self.path = path
+        
+    def _read_data(self):
+        self.data = xr.open_dataset(self.path, engine=self.engine)
+
+    def _convert_data(self):
+        self.data = self.data.drop_vars(["valid_time", "step"], errors="ignore")
+        self.data["time"] = self.data["time"].astype(f"datetime64[{self.time_unit}]").astype(float)
+        
+        self.data["longitude"] = ((self.data["longitude"] + 180.) % 360.) - 180.
+        self.data = self.data.sortby("time")
+        self.data = self.data.sortby("latitude")
+        self.data = self.data.sortby("longitude")
+        
+        self.data = self.data.rename({"time": "valid_time"})
+        
+    # def _extend_data(self):
+    #     time = self.data["valid_time"].to_numpy()
+    #     expanded_time = np.append(time, [time.max()+1e6, time.max()+1e7])
+
+    #     self.data = self.data.reindex(
+    #         {"valid_time": expanded_time},
+    #         fill_value=0.
+    #     )
         
 # for images and data not reachable Herbie or another API
 # TODO generalize to RasterForecast?
@@ -532,7 +683,7 @@ class OceanographicForecast(Forecast):
     ):
         super().__init__()
 
-
+#%%
 if __name__ == "__main__":
     
     # IFS atmospheric data
@@ -549,11 +700,27 @@ if __name__ == "__main__":
     fc.add_interpolator("uo", "valid_time", "latitude", "longitude", latitude_slice=slice(None, None, 2))
     
     # Topography
-    t = Topography("topo", min_lon=-80., max_lon=0., min_lat=30., max_lat=60., depth_offset=10.)
+    t = Topography("topo", min_lon=-80., max_lon=0., min_lat=30., max_lat=60., depth_offset=0.)
     t.load_data()
     t.add_interpolator(
         "distance_to_iso0",
-        "latitude_topography_earth2014_egm2008_lmax_2048_lmax_2048",
-        "longitude_topography_earth2014_egm2008_lmax_2048_lmax_2048",
+        "lat",
+        "lon",
         var_key="z"
     )
+    
+    # ERA5 Reanalysis
+    era5 = CDSForecast(
+        "test_era5",
+        "reanalysis-era5-single-levels",
+        "reanalysis",
+        variables=["10m_u_component_of_wind"],
+        min_lon=-80.,
+        max_lon=0.,
+        min_lat=30.,
+        max_lat=60.
+    )
+    era5.load_data()
+    
+    era5.add_interpolator("u10", "valid_time", "latitude", "longitude",)
+    

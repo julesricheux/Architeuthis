@@ -15,7 +15,7 @@ import matplotlib.dates as mdates
 import cartopy.feature as cfeature
 # import cartopy.mpl.ticker as cticker
 
-from architeuthis.toolbox.geo_utils import great_circle_route
+from architeuthis.toolbox.geo_utils import great_circle_route, midpoints
 
 sns.set_theme(palette="viridis")
 
@@ -33,7 +33,7 @@ mpl.rcParams.update({
 
 #%%
 
-def plot_route(lon, lat, clon, clat, tws, twd, barbs):
+def plot_route(lon, lat, clon, clat, tws, twd, barbs, sails_contribution=None, sails_threshold=1.):
     plt.clf()
     # fig = plt.figure(dpi=300)
     ax = plt.axes(projection=ccrs.PlateCarree())
@@ -63,10 +63,20 @@ def plot_route(lon, lat, clon, clat, tws, twd, barbs):
     
     # Plot the route
     ax.plot(orthox, orthoy, color="grey", transform=ccrs.PlateCarree(), ms=0.75, lw=0.5)
-    
+        
     for i, (la, lo, s, d) in enumerate(zip(lat, lon, tws, twd)):
         assert len(la)==len(lo), f"latitudes and longitudes arrays must have the same length. Got {len(la)} and {len(lo)}."
-        ax.plot(lo, la, "-o", color=cmap(i/n), transform=ccrs.PlateCarree(), ms=1.5, lw=1.0)
+        
+        if sails_contribution is not None:
+            
+            sci = np.array(sails_contribution[i])
+            
+            sails_up = (sci > sails_threshold).astype("float")
+            
+            ax.plot(lo, la, color=cmap(i/n), transform=ccrs.PlateCarree(), ms=1.5, lw=1.0)
+            ax.scatter(midpoints(lo), midpoints(la), s=sails_up*1.5, marker="o", color=cmap(i/n), transform=ccrs.PlateCarree())
+        else:
+            ax.plot(lo, la, "-o", color=cmap(i/n), transform=ccrs.PlateCarree(), ms=1.5, lw=1.0)
         # ax.plot(lo, la, "-o", color=cmap((i+1)/(n+6)), transform=ccrs.PlateCarree(), ms=0.75, lw=0.8)
         # ax.plot(lo, la, "-o", color=cmap((i+1)/), transform=ccrs.PlateCarree(), ms=0.75, lw=0.8)
       
