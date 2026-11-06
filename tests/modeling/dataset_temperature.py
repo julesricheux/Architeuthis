@@ -17,9 +17,11 @@ time = np.hstack((time, 90))
 measured_temperature = np.hstack((measured_temperature, 0))
 
 if __name__ == "__main__":
-    from architeuthis.tools.pretty_plots import plt, show_plot
+    import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots()
     plt.plot(time, measured_temperature, ".")
-    show_plot(xlabel="Time", ylabel="Measured Temperature")
+    plt.xlabel("Time")
+    plt.ylabel("Measured Temperature")
+    plt.show()
 

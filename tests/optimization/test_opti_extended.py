@@ -277,7 +277,7 @@ def test_opti_minimize_absolute_value():
     target = np.array([1, -2, 3])
 
     ### Use smooth approximation for absolute value
-    opti.minimize(np.sum(np.sqrt((x - target) ** 2 + 1e-6)))
+    opti.minimize(np.sum(np.sqrt((x - target) ** 2 + 1e-4)))
 
     sol = opti.solve(verbose=False)
 

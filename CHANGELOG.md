@@ -56,3 +56,13 @@ and this project follows Semantic Versioning https://semver.org
 ### v0.1.4dev
 
 - HRDPS grid formatting.
+
+---
+
+### Unreleased
+
+- Tests moved to a top-level `tests/` folder, configured in `pyproject.toml` and isolated from the network, credentials and home directory.
+- New tests for the domain code, including end-to-end routing on synthetic data.
+- GitHub Actions workflow running the tests on every push.
+- `Opti` and `OptiSol` exported from the top-level package.
+- Declared missing dependencies in `pyproject.toml`, `requirements.txt` and `environment.yaml`.
