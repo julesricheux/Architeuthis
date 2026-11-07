@@ -75,31 +75,52 @@ def get_iip_zone_from_bulletin(text):
         
     return polygon
 
-def get_latest_iip_zone():
-    # Download the iceberg bulletin with browser headers and fallback handling
-    url = "https://www.navcen.uscg.gov/sites/default/files/iip/bulletin/IcebergBulletin.txt"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    
-    try:
-        resp = requests.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        return get_iip_zone_from_bulletin(resp.text)
-    except Exception as e:
-        print(f"Warning: Could not fetch latest IIP iceberg bulletin ({e}). Using empty polygon fallback.")
-        return []
-
-polygon = get_latest_iip_zone()
-
-
 # ---------------------------------------------------------------------
 # CONFIG
 # ---------------------------------------------------------------------
 
+BULLETIN_URL = "https://www.navcen.uscg.gov/sites/default/files/iip/bulletin/IcebergBulletin.txt"
 ZIP_URL = "https://www.navcen.uscg.gov/sites/default/files/iip/shape/currentShape.zip"
 WORKDIR = Path(os.path.join(_HOME, "iip"))
-WORKDIR.mkdir(exist_ok=True)
+WORKDIR.mkdir(parents=True, exist_ok=True)
+BULLETIN_CACHE = WORKDIR / "IcebergBulletin.txt"
+
+# (connect, read) timeouts in seconds: fail fast when the server is unreachable.
+TIMEOUT = (10, 60)
+
+
+def _age(path: Path) -> str:
+    return pd.Timestamp(path.stat().st_mtime, unit="s").strftime("%d/%m/%Y %Hh%M UTC")
+
+
+def get_latest_iip_zone():
+    """
+    Iceberg limit polygon from the latest IIP bulletin. If the server cannot be reached,
+    the last downloaded bulletin is used, and an empty polygon if there is none.
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    try:
+        resp = requests.get(BULLETIN_URL, headers=headers, timeout=TIMEOUT)
+        resp.raise_for_status()
+        zone = get_iip_zone_from_bulletin(resp.text)
+        BULLETIN_CACHE.write_text(resp.text, encoding="utf-8")
+        return zone
+    except Exception as e:
+        if BULLETIN_CACHE.exists():
+            print(f"⚠️ Warning: could not fetch the latest IIP iceberg bulletin ({type(e).__name__}). "
+                  f"Using the bulletin downloaded on {_age(BULLETIN_CACHE)}.")
+            try:
+                return get_iip_zone_from_bulletin(BULLETIN_CACHE.read_text(encoding="utf-8"))
+            except Exception as cache_error:
+                print(f"⚠️ Warning: the cached IIP bulletin cannot be read ({cache_error}).")
+        print(f"⚠️ Warning: could not fetch the IIP iceberg bulletin ({type(e).__name__}). "
+              "No iceberg exclusion zone: check the iceberg limit yourself.")
+        return []
+
+polygon = get_latest_iip_zone()
 
 
 # ---------------------------------------------------------------------
@@ -107,7 +128,7 @@ WORKDIR.mkdir(exist_ok=True)
 # ---------------------------------------------------------------------
 
 def download_and_extract_zip(url: str, out_dir: Path) -> None:
-    r = requests.get(url, timeout=60)
+    r = requests.get(url, timeout=TIMEOUT)
     r.raise_for_status()
 
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
@@ -176,9 +197,25 @@ def load_all_shapefiles(base_dir: Path) -> gpd.GeoDataFrame:
 # MAIN DATA PREP
 # ---------------------------------------------------------------------
 
-download_and_extract_zip(ZIP_URL, WORKDIR)
-berg_gdf = load_all_shapefiles(WORKDIR)
-berg_geojson = berg_gdf.__geo_interface__
+def get_berg_geojson() -> dict:
+    """
+    Iceberg limit lines (display only, for the UI). If the server cannot be reached, the
+    last downloaded shapefiles are used, and an empty collection if there are none.
+    """
+    try:
+        download_and_extract_zip(ZIP_URL, WORKDIR)
+    except Exception as e:
+        print(f"⚠️ Warning: could not download the IIP iceberg shapefiles ({type(e).__name__}). "
+              "Using the last downloaded ones, if any.")
+
+    try:
+        return load_all_shapefiles(WORKDIR).__geo_interface__
+    except Exception as e:
+        print(f"⚠️ Warning: no IIP iceberg shapefiles available ({e}). The iceberg limit will not be drawn.")
+        return {"type": "FeatureCollection", "features": []}
+
+
+berg_geojson = get_berg_geojson()
 berg_zone = polygon
 
 

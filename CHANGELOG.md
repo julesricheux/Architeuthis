@@ -66,6 +66,7 @@ and this project follows Semantic Versioning https://semver.org
 - `PassagePlan` and `PassagePlanLibrary` (`~/data/passage_plans/`): timed positions of a routing with their route, schedule and metadata. `RoutingAnalysis.run` stores `report` and `passage_plan`.
 - `RoutingAnalysis.evaluate(plan)`: open-loop evaluation of fixed positions with another vessel or forecast, reporting constraint violations.
 - Example `examples/passage_planning.py`.
+- `architeuthis.icebergs` no longer fails at import when the IIP server is unreachable: it uses the last downloaded bulletin and shapefiles, or none, with a warning. `Topography` ignores empty exclusion zones.
 - A `Route` is callable like the former `poly_deviated_route` functions (`route(s)` is `route.ortho(s)`).
 - Tests moved to a top-level `tests/` folder, configured in `pyproject.toml` and isolated from the network, credentials and home directory.
 - New tests for the domain code, including end-to-end routing on synthetic data.

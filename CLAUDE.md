@@ -130,8 +130,7 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 **Import side effects**
 
 - `architeuthis.common` calls `logging.basicConfig(force=True)` and writes `~/.cdsapirc` if it is missing, with `key: None` when `CDS_API_KEY` is unset.
-- `architeuthis.icebergs` runs at import: it fetches the IIP bulletin (falls back to `berg_zone = []`), then downloads a shapefile zip with no fallback. So `import architeuthis.core` **needs network access** and an existing `~/data/`.
-- The empty fallback then breaks `Topography` when `core.exclusion_zones` is used, because `Path([])` raises `ValueError`.
+- `architeuthis.icebergs` runs at import: it fetches the IIP bulletin and shapefiles (connect timeout 10 s). Offline, it falls back to the last downloads in `~/data/iip/` (`IcebergBulletin.txt`, shapefiles), else to an empty `berg_zone` and GeoJSON, with a warning. `Topography` skips exclusion zones with fewer than 3 points, so routing then runs **without the iceberg limit**.
 - `architeuthis/ui.py` is a script, not a library: importing it downloads forecasts and needs a report JSON in `~/data/routes/`. Run it from inside `architeuthis/` because of `./assets/` relative paths; it serves on port 8052.
 - `ui.py` overwrites the tracked `assets/noaa_overlay.png` at every start, so that file often shows as modified. Do not include it in unrelated commits.
 
@@ -175,7 +174,7 @@ Rules for new tests:
 - **Keep the checkout clean.** Importing `wrappers/json_wrapper.py` or `ui.py` writes `assets/dashExtensions_default.js` to the working directory, so import them from a temporary folder, as `tests/domain/test_toolbox.py` does.
 - **Do not change `--tb=native`.** Other traceback styles parse `casadi.py`, which raises `MemoryError` and aborts the session.
 
-Not covered: `icebergs.py` (its import needs the network), `ui.py`, `satellite.py`, `wrappers/json_wrapper.route_to_geojson`, and the default `spral` solver options.
+Not covered: the online path of `icebergs.py` (`test_icebergs.py` loads it with the network cut off), `ui.py`, `satellite.py`, `wrappers/json_wrapper.route_to_geojson`, and the default `spral` solver options.
 
 ## Known inconsistencies
 

@@ -130,6 +130,11 @@ class Topography(ArchiteuthisSpatialData):
         # Compute mask for all exclusion zones
         mask_total = np.zeros(LATS.shape, dtype=bool)
         for polygon_coords in self.exclusion_zones:
+            if len(polygon_coords) < 3:
+                # e.g. the iceberg zone when no IIP bulletin could be fetched
+                if self.verbose:
+                    print("⚠️ Warning: skipping an exclusion zone with fewer than 3 points.")
+                continue
             poly_path = Path(polygon_coords)
             mask_total |= poly_path.contains_points(points).reshape(LATS.shape)
         

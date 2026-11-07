@@ -132,3 +132,10 @@ def test_missing_file_is_downloaded(tmp_path):
 
     response.raise_for_status.assert_called_once()
     assert topography.path.read_bytes() == b"abcdef"
+
+
+def test_empty_exclusion_zone_is_ignored():
+    # The iceberg zone is empty when no IIP bulletin could be fetched.
+    distance = converted(half_land_grid(), exclusion_zones=[[]]).data["distance_to_iso0"].values
+
+    assert np.array_equal(distance, converted(half_land_grid()).data["distance_to_iso0"].values)
