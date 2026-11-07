@@ -61,6 +61,12 @@ and this project follows Semantic Versioning https://semver.org
 
 ### Unreleased
 
+- `Route` (new `route` module): waypoints with per-segment divergence and spread, legs, distance, reversal and restart from a position at sea (`from_position`). Routes are saved as JSON and kept in a `RouteLibrary` (`~/data/route_library/`).
+- `voyage` module: `Schedule` converts dates to epoch seconds, `Voyage` takes a `route` (departure and arrival still work) and restarts with `from_position` at the same ETA. `Leg`, `Schedule` and `Voyage` remain importable from `core`.
+- `PassagePlan` and `PassagePlanLibrary` (`~/data/passage_plans/`): timed positions of a routing with their route, schedule and metadata. `RoutingAnalysis.run` stores `report` and `passage_plan`.
+- `RoutingAnalysis.evaluate(plan)`: open-loop evaluation of fixed positions with another vessel or forecast, reporting constraint violations.
+- Example `examples/passage_planning.py`.
+- A `Route` is callable like the former `poly_deviated_route` functions (`route(s)` is `route.ortho(s)`).
 - Tests moved to a top-level `tests/` folder, configured in `pyproject.toml` and isolated from the network, credentials and home directory.
 - New tests for the domain code, including end-to-end routing on synthetic data.
 - GitHub Actions workflow running the tests on every push.

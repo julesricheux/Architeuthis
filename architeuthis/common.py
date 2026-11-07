@@ -98,6 +98,22 @@ def tall(array):
 def wide(array):
     return np.reshape(array, (1, -1))
 
+
+def to_timestamp(value: Union[Datetime, float, int]) -> float:
+    """
+    Convert a date to float epoch seconds, the time unit used throughout Architeuthis.
+
+    Numbers are returned unchanged (as float). Datetimes, pandas Timestamps,
+    numpy datetime64 values and ISO strings are converted; naive values are UTC.
+    """
+    if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
+        return float(value)
+
+    timestamp = Timestamp(value)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.tz_localize("UTC")
+    return float(timestamp.timestamp())
+
 class ArchiteuthisObject(ABC):
     
     @abstractmethod

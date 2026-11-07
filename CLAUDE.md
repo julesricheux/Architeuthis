@@ -33,7 +33,7 @@ A single test: `python -m pytest tests/optimization/test_opti_rosenbrock.py::tes
 
 Credentials come from environment variables, and each is only needed for its provider: `CDS_API_KEY`, `CMEMS_USER`, `CMEMS_PWD`, `EUMDAC_USER`, `EUMDAC_PWD`. Herbie sources (IFS, GFS, HRDPS) need none.
 
-Downloads are cached under `~/data/` (`common._HOME`) in `topo/`, `cmems/`, `cds/`, `eumetsat/` and `iip/`. The UI reads routes from `routes/`. Vessel polars are NetCDF files that are not in the repository.
+Downloads are cached under `~/data/` (`common._HOME`) in `topo/`, `cmems/`, `cds/`, `eumetsat/` and `iip/`. `RouteLibrary` and `PassagePlanLibrary` store JSON in `route_library/` and `passage_plans/`. The UI reads route reports from `routes/`, a different format. Vessel polars are NetCDF files that are not in the repository.
 
 Development is Spyder-based: scripts use `#%%` cells and many modules have a `__main__` block used as a manual check.
 
@@ -55,7 +55,10 @@ common.py      ArchiteuthisObject > ArchiteuthisData > ArchiteuthisSpatialData
         |
 icebergs.py    IIP iceberg limit: berg_zone polygon, berg_geojson
         |
-core.py        Leg, Schedule, Voyage, RoutingAnalysis, exclusion_zones
+route.py       Waypoint, Leg, Route (waypoints + divergences + spread), RouteLibrary
+voyage.py      Schedule, Voyage (Route + Schedule), PassagePlan, PassagePlanLibrary
+        |       both offline: they do not import core
+core.py        RoutingAnalysis (run, evaluate), exclusion_zones; re-exports the above
         |
 ui.py          Dash/Leaflet viewer of forecast fields and saved route reports
 
@@ -65,7 +68,7 @@ examples/      short_term_routing.py, comparison_ascat_models.py
 tests/         numpy, optimization, modeling (AeroSandbox), domain (Architeuthis)
 ```
 
-Stubs that are not functional yet: `route.Route`, `environment.Environment` (also has a broken bare import), `ECMWFForecast`, `AtmosphericForecast`, `OceanographicForecast`. `architeuthis/__init__.py` exports only `Opti` and `OptiSol`, so import everything else from submodules.
+Stubs that are not functional yet: `environment.Environment` (also has a broken bare import), `ECMWFForecast`, `AtmosphericForecast`, `OceanographicForecast`. `architeuthis/__init__.py` exports only `Opti` and `OptiSol`, so import everything else from submodules.
 
 ### Data pipeline
 
@@ -93,6 +96,9 @@ Stubs that are not functional yet: `route.Route`, `environment.Environment` (als
 - **Evaluation:** weather is sampled at segment midpoints, topography at nodes resampled with `n=3`, and the vessel with `[stw, tws, |twa|, swh, |mwa|]`.
 - **Constraints:** a callable `ctx -> list` or a plain list, given to the constructor or to `run`. `ctx` exposes the symbolic quantities plus `vessel` and `opti`. The default is `max_bhp < vessel.max_power` and `z < 0`.
 - **`solve=False`:** evaluates the reference route without optimizing it, giving a baseline for comparison.
+- **Shared model:** `_passage(tim, ctim, lat, lon, ...)` builds every symbolic quantity; `run` feeds it Opti variables and `evaluate` plain MX symbols. Change the physics there only.
+- **Results:** `run` also sets `analysis.report` and `analysis.passage_plan` (a `PassagePlan` named `<route>_<etd>Z`, with `describe()` metadata).
+- **Open loop:** `evaluate(plan)` computes the same report for fixed positions with another vessel, forecast or member, through a `ca.Function` and without IPOPT. Constraints are only measured: `max_constraint_violation` and `constraint_violations`, with `ctx["opti"] = None`. `status` is 0.
 - **Output:** `run` returns a plain dict of numeric arrays and scalars.
 
 Required interpolator keys:
@@ -144,7 +150,9 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 
 **API traps**
 
-- `Voyage` type hints say `Datetime`, but `etd` and `eta` must be float epoch seconds because the code does arithmetic on them. Use `pd.to_datetime(...).timestamp()`.
+- `Schedule` and `Voyage` convert dates with `common.to_timestamp`; naive dates are UTC, so give local times with a timezone.
+- Divergence and spread signs are relative to the travel direction: `Route.reversed()` negates divergences, so the reverse route's `plus` is the forward `minus`.
+- `Route.from_position` restarts with a straight first segment. `Voyage.from_position` cannot restart `route_minus`/`route_plus` given as functions and falls back to the spread paths; pass Routes to keep them.
 - `Vessel.hotel_load` and `Vessel.sfc` are wrapped into callables, while `Vessel.max_power` stays a raw value. `sfc` defaults to 0, which makes the objective zero.
 - `EnsembleHerbieForecast.add_interpolator` takes dimensions as (member, time, lat, lon), but `RoutingAnalysis` queries (time, member, lat, lon). No active code exercises this path, so verify the order before using ensemble members.
 - Report consumers (`json_wrapper.route_to_geojson`) need `model` and `member` keys that `run` does not produce; callers add them. Nothing in the package saves reports to `~/data/routes/`: use `json_wrapper.CustomEncoder` to write them.
@@ -156,7 +164,7 @@ Tests live in `tests/`, configured in `pyproject.toml`. `.github/workflows/tests
 CI installs the latest dependencies, so it can differ from a local environment. In particular, casadi 3.7 and 3.8 do not always converge the same way, so keep test objectives reasonably well conditioned.
 
 - **`tests/numpy`, `tests/optimization`, `tests/modeling`:** vendored from AeroSandbox, including the `import architeuthis as asb` style.
-- **`tests/domain`:** Architeuthis code. `test_routing.py` runs `RoutingAnalysis` end to end, marked `integration`.
+- **`tests/domain`:** Architeuthis code. `test_route.py` covers routes, voyages and passage plans offline. `test_routing.py` runs `RoutingAnalysis.run` and `evaluate` end to end, marked `integration`.
 - **Expected failure:** `test_black_box_nonsmooth_function` is `xfail` because IPOPT can fail on the kink of `abs()`.
 
 Rules for new tests:

@@ -6,16 +6,26 @@ Created on Mon Jan 19 15:54:06 2026
 """
 
 
+import json
+
+import casadi as ca
+import numpy as onp
+import pandas as pd
+
 import architeuthis.numpy as np
 
 from abc import abstractmethod
-from typing import Callable, Optional, Sequence, Union
+from typing import Callable, Optional, Union
 from architeuthis.vessel import Vessel
 from architeuthis.common import _banner
 from architeuthis.optimization import Opti
 from architeuthis.icebergs import berg_zone
 from architeuthis.forecast import Forecast, Topography
-from architeuthis.common import ArchiteuthisObject, Datetime, GUST_DEFAULT_RATIO
+from architeuthis.common import ArchiteuthisObject, GUST_DEFAULT_RATIO
+# Route and voyage classes live in their own modules, which work without network
+# access; they are re-exported here for compatibility.
+from architeuthis.route import Leg, Route, RouteLibrary, Waypoint  # noqa: F401
+from architeuthis.voyage import PassagePlan, PassagePlanLibrary, Schedule, Voyage  # noqa: F401
 from architeuthis.toolbox.geo_utils import (
     great_circle_route,
     distances,
@@ -169,7 +179,7 @@ exclusion_zones = [
 #%%
 
 class ArchiteuthisAnalysis(ArchiteuthisObject):
-    
+
     @abstractmethod
     def __init__(
         self,
@@ -177,116 +187,71 @@ class ArchiteuthisAnalysis(ArchiteuthisObject):
         verbose: bool = True,
     ):
         self.status = 0 # 0: not solved, 1: solved, 2: not converged
-        
+
         super().__init__(name, verbose)
-        
-        
-class Leg(ArchiteuthisObject):
-    
-    def __init__(
-        self,
-        name: str,
-        departure: Sequence[float],
-        arrival: Sequence[float],
-        verbose: bool = True,
-    ):
-        self.departure = departure
-        self.arrival = arrival
-        
-        self.distance = distances(
-            np.asarray([departure[0], arrival[0]]),
-            np.asarray([departure[1], arrival[1]]),
-        )[0]
-        
-        super().__init__(name, verbose)
-        
-        
-class Schedule(ArchiteuthisObject):
-    
-    def __init__(
-        self,
-        name: str,
-        etd: Union[Datetime, list[Datetime]],
-        eta: Union[Datetime, list[Datetime]],
-        verbose: bool = True,
-    ):
-        self.etd = etd
-        self.eta = eta
-        
-        self.transit_time = eta - etd
-        
-        super().__init__(name, verbose)
-        
-        
-class Voyage(ArchiteuthisObject):
-    
-    def __init__(
-        self,
-        name: str,
-        etd: Union[Datetime, list[Datetime]],
-        eta: Union[Datetime, list[Datetime]],
-        departure: Sequence[float],
-        arrival: Sequence[float],
-        verbose: bool = True,
-        
-        route_minus = None,
-        route_ortho = None,
-        route_plus = None,
-    ):
-        
-        self.leg = Leg(f"{name}_leg", departure, arrival, verbose)
-        self.schedule = Schedule(f"{name}_schedule", etd, eta, verbose)
-        
-        self.transit_time = (eta-etd)/3600.
-        self.transit_sog = self.leg.distance * 3600 / (eta-etd)
-        
-        _default_route_function = poly_deviated_route(
-            [self.departure[0], self.arrival[0]],
-            [self.departure[1], self.arrival[1]],
-            [0.])
-        
-        if route_minus is None:
-            route_minus = _default_route_function
-        if route_ortho is None:
-            route_ortho = _default_route_function
-        if route_plus is None:
-            route_plus = _default_route_function
-        
-        self.route_minus = route_minus
-        self.route_ortho = route_ortho
-        self.route_plus = route_plus
-        
-        super().__init__(name, verbose)
-        
-    @property
-    def departure(self):
-        return self.leg.departure
-        
-    @property
-    def arrival(self):
-        return self.leg.arrival
-        
-    @property
-    def distance(self):
-        return self.leg.distance
-    
-    @property
-    def etd(self):
-        return self.schedule.etd
-    
-    @property
-    def eta(self):
-        return self.schedule.eta
-        
+
+
+# Quantities computed on a passage and returned in reports, in addition to positions and times.
+_REPORT_QUANTITIES = (
+    "fuel", "stw", "sog", "cog", "ctw", "tws", "twd", "twa", "aws", "awa",
+    "swh", "mwd", "mwa", "z", "cs", "cd", "avg_bhp", "max_bhp", "sails_contribution",
+    "tim", "lat", "lon", "ctim", "clat", "clon", "d",
+)
+_GUST_QUANTITIES = ("tws_gust", "aws_gust")
+
+
+def _constraint_violation(constraint):
+    """Symbolic violation of `a < b`, `a <= b` or `a == b` (positive when violated), or None."""
+    if not isinstance(constraint, (ca.MX, ca.SX)):
+        return None
+    if constraint.is_op(ca.OP_LT) or constraint.is_op(ca.OP_LE):
+        return constraint.dep(0) - constraint.dep(1)
+    if constraint.is_op(ca.OP_EQ):
+        return ca.fabs(constraint.dep(0) - constraint.dep(1))
+    return None
+
+
+def _numeric(value):
+    """Convert a casadi result like `OptiSol` does: a float for one value, else a 1D array."""
+    array = onp.asarray(ca.DM(value).full() if isinstance(value, (ca.DM, ca.MX, ca.SX)) else value, dtype=float)
+    if array.size == 1:
+        return float(array.item())
+    return array.ravel()
+
+
+def _describe(obj, attributes=("model", "product", "dataset", "f00", "path", "max_power", "members")):
+    """A JSON-friendly description of a data object, for passage plan metadata."""
+    if obj is None:
+        return None
+    description = {"class": type(obj).__name__, "name": getattr(obj, "name", None)}
+    for attribute in attributes:
+        value = getattr(obj, attribute, None)
+        if value is None or callable(value):
+            continue
+        try:
+            json.dumps(value)
+        except TypeError:
+            value = str(value)
+        description[attribute] = value
+    return description
+
 
 # TODO find a name for the method?
 class RoutingAnalysis(ArchiteuthisAnalysis):
-    
+    """
+    Minimum-fuel routing of a voyage through forecast fields.
+
+    `run` optimizes the positions on a schedule fixed by the voyage, and stores the result
+    as `self.report` (a dict of arrays) and `self.passage_plan` (a `PassagePlan`).
+    `evaluate(plan)` computes the same report for given positions, without optimizing,
+    with this analysis' vessel and forecasts: an open-loop check of a passage plan.
+    """
+
     def __init__(
         self,
         name: str,
         vessel: Vessel,
-        voyage: Voyage,
+        voyage: Optional[Voyage],
         atmosphere: Forecast,
         wave: Forecast,
         current: Forecast,
@@ -303,25 +268,240 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         self.wave = wave
         self.current = current
         self.topography = topography
-        
+
         self.atmosphere_member = atmosphere_member
         self.wave_member = wave_member
         self.constraints = constraints
         self.options = options
-        
+
+        self.report = None
+        self.passage_plan = None
+
         super().__init__(name, verbose)
-        
-    
-    def check_valid_time(self):
+
+
+    def check_valid_time(self, etd: float = None, eta: float = None):
+        etd = self.voyage.etd if etd is None else etd
+        eta = self.voyage.eta if eta is None else eta
+
         for forecast in [self.atmosphere, self.wave, self.current]:
             f00 = forecast.data["valid_time"].values[0]
             f99 = forecast.data["valid_time"].values[-3]
-        
-            if self.voyage.etd < f00:
+
+            if etd < f00:
                 print(f"⚠️ Warning: ETD sooner than earliest {forecast.name.upper()} forecast valid time.")
-            if self.voyage.eta > f99:
+            if eta > f99:
                 print(f"⚠️ Warning: ETA later than furthest {forecast.name.upper()} forecast valid time.")
-    
+
+    def _gust_options(self):
+        include_gusts = ("include_gusts" in self.options.keys() and self.options["include_gusts"])
+        interpolate_gust = include_gusts and "gust" in self.atmosphere.interpolators.keys()
+
+        if include_gusts and not interpolate_gust:
+            print("🌪️ Info: gust not found in interpolators. Defaulting to the standard ratio.")
+
+        return include_gusts, interpolate_gust
+
+    def _passage(self, tim, ctim, lat, lon, include_gusts, interpolate_gust) -> dict:
+        """
+        Symbolic model of a passage through nodes (`tim`, `lat`, `lon`), with the weather
+        sampled at segment midpoints at times `ctim`. All inputs are column vectors.
+        """
+        clon = midpoints(lon)
+        clat = midpoints(lat)
+
+        environment_query = np.concatenate([
+            ctim, clat, clon,
+        ], axis=1)
+
+        if self.atmosphere_member is not None:
+            atmosphere_query = np.concatenate([
+                ctim, ctim * 0. + self.atmosphere_member, clat, clon,
+            ], axis=1)
+        else:
+            atmosphere_query = environment_query
+
+        if self.wave_member is not None:
+            wave_query = np.concatenate([
+                ctim, ctim * 0. + self.wave_member, clat, clon,
+            ], axis=1)
+        else:
+            wave_query = environment_query
+
+        u10 = self.atmosphere("u10", atmosphere_query)
+        v10 = self.atmosphere("v10", atmosphere_query)
+
+        swh = self.wave("swh", wave_query)
+        mwd = self.wave("mwd", wave_query)
+
+        uc = self.current("uo", environment_query) * 3600./1852.
+        vc = self.current("vo", environment_query) * 3600./1852.
+
+        tlat, tlon = resample_coordinates(
+            lat[1:-1],
+            lon[1:-1],
+            n=3,
+        )
+
+        topography_query = np.concatenate([
+            tlat,
+            tlon,
+        ], axis=1)
+
+        z = self.topography("z", topography_query)
+
+        tws = np.sqrt(u10**2. + v10**2.) * 3600./1852.
+        twd = np.mod(np.arctan2d(u10, v10)+180., 360.)
+
+        if include_gusts and interpolate_gust:
+            tws_gust = self.atmosphere("gust", atmosphere_query) * 3600./1852.
+        else:
+            tws_gust = tws * GUST_DEFAULT_RATIO
+
+        # TODO find why east/north wave generates unstability
+        # swh = np.sqrt(uw**2. + vw**2.)
+        # mwd = np.mod(np.arctan2d(uw, vw)+180, 360.)
+
+        cog = headings(lat, lon)
+
+        twa = np.mod(twd-cog + 180., 360.) - 180
+        mwa = np.mod(mwd-cog + 180., 360.) - 180
+
+        d = distances(lat, lon)
+        dt = np.diff(tim) / 3600.
+        sog = d/dt
+
+        duog = sog * np.sind(cog)
+        dvog = sog * np.cosd(cog)
+
+        dutw = duog - uc
+        dvtw = dvog - vc
+
+        stw = np.sqrt(dutw**2. + dvtw**2.)
+        ctw = np.mod(np.arctan2d(dutw, dvtw), 360.)
+
+        # Apparent wind components relative to vessel heading
+        u_aw = tws * np.sind(twa)
+        v_aw = tws * np.cosd(twa) + sog
+
+        # Apparent Wind Speed (AWS) and Apparent Wind Angle (AWA)
+        aws = np.sqrt(u_aw**2. + v_aw**2.)
+        awa = np.arctan2d(u_aw, v_aw)
+
+        # Current Speed (CS) and Current direction (CD)
+        cs = np.sqrt(uc**2. + vc**2.) # current speed in kts
+        cd = np.mod(np.arctan2d(uc, vc), 360.) # current going to from 0 to 360 deg
+
+        vessel_query = np.concatenate([
+            stw, tws, np.abs(twa), swh, np.abs(mwa),
+        ], axis=1)
+
+        avg_bhp = self.vessel("bhp", vessel_query)
+        max_bhp = self.vessel("max_bhp", vessel_query)
+        sc = self.vessel("sails_contribution", vessel_query)
+
+        hotel_load = self.vessel.hotel_load(avg_bhp) # kW
+
+        sfc = self.vessel.sfc(avg_bhp+hotel_load) # g/kWh
+
+        consumption = np.abs(avg_bhp + hotel_load) * dt # kWh
+
+        fuel = np.sum(consumption * sfc) / 1e6 # tons # TODO get rid of sfc to rather have f(power) = cons
+
+        passage = {
+            "fuel": fuel,
+            "max_bhp": max_bhp,
+            "avg_bhp": avg_bhp,
+            "sails_contribution": sc,
+            "z": z,
+            "sog": sog,
+            "stw": stw,
+            "ctw": ctw,
+            "tws": tws,
+            "twd": twd,
+            "twa": twa,
+            "aws": aws,
+            "awa": awa,
+            "swh": swh,
+            "mwd": mwd,
+            "mwa": mwa,
+            "cog": cog,
+            "cs": cs,
+            "cd": cd,
+            "d": d,
+            "tim": tim,
+            "lat": lat,
+            "lon": lon,
+            "ctim": ctim,
+            "clat": clat,
+            "clon": clon,
+        }
+
+        if include_gusts:
+            u_aw_gust = tws_gust * np.sind(twa)
+            v_aw_gust = tws_gust * np.cosd(twa) + sog
+            passage |= {
+                "tws_gust": tws_gust,
+                "aws_gust": np.sqrt(u_aw_gust**2. + v_aw_gust**2.),
+            }
+
+        return passage
+
+    def _resolve_constraints(self, constraints, ctx) -> list:
+        active_constraints = constraints if constraints is not None else self.constraints
+
+        if callable(active_constraints):
+            return active_constraints(ctx)
+        if isinstance(active_constraints, list):
+            return active_constraints
+        return []
+
+    @staticmethod
+    def _report(values: dict, etd, eta, init_fac, reference_distance, status, include_gusts) -> dict:
+        transit_time = (eta - etd) / 3600.
+        dist = float(onp.sum(values["d"]))
+
+        report = {
+            "etd": etd,
+            "eta": eta,
+            "transit_sog": reference_distance / transit_time,
+            "transit_time": transit_time,
+            "init_fac": init_fac,
+        }
+        report |= {key: values[key] for key in _REPORT_QUANTITIES if key not in ("tim", "lat", "lon", "ctim", "clat", "clon", "d")}
+        report |= {
+            "pos": [[la, lo] for la, lo in zip(onp.ravel(values["lat"]), onp.ravel(values["lon"]))],
+            "tim": values["tim"],
+            "lat": values["lat"],
+            "lon": values["lon"],
+            "cpos": [[cla, clo] for cla, clo in zip(onp.ravel(values["clat"]), onp.ravel(values["clon"]))],
+            "ctim": values["ctim"],
+            "clat": values["clat"],
+            "clon": values["clon"],
+            "dist": dist,
+            "dist_rel": dist / reference_distance,
+            "status": status,
+        }
+
+        if include_gusts:
+            report |= {key: values[key] for key in _GUST_QUANTITIES}
+
+        return report
+
+    def describe(self) -> dict:
+        """JSON-friendly description of the vessel, forecasts and options of this analysis."""
+        return {
+            "analysis": self.name,
+            "vessel": _describe(self.vessel),
+            "atmosphere": _describe(self.atmosphere),
+            "wave": _describe(self.wave),
+            "current": _describe(self.current),
+            "topography": _describe(self.topography, attributes=("path", "depth_offset", "z_margin")),
+            "atmosphere_member": self.atmosphere_member,
+            "wave_member": self.wave_member,
+            "options": dict(self.options),
+        }
+
     def run(
         self,
         init_fac: float = 0.,
@@ -332,52 +512,41 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         solve: bool = True,
         constraints: Optional[Union[Callable[[dict], list], list]] = None,
     ):
-        
-        include_gusts = ("include_gusts" in self.options.keys() and self.options["include_gusts"])
-        interpolate_gust = include_gusts and "gust" in self.atmosphere.interpolators.keys()
-        
-        if include_gusts and not interpolate_gust:
-            print("🌪️ Info: gust not found in interpolators. Defaulting to the standard ratio.")
-            
+
+        include_gusts, interpolate_gust = self._gust_options()
+
         etd = self.voyage.etd
         eta = self.voyage.eta
-        
-        dist0 = self.voyage.distance
-        transit_time = self.voyage.transit_time
-        
+
         self.check_valid_time()
-            
+
         fxx = self.atmosphere.data.valid_time.values
         ctim0 = fxx[(fxx > etd) * (fxx < eta)][skip_tim::1+skip_tim]
-        
+
         tim0 = np.concatenate((
-            [etd], 
+            [etd],
             midpoints(ctim0),
-            [eta], 
+            [eta],
         ))
-        
+
         npts = len(tim0)
         curv_abc = (tim0 - etd) / (eta - etd)
-        
-        sog0 = self.voyage.transit_sog
-        xn = np.linspace(0, 1., npts)[1:-1]
-        delta = 4 * xn * (1-xn) * 1.
-        
+
         # Initializing opti
         opti = Opti()
-        
+
         if vary_fac and solve:
             deviation_fac = opti.variable(init_guess=init_fac)
         else:
             deviation_fac = opti.parameter(init_fac)
-            
+
         lat0minus, lon0minus = self.voyage.route_minus(curv_abc)
         lat0ortho, lon0ortho = self.voyage.route_ortho(curv_abc)
         lat0plus, lon0plus = self.voyage.route_plus(curv_abc)
-            
+
         lat0 = np.fmax(deviation_fac, 0) * lat0plus + (1-np.abs(deviation_fac)) * lat0ortho - np.fmin(deviation_fac, 0.) * lat0minus
         lon0 = np.fmax(deviation_fac, 0) * lon0plus + (1-np.abs(deviation_fac)) * lon0ortho - np.fmin(deviation_fac, 0.) * lon0minus
-        
+
         # TODO no constraints so add an inside-bounds check at the end of the computation
         if solve:
             vlon = opti.variable(n_vars=npts-2, init_guess=0.,)
@@ -385,252 +554,145 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         else:
             vlon = 0.
             vlat = 0.
-        
+
         tim = opti.parameter(n_params=npts)
         opti.set_value(tim, tim0)
-        
+
         ctim = opti.parameter(n_params=npts-1)
         opti.set_value(ctim, ctim0)
-        
+
         lon = np.concatenate((lon0[:1], lon0[1:-1] + vlon, lon0[-1:]))
         lat = np.concatenate((lat0[:1], lat0[1:-1] + vlat, lat0[-1:]))
-        
-        clon = midpoints(lon)
-        clat = midpoints(lat)
-        
-        environment_query = np.concatenate([
-            ctim, clat, clon,
-        ], axis=1)
-        
-        if self.atmosphere_member is not None:
-            atm_mb = opti.parameter(n_params=npts-1)
-            opti.set_value(atm_mb, self.atmosphere_member)
-            atmosphere_query = np.concatenate([
-                ctim, atm_mb, clat, clon,
-            ], axis=1)
-        else:
-            atmosphere_query = environment_query
-            
-        if self.wave_member is not None:
-            wav_mb = opti.parameter(n_params=npts-1)
-            opti.set_value(wav_mb, self.wave_member)
-            wave_query = np.concatenate([
-                ctim, wav_mb, clat, clon,
-            ], axis=1)
-        else:
-            wave_query = environment_query
-        
-        u10 = self.atmosphere("u10", atmosphere_query)
-        v10 = self.atmosphere("v10", atmosphere_query)
-        
-        swh = self.wave("swh", wave_query)
-        mwd = self.wave("mwd", wave_query)
-        # uw = self.wave("uw", wave_query)
-        # vw = self.wave("vw", wave_query)
-        
-        uc = self.current("uo", environment_query) * 3600./1852.
-        vc = self.current("vo", environment_query) * 3600./1852.
-        
-        # tlat = midpoints(np.concatenate((lat[1:-1], clat)))
-        # tlon = midpoints(np.concatenate((lon[1:-1], clon)))
-        
-        
-        # print("ntm")
-        
-        tlat, tlon = resample_coordinates(
-            lat[1:-1],
-            lon[1:-1],
-            n=3,
-        )
-        
-        # print(tlon)
-        # print(tlat)
-        
-        # tlat, tlon = lat[1:-1], lon[1:-1]
-        
-        topography_query = np.concatenate([
-            # np.concatenate((lat[1:-1], clat)),
-            # np.concatenate((lon[1:-1], clon)),
-            tlat,
-            tlon,
-        ], axis=1)
-        
-        z = self.topography("z", topography_query)
-        
-        tws = np.sqrt(u10**2. + v10**2.) * 3600./1852.
-        twd = np.mod(np.arctan2d(u10, v10)+180., 360.)
-        
-        if include_gusts and interpolate_gust:
-            tws_gust = self.atmosphere("gust", atmosphere_query) * 3600./1852.
-        else:
-            tws_gust = tws * GUST_DEFAULT_RATIO
-        
-        # TODO find why east/north wave generates unstability
-        # swh = np.sqrt(uw**2. + vw**2.)
-        # mwd = np.mod(np.arctan2d(uw, vw)+180, 360.)
-        
-        cog = headings(lat, lon)
-        
-        twa = np.mod(twd-cog + 180., 360.) - 180
-        mwa = np.mod(mwd-cog + 180., 360.) - 180
-        
-        d = distances(lat, lon)
-        dt = np.diff(tim) / 3600.
-        sog = d/dt
-        
-        duog = sog * np.sind(cog)
-        dvog = sog * np.cosd(cog)
-        
-        dutw = duog - uc
-        dvtw = dvog - vc
-        
-        stw = np.sqrt(dutw**2. + dvtw**2.)
-        ctw = np.mod(np.arctan2d(dutw, dvtw), 360.)
-        
-        # Apparent wind components relative to vessel heading
-        u_aw = tws * np.sind(twa)
-        v_aw = tws * np.cosd(twa) + sog
-        
-        if include_gusts:
-            u_aw_gust = tws_gust * np.sind(twa)
-            v_aw_gust = tws_gust * np.cosd(twa) + sog
-        
-        # Apparent Wind Speed (AWS) and Apparent Wind Angle (AWA)
-        aws = np.sqrt(u_aw**2. + v_aw**2.)
-        awa = np.arctan2d(u_aw, v_aw)
-        
-        if include_gusts:
-            aws_gust = np.sqrt(u_aw_gust**2. + v_aw_gust**2.)
-        
-        # Current Speed (CS) and Current direction (CD)
-        cs = np.sqrt(uc**2. + vc**2.) # current speed in kts
-        cd = np.mod(np.arctan2d(uc, vc), 360.) # current going to from 0 to 360 deg
-        
-        vessel_query = np.concatenate([
-            stw, tws, np.abs(twa), swh, np.abs(mwa),
-        ], axis=1)
-        
-        # vessel_query = {
-        #     "stw": stw,
-        #     "tws": tws,
-        #     "twa": np.abs(twa),
-        #     "swh": swh,
-        #     "mwa": np.abs(mwa),
-        # }
-        
-        avg_bhp = self.vessel("bhp", vessel_query)
-        max_bhp = self.vessel("max_bhp", vessel_query)
-        # leeway = vessel("leeway", vessel_query)        
-        sc = self.vessel("sails_contribution", vessel_query)
-        
-        hotel_load = self.vessel.hotel_load(avg_bhp) # kW
-        
-        sfc = self.vessel.sfc(avg_bhp+hotel_load) # g/kWh
-        
-        consumption = np.abs(avg_bhp + hotel_load) * dt # kWh
-        
-        fuel = np.sum(consumption * sfc) / 1e6 # tons # TODO get rid of sfc to rather have f(power) = cons
-        
-        # --- Dynamic Constraints Context ---
-        ctx = {
-            "vessel": self.vessel,
-            "max_bhp": max_bhp,
-            "avg_bhp": avg_bhp,
-            "z": z,
-            "sog": sog,
-            "stw": stw,
-            "tws": tws,
-            "twa": twa,
-            "aws": aws,
-            "awa": awa,
-            "swh": swh,
-            "mwa": mwa,
-            "cog": cog,
-            "cs": cs,
-            "cd": cd,
-            "lat": lat,
-            "lon": lon,
-            "opti": opti,
-        }
-        
-        if include_gusts:
-            ctx |= {
-                "tws_gust": tws_gust,
-                "aws_gust": aws_gust,
-            }
 
-        # Resolve active constraints
-        active_constraints = constraints if constraints is not None else self.constraints
-        
-        if callable(active_constraints):
-            cons = active_constraints(ctx)
-        elif isinstance(active_constraints, list):
-            cons = active_constraints
-        else:
-            cons = []
-        
+        passage = self._passage(tim, ctim, lat, lon, include_gusts, interpolate_gust)
+
+        # --- Dynamic Constraints Context ---
+        ctx = {"vessel": self.vessel, "opti": opti} | passage
+        cons = self._resolve_constraints(constraints, ctx)
+
         if solve:
             opti.subject_to(cons)
-            opti.minimize(fuel)
-        
+            opti.minimize(passage["fuel"])
+
         # if self.verbose:
         print(_banner)
-        
+
         sol = opti.solve(
             max_iter=max_iter,
             behavior_on_failure="return_last",
             options=solver_options,
             verbose=self.verbose,
         )
-        
+
         status = 1 if opti.return_status() in SOLVED else 2
-        
+
         self.opti = opti
         self.sol = sol
         self.status = status
-        
-        output = {
-            "etd": etd,
-            "eta": eta,
-            "transit_sog": sog0,
-            "transit_time": transit_time,
-            "init_fac": init_fac,
-            "fuel": sol(fuel),
-            "stw": sol(stw),
-            "sog": sol(sog),
-            "cog": sol(cog),
-            "ctw": sol(ctw),
-            "tws": sol(tws),
-            "twd": sol(twd),
-            "twa": sol(twa),
-            "aws": sol(aws),
-            "awa": sol(awa),
-            "swh": sol(swh),
-            "mwd": sol(mwd),
-            "mwa": sol(mwa),
-            "z": sol(z),
-            "cs": sol(cs),
-            "cd": sol(cd),
-            "avg_bhp": sol(avg_bhp),
-            "max_bhp": sol(max_bhp),
-            "sails_contribution": sol(sc),
-            "pos": [[la, lo] for la, lo in zip(sol(lat), sol(lon))],
-            "tim": sol(tim),
-            "lat": sol(lat),
-            "lon": sol(lon),
-            "cpos": [[cla, clo] for cla, clo in zip(sol(clat), sol(clon))],
-            "ctim": sol(ctim),
-            "clat": sol(clat),
-            "clon": sol(clon),
-            "dist": sol(np.sum(d)),
-            "dist_rel": sol(np.sum(d)/dist0),
-            "status": status,
-        }
-        
-        if include_gusts:
-            output |= {
-                "tws_gust": sol(tws_gust),
-                "aws_gust": sol(aws_gust),
-            }
-        
+
+        values = {key: sol(expression) for key, expression in passage.items()}
+
+        output = self._report(
+            values,
+            etd=etd,
+            eta=eta,
+            init_fac=init_fac,
+            reference_distance=self.voyage.distance,
+            status=status,
+            include_gusts=include_gusts,
+        )
+
+        self.report = output
+        self.passage_plan = PassagePlan.from_report(
+            output,
+            route=self.voyage.route,
+            name=f"{self.voyage.route.name}_{pd.Timestamp(etd, unit='s'):%Y%m%dT%H%M}Z",
+            metadata=self.describe() | {
+                "run": {
+                    "init_fac": init_fac,
+                    "vary_fac": vary_fac,
+                    "skip_tim": skip_tim,
+                    "max_iter": max_iter,
+                    "solve": solve,
+                },
+            },
+            verbose=self.verbose,
+        )
+
         return output
+
+    def evaluate(
+        self,
+        plan: Union[PassagePlan, dict],
+        constraints: Optional[Union[Callable[[dict], list], list]] = None,
+    ) -> dict:
+        """
+        Open-loop evaluation of a passage plan with this analysis' vessel and forecasts.
+
+        The positions and times of the plan are kept exactly: nothing is optimized and
+        IPOPT is not called. This measures how the consumption of a plan, optimized
+        under some conditions, changes under other ones (vessel, weather model, ensemble
+        member, options).
+
+        Args:
+            plan: A `PassagePlan`, or a report returned by `run`.
+            constraints: Constraints to check, as in `run`. They are not enforced: their
+                largest violation is reported in `max_constraint_violation` (positive when
+                violated) and per constraint in `constraint_violations`. `ctx["opti"]` is None.
+
+        Returns:
+            A report with the keys of `run`, `status` 0 (not solved) and `init_fac` None.
+        """
+        if isinstance(plan, dict):
+            plan_tim, plan_ctim, plan_lat, plan_lon = (onp.ravel(plan[key]) for key in ("tim", "ctim", "lat", "lon"))
+            etd, eta = float(plan["etd"]), float(plan["eta"])
+            reference_distance = plan["dist"] / plan["dist_rel"]
+        else:
+            plan_tim, plan_ctim, plan_lat, plan_lon = plan.tim, plan.ctim, plan.lat, plan.lon
+            etd, eta = plan.etd, plan.eta
+            reference_distance = plan.route.distance
+
+        include_gusts, interpolate_gust = self._gust_options()
+        self.check_valid_time(etd, eta)
+
+        npts = len(plan_tim)
+        tim = ca.MX.sym("tim", npts, 1)
+        ctim = ca.MX.sym("ctim", npts - 1, 1)
+        lat = ca.MX.sym("lat", npts, 1)
+        lon = ca.MX.sym("lon", npts, 1)
+
+        passage = self._passage(tim, ctim, lat, lon, include_gusts, interpolate_gust)
+
+        ctx = {"vessel": self.vessel, "opti": None} | passage
+        violations = [
+            violation
+            for violation in map(_constraint_violation, self._resolve_constraints(constraints, ctx))
+            if violation is not None
+        ]
+
+        keys = list(passage.keys())
+        function = ca.Function(
+            "passage",
+            [tim, ctim, lat, lon],
+            [ca.MX(passage[key]) for key in keys] + [ca.mmax(violation) for violation in violations],
+        )
+        results = function(plan_tim, plan_ctim, plan_lat, plan_lon)
+        if not isinstance(results, (list, tuple)):
+            results = [results]
+
+        values = {key: _numeric(result) for key, result in zip(keys, results)}
+        constraint_violations = [float(_numeric(result)) for result in results[len(keys):]]
+
+        report = self._report(
+            values,
+            etd=etd,
+            eta=eta,
+            init_fac=None,
+            reference_distance=reference_distance,
+            status=0,
+            include_gusts=include_gusts,
+        )
+        report["constraint_violations"] = constraint_violations
+        report["max_constraint_violation"] = max(constraint_violations, default=0.)
+
+        return report

@@ -41,7 +41,7 @@ def make_voyage(eta=ETA, **routes):
 
 @pytest.fixture
 def analyse(vessel, atmosphere, wave, current):
-    def _analyse(topography, voyage=None, **kwargs):
+    def _analyse(topography, voyage=None, vessel=vessel, **kwargs):
         return RoutingAnalysis(
             "analysis",
             vessel,
@@ -90,8 +90,8 @@ def test_voyage_derives_time_and_speed():
     assert voyage.transit_sog == pytest.approx(voyage.distance / 60.0)
     assert voyage.etd == 0.0
     assert voyage.eta == ETA
-    assert voyage.departure is DEPARTURE
-    assert voyage.arrival is ARRIVAL
+    assert voyage.departure == pytest.approx(DEPARTURE)
+    assert voyage.arrival == pytest.approx(ARRIVAL)
 
 
 def test_exclusion_zones_are_lat_lon_polygons():
@@ -257,3 +257,93 @@ class TestOptimization:
         assert report["status"] == 2
         assert analysis.status == 2
         assert "lat" in report
+
+
+# ------------------------------------------------------------------------------
+# Passage plans and open-loop evaluation
+# ------------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestEvaluation:
+    @pytest.fixture
+    def optimized(self, analyse, island):
+        analysis = analyse(island)
+        report = analysis.run(max_iter=500, solver_options=MUMPS)
+        return analysis, report
+
+    def test_run_stores_its_report_and_passage_plan(self, optimized):
+        analysis, report = optimized
+        plan = analysis.passage_plan
+
+        assert analysis.report is report
+        assert plan.lat == pytest.approx(np.ravel(report["lat"]))
+        assert plan.ctim == pytest.approx(np.ravel(report["ctim"]))
+        assert plan.metadata["fuel"] == pytest.approx(report["fuel"])
+        assert plan.metadata["vessel"]["name"] == "ship"
+        assert plan.metadata["run"]["solve"] is True
+
+    def test_evaluating_a_plan_reproduces_its_run(self, optimized):
+        analysis, report = optimized
+
+        evaluation = analysis.evaluate(analysis.passage_plan)
+
+        assert set(report) <= set(evaluation)
+        assert evaluation["status"] == 0
+        assert evaluation["init_fac"] is None
+        for key in ("fuel", "dist", "dist_rel", "transit_sog"):
+            assert evaluation[key] == pytest.approx(report[key], rel=1e-9)
+        for key in ("lat", "lon", "tim", "ctim", "avg_bhp", "z", "sog", "tws_gust"):
+            assert np.ravel(evaluation[key]) == pytest.approx(np.ravel(report[key]), rel=1e-9, abs=1e-9)
+
+    def test_a_report_can_be_evaluated_directly(self, optimized):
+        analysis, report = optimized
+
+        assert analysis.evaluate(report)["fuel"] == pytest.approx(report["fuel"], rel=1e-9)
+
+    def test_plan_survives_storage_and_evaluates_the_same(self, optimized, tmp_path):
+        from architeuthis.voyage import PassagePlan
+
+        analysis, report = optimized
+        plan = PassagePlan.load(analysis.passage_plan.save(str(tmp_path / "plan.json")), verbose=False)
+
+        assert analysis.evaluate(plan)["fuel"] == pytest.approx(report["fuel"], rel=1e-9)
+
+    def test_positions_stay_fixed_under_another_vessel(self, optimized, analyse, island, polar):
+        from architeuthis.vessel import Vessel
+
+        analysis, report = optimized
+        heavier = Vessel("heavier", filepath="unused.nc", sfc=SFC, hotel_load=HOTEL_LOAD, verbose=False)
+        heavier.data = polar.copy()
+        for key in ("bhp", "max_bhp", "sails_contribution"):
+            heavier.data[key] = heavier.data[key] * 2.0
+            heavier.add_interpolator(key, "stw", "tws", "twa", "hs", "wa")
+
+        evaluation = analyse(island, vessel=heavier).evaluate(analysis.passage_plan)
+
+        assert np.ravel(evaluation["lat"]) == pytest.approx(np.ravel(report["lat"]))
+        assert np.ravel(evaluation["avg_bhp"]) == pytest.approx(2.0 * np.ravel(report["avg_bhp"]), rel=1e-6)
+        assert evaluation["fuel"] > report["fuel"]
+
+    def test_constraint_violations_are_reported(self, route, analyse, open_sea, island):
+        straight = analyse(open_sea)
+        straight.run(solve=False, solver_options=MUMPS)
+
+        evaluation = analyse(island).evaluate(straight.passage_plan)
+
+        # The default constraints are max_bhp < max_power and z < 0.
+        assert len(evaluation["constraint_violations"]) == 2
+        assert evaluation["max_constraint_violation"] == pytest.approx(np.max(evaluation["z"]))
+        assert evaluation["max_constraint_violation"] > 50.0
+
+    def test_constraints_are_not_violated_by_the_optimum(self, optimized):
+        analysis, _ = optimized
+
+        assert analysis.evaluate(analysis.passage_plan)["max_constraint_violation"] < 1e-2
+
+    def test_evaluation_takes_its_own_constraints(self, optimized):
+        analysis, _ = optimized
+
+        evaluation = analysis.evaluate(analysis.passage_plan, constraints=lambda ctx: [ctx["sog"] < 1.0])
+
+        assert evaluation["max_constraint_violation"] == pytest.approx(np.max(evaluation["sog"]) - 1.0)

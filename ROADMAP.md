@@ -3,7 +3,6 @@
 ## Short term
 
 * Merge string\_formatting and regex\_utils
-* Create class Route
 * Create method compute\_route
 * Integrate tall, wide and sigmoid to numpy
 * Improve IIP data retrieving to handle server shutdowns
