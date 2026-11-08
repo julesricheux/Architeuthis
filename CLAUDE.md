@@ -11,6 +11,7 @@ Open-source marine weather and decision-making framework for hybrid sailing ship
 - **Object model:** domain objects inherit from `ArchiteuthisObject` (`common.py`), which takes `name` and `verbose`. Data-backed objects inherit from `ArchiteuthisData` or `ArchiteuthisSpatialData`. Analyses inherit from `ArchiteuthisAnalysis` (`core.py`).
 - **Naming:** PEP8 with descriptive names. Use keyword arguments unless self-explanatory, and one parameter per line in long signatures and calls.
 - **Maritime abbreviations** are the accepted exception to descriptive names; see the glossary below.
+- **Docstrings:** PEP 8 and PEP 257, as in AeroSandbox: `"""` alone on its first and last lines, a one-line summary, then Google-style `Args:`, `Returns:` and `Example:` sections, all within 72 columns. Every public module, class, function and method has one; `__init__` is exempt when its class has one, which then holds `Args:`. A module's description goes above its `Created on` header. `tests/domain/test_docstrings.py` checks all this, outside `numpy/`, `optimization/` and `modeling/`.
 - **Console output:** user-facing status goes through `common.status` with the existing emoji vocabulary (📦 ✅ ⬇️ ➕ ➖ 🟦 💔 ⚠️). It prints by default, and `set_status_sink` sends it elsewhere, to a GUI for example.
 - **No side effect at import:** no network access, logging setup or file writing when a module is imported. Fetch on first use, as `icebergs` does.
 - **Project docs:** `README.md` is the short presentation for users, `docs/user_guide.md` the reference of the public API. Record notable changes in `CHANGELOG.md` (Keep a Changelog, SemVer) and planned work in `ROADMAP.md`.
@@ -33,7 +34,7 @@ python -m pytest
 
 A single test: `python -m pytest tests/optimization/test_opti_rosenbrock.py::test_2D_rosenbrock`. Only the end-to-end routing tests: `python -m pytest -m integration`. The suite takes under a minute and needs no network or credentials. There is no linter or formatter configuration.
 
-Credentials come from environment variables, and each is only needed for its provider: `CDS_API_KEY`, `CMEMS_USER`, `CMEMS_PWD`, `EUMDAC_USER`, `EUMDAC_PWD`. Herbie sources (IFS, GFS, HRDPS) need none.
+Credentials come from environment variables, and each is only needed for its provider: `CDS_API_KEY`, `CMEMS_USER`, `CMEMS_PWD`, `EUMDAC_USER`, `EUMDAC_PWD`. Herbie sources (IFS, GFS, HRDPS) need none. The README has a tutorial per provider. Never write a real value in a tracked file, including in a comment.
 
 Downloads are cached under `~/data/` (`common._HOME`) in `topo/`, `cmems/`, `cds/`, `eumetsat/` and `iip/`. `RouteLibrary`, `RouteSetLibrary`, `PassagePlanLibrary` and `ExclusionZoneLibrary` store JSON in `route_library/`, `route_sets/`, `passage_plans/` and `exclusion_zones/`. The UI reads route reports from `routes/`, a different format, written by `ReportCollection.save`. Vessel polars are NetCDF files that are not in the repository.
 
@@ -172,6 +173,7 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 - `EnsembleHerbieForecast.add_interpolator` takes `var_dim, time_dim, member_dim, latitude_dim, longitude_dim`, the order in which `RoutingAnalysis` queries it.
 - Report consumers (`json_wrapper.route_to_geojson`, `ui.py`) also need `init_fac`, which `run` records but `evaluate` does not. `ReportCollection.save` writes to `~/data/routes/` by default.
 - `HRDPSForecast` wind speeds are right but its directions are not: the files have `uvRelativeToGrid` = 1 and the components are not rotated from the rotated grid, about 45 deg off around Saint-Pierre-et-Miquelon compared with GFS. `HerbieLatest` only looks on `aws` and `nomads` by default, so a model elsewhere needs `priority`.
+- `common` reads credentials once, at its import, so a variable set later is ignored. `EUMDAC_USER` and `EUMDAC_PWD` hold the EUMETSAT Consumer Key and Secret, not a login. Once `~/.cdsapirc` exists, `CDS_API_KEY` no longer has any effect. Without `CMEMS_USER`, the Copernicus Marine toolbox looks at its own variables and files, then prompts, and without a terminal `subset` returns `None`.
 - `core.exclusion_zones` and `core.berg_zone` are computed each time they are read (module `__getattr__`), so `from architeuthis.core import exclusion_zones` fetches the iceberg limit at that line.
 
 ## Testing

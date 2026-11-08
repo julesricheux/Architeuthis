@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
 """
+Figures of routes and routing reports.
+
+They are documented in `docs/user_guide.md`.
+
 Created on Mon Dec 15 22:36:04 2025
 
 @author: jrich
@@ -52,8 +56,10 @@ _BAND_COLOR = "limegreen"
 
 def set_plot_style():
     """
-    Apply the Architeuthis figure style to every figure from now on, for scripts drawing their
-    own figures. Importing this module does not change anything: an application keeps its style.
+    Apply the Architeuthis figure style to every figure from now on.
+
+    This is for scripts drawing their own figures. Importing this module
+    does not change anything: an application keeps its style.
     """
     sns.set_theme(palette="viridis")
     mpl.rcParams.update(_FONT_SIZES)
@@ -61,7 +67,11 @@ def set_plot_style():
 
 @contextmanager
 def plot_style():
-    """Apply the Architeuthis figure style inside a `with` block only. The plots of this module use it."""
+    """
+    Apply the Architeuthis figure style inside a `with` block only.
+
+    The plots of this module use it.
+    """
     rc = dict(sns.plotting_context("notebook"))
     rc.update(sns.axes_style("darkgrid"))
     rc["font.family"] = ["sans-serif"]
@@ -73,10 +83,12 @@ def plot_style():
 
 def _fix_style(fig):
     """
-    Build the ticks of a figure, and set their size and its fonts, now. Matplotlib otherwise
-    looks them up when it draws, which may be after the end of the `plot_style` block: in
-    Spyder, in a GUI or with a later `savefig`, the figure would then take the style in effect
-    at that time, even for the number of ticks, which follows their size.
+    Build the ticks of a figure, and set their size and its fonts, now.
+
+    Matplotlib otherwise looks them up when it draws, which may be after
+    the end of the `plot_style` block: in Spyder, in a GUI or with a
+    later `savefig`, the figure would then take the style in effect at
+    that time, even for the number of ticks, which follows their size.
     """
     for ax in fig.axes:
         ax.tick_params(axis="x", which="both", labelsize=mpl.rcParams["xtick.labelsize"])
@@ -91,7 +103,9 @@ def _fix_style(fig):
 
 
 def _finish(fig, save_as=None, show=True):
-    """Save and display a finished figure, and return it."""
+    """
+    Save and display a finished figure, and return it.
+    """
     _fix_style(fig)
     if save_as:
         extension = os.path.splitext(str(save_as))[1].lstrip(".").lower()
@@ -104,14 +118,18 @@ def _finish(fig, save_as=None, show=True):
 #%% HELPERS SHARED BY THE PLOTS
 
 def _times(values):
-    """Float epoch seconds as dates."""
+    """
+    Float epoch seconds as dates.
+    """
     return pd.to_datetime(onp.ravel(values), unit="s")
 
 
 def get_steps(report, quantity):
     """
-    Times and values of a per-segment quantity, to plot it as steps with
-    `plt.plot(*get_steps(report, "avg_bhp"))`: each value is held from one node to the next.
+    Times and values of a per-segment quantity, to plot it as steps.
+
+    Use it with `plt.plot(*get_steps(report, "avg_bhp"))`: each value is
+    held from one node to the next.
     """
     tim = pd.to_datetime(report["tim"], unit="s")
 
@@ -127,7 +145,9 @@ def get_steps(report, quantity):
 
 
 def add_map_background(ax):
-    """Land, ocean, coastline and gridlines of the maps of this module."""
+    """
+    Land, ocean, coastline and gridlines of the maps of this module.
+    """
     # Add background features
     # ax.add_feature(cfeature.LAND, facecolor="palegoldenrod")
     ax.add_feature(cfeature.LAND, facecolor="khaki")
@@ -156,7 +176,9 @@ def add_map_background(ax):
 
 
 def _quantile_bands(ax, x, quantiles, prefix="", **median_kwargs):
-    """Bands of `quantiles`, a `{q: values}` dict, around the median."""
+    """
+    Bands of `quantiles`, a `{q: values}` dict, around the median.
+    """
     for lower, upper, alpha, label in _QUANTILE_BANDS:
         ax.fill_between(x, quantiles[lower], quantiles[upper], alpha=alpha, label=f"{prefix}{label}", color=_BAND_COLOR)
     ax.plot(x, quantiles[0.50], label="Median", **median_kwargs)
@@ -166,17 +188,23 @@ def _quantile_bands(ax, x, quantiles, prefix="", **median_kwargs):
 
 def plot_route(lon, lat, clon, clat, tws, twd, barbs, sails_contribution=None, sails_threshold=1., ax=None, save_as=None, show=True):
     """
-    Routes on a map, one color per route, over the great circle of the first one (in grey).
+    Routes on a map, one color per route.
+
+    They are drawn over the great circle of the first one (in grey).
 
     Args:
         lon, lat: Node positions, one array per route.
         clon, clat: Segment centers, one array per route.
-        tws, twd: True wind speed (kt) and direction (deg) at segment centers, one array per route.
+        tws, twd: True wind speed (kt) and direction (deg) at segment
+            centers, one array per route.
         barbs: Whether wind barbs are drawn at segment centers.
-        sails_contribution: Sails contribution (%) at segment centers, one array per route. If
-            given, a dot marks the segments above `sails_threshold` instead of every node.
-        ax: Cartopy axes to draw in. By default, the current figure is cleared.
-        save_as: File to write. Its extension gives the format, PDF if it has none.
+        sails_contribution: Sails contribution (%) at segment centers,
+            one array per route. If given, a dot marks the segments
+            above `sails_threshold` instead of every node.
+        ax: Cartopy axes to draw in. By default, the current figure is
+            cleared.
+        save_as: File to write. Its extension gives the format, PDF if
+            it has none.
         show: Whether to call `plt.show()`. Pass False in a GUI.
 
     Returns:
@@ -250,10 +278,13 @@ def draw(reports, barbs=True, sails_threshold=None, ax=None, save_as=None, show=
     Args:
         reports: The reports to draw.
         barbs: Whether wind barbs are drawn at segment centers.
-        sails_threshold: If given, a dot marks the segments whose sails contribution is above
-            this value, in %, instead of every node.
-        ax: Cartopy axes to draw in. By default, the current figure is cleared.
-        save_as: File to write. Its extension gives the format, PDF if it has none.
+        sails_threshold: If given, a dot marks the segments whose sails
+            contribution is above this value, in %, instead of every
+            node.
+        ax: Cartopy axes to draw in. By default, the current figure is
+            cleared.
+        save_as: File to write. Its extension gives the format, PDF if
+            it has none.
         show: Whether to call `plt.show()`. Pass False in a GUI.
 
     Returns:
@@ -278,14 +309,17 @@ def draw(reports, barbs=True, sails_threshold=None, ax=None, save_as=None, show=
 
 def plot_route_set(route_set, n=50, ax=None, save_as=None, show=True):
     """
-    The reference routes of a `RouteSet` on a map, to check them before routing: ortho in solid
-    black, minus in dashed red and plus in dashed green.
+    The reference routes of a `RouteSet` on a map.
+
+    This checks them before routing: ortho in solid black, minus in
+    dashed red and plus in dashed green.
 
     Args:
         route_set: The `RouteSet`.
         n: Number of points drawn per route.
         ax: Cartopy axes to draw in. By default, a new figure.
-        save_as: File to write. Its extension gives the format, PDF if it has none.
+        save_as: File to write. Its extension gives the format, PDF if
+            it has none.
         show: Whether to call `plt.show()`. Pass False in a GUI.
 
     Returns:
@@ -321,7 +355,11 @@ _AWS_COLOR = "#e57373"  # light red
 
 
 def _plot_gust_panel(ax, ctim, report, key, color, fill_alpha):
-    """A wind speed, and its gust as a dashed line with the band between them, if the report has it."""
+    """
+    A wind speed, and its gust if the report has it.
+
+    The gust is a dashed line, with the band between them.
+    """
     step_kw = dict(where="mid")
     speed = onp.asarray(report[key], dtype=float)
     ax.step(ctim, speed, color=color, label="Average", **step_kw)
@@ -336,41 +374,51 @@ def _plot_gust_panel(ax, ctim, report, key, color, fill_alpha):
 
 def plot_report(report, save_as=None, show=True, figsize=A4_PORTRAIT, dpi=300, ylim=None):
     """
-    One route on an A4 page: six stacked panels sharing a time axis in UTC.
+    One route on an A4 page.
 
-    The panels are, from top to bottom, with the report entries they use:
+    It has six stacked panels sharing a time axis in UTC.
 
-    ========= ========================== ==================================================
-    Panel     Entries                    Content
-    ========= ========================== ==================================================
-    `sog`     `sog`                      Speed over ground, kt
-    `sails`   `sails_contribution`       Sails contribution, % (axis from 0 to 100)
-    `bhp`     `avg_bhp`, `max_bhp`       Average BHP, kW, with load fluctuations: dashed
-                                         lines and a band at average +/- (max - average)
-    `swh`     `swh`                      Significant wave height, m
-    `tws`     `tws`, `tws_gust`          True wind, kt, average and gust
-    `aws`     `aws`, `aws_gust`          Apparent wind, kt, average and gust
-    ========= ========================== ==================================================
+    The panels are, from top to bottom, with the report entries they
+    use:
 
-    Values are per segment and drawn as steps centered on `ctim`. The time axis runs from the
-    first to the last node of `tim`. The gust lines are left out if the report has no gust,
-    which happens with `options={"include_gusts": False}`.
+    ======= ==================== ===================================
+    Panel   Entries              Content
+    ======= ==================== ===================================
+    `sog`   `sog`                Speed over ground, kt
+    `sails` `sails_contribution` Sails contribution, % (axis from 0
+                                 to 100)
+    `bhp`   `avg_bhp`, `max_bhp` Average BHP, kW, with load
+                                 fluctuations: dashed lines and a
+                                 band at average +/- (max - average)
+    `swh`   `swh`                Significant wave height, m
+    `tws`   `tws`, `tws_gust`    True wind, kt, average and gust
+    `aws`   `aws`, `aws_gust`    Apparent wind, kt, average and gust
+    ======= ==================== ===================================
+
+    Values are per segment and drawn as steps centered on `ctim`. The
+    time axis runs from the first to the last node of `tim`. The gust
+    lines are left out if the report has no gust, which happens with
+    `options={"include_gusts": False}`.
 
     Args:
-        report: A report of `RoutingAnalysis.run` or `evaluate`, or the same dict reloaded from JSON.
-        save_as: File to write. Its extension gives the format, PDF if it has none. The page
-            size is kept exactly, so a PDF is a true A4 page.
-        show: Whether to call `plt.show()`. Pass False in a GUI or to save pages in a loop, and
-            close the figure with `plt.close(fig)` when done.
+        report: A report of `RoutingAnalysis.run` or `evaluate`, or the
+            same dict reloaded from JSON.
+        save_as: File to write. Its extension gives the format, PDF if
+            it has none. The page size is kept exactly, so a PDF is a
+            true A4 page.
+        show: Whether to call `plt.show()`. Pass False in a GUI or to
+            save pages in a loop, and close the figure with
+            `plt.close(fig)` when done.
         figsize: Page size in inches. `A4_PORTRAIT` by default.
         dpi: Resolution in dots per inch.
-        ylim: Vertical limits by panel name, replacing the defaults, for example
-            `{"sog": (6., 13.), "bhp": (0., 3084.)}`. By default, `sails` runs from 0 to 100,
-            `sog` is automatic and the others start at 0.
+        ylim: Vertical limits by panel name, replacing the defaults, for
+            example `{"sog": (6., 13.), "bhp": (0., 3084.)}`. By
+            default, `sails` runs from 0 to 100, `sog` is automatic and
+            the others start at 0.
 
     Returns:
-        The figure. `fig.axes` holds the panels in the order of `REPORT_PANELS`, for further
-        customization.
+        The figure. `fig.axes` holds the panels in the order of
+        `REPORT_PANELS`, for further customization.
     """
     ctim = _times(report["ctim"])
     tim = _times(report["tim"])
@@ -447,14 +495,19 @@ def plot_report(report, save_as=None, show=True, figsize=A4_PORTRAIT, dpi=300, y
 
 def plot_fuel_vs_etd(reports, models_colors=None, ylim=None, figsize=(10, 3.5), show=True):
     """
-    Total fuel against ETD: one figure per vessel, one color per model, crosses for the
-    reference routes (`solve` 0) and dots for the optimized ones (`solve` 1).
+    Total fuel against ETD.
+
+    There is one figure per vessel, one color per model, crosses for the
+    reference routes (`solve` 0) and dots for the optimized ones
+    (`solve` 1).
 
     Args:
         reports: Reports with `solve`, `vessel` and `model` entries.
-        models_colors: Color by model name. A viridis color each by default.
-        ylim: Vertical limits, common to the figures. By default, rounded to 2 t around the
-            lowest and highest fuel of the reports.
+        models_colors: Color by model name. A viridis color each by
+            default.
+        ylim: Vertical limits, common to the figures. By default,
+            rounded to 2 t around the lowest and highest fuel of the
+            reports.
         figsize: Size of each figure in inches.
         show: Whether to call `plt.show()`. Pass False in a GUI.
 
@@ -502,13 +555,16 @@ def plot_variable(reports, variable, unit="", labels=None, ylim=(0., None), lege
 
     Args:
         reports: The reports to compare, one viridis color each.
-        variable: Report entry, for example `sog`, `tws`, `swh`, `sails_contribution`, `avg_bhp`.
+        variable: Report entry, for example `sog`, `tws`, `swh`,
+            `sails_contribution`, `avg_bhp`.
         unit: Unit shown in the axis label.
-        labels: Legend text by `init_fac`, for example `{-1.: "North", 0.: "Ortho", 1.: "South"}`.
+        labels: Legend text by `init_fac`, for example `{-1.: "North",
+            0.: "Ortho", 1.: "South"}`.
         ylim: Vertical limits.
         legend: Whether to draw the legend.
         figsize, dpi: Size in inches and resolution.
-        save_as: File to write. Its extension gives the format, PDF if it has none.
+        save_as: File to write. Its extension gives the format, PDF if
+            it has none.
         show: Whether to call `plt.show()`. Pass False in a GUI.
 
     Returns:
@@ -535,14 +591,19 @@ def plot_variable(reports, variable, unit="", labels=None, ylim=(0., None), lege
 
 def plot_power_and_weather(reports, labels=None, max_bhp=False, figsize=(12, 10), dpi=300, save_as=None, show=True):
     """
-    Average BHP, SWH and TWS of several reports on three stacked panels, as steps.
+    Average BHP, SWH and TWS of several reports.
+
+    They are on three stacked panels, as steps.
 
     Args:
         reports: The reports to compare, one viridis color each.
-        labels: Legend text by `init_fac`, for example `{-1.: "North", 0.: "Ortho", 1.: "South"}`.
-        max_bhp: Whether to add `max_bhp` as dashed lines on the top panel.
+        labels: Legend text by `init_fac`, for example `{-1.: "North",
+            0.: "Ortho", 1.: "South"}`.
+        max_bhp: Whether to add `max_bhp` as dashed lines on the top
+            panel.
         figsize, dpi: Size in inches and resolution.
-        save_as: File to write. Its extension gives the format, PDF if it has none.
+        save_as: File to write. Its extension gives the format, PDF if
+            it has none.
         show: Whether to call `plt.show()`. Pass False in a GUI.
 
     Returns:
@@ -577,19 +638,25 @@ def plot_power_and_weather(reports, labels=None, max_bhp=False, figsize=(12, 10)
 
 def plot_quantiles(reports, variable, unit="", prefix="", title=None, ylim=None, daily_ticks=False, figsize=(10, 4), save_as=None, show=True):
     """
-    Spread of a per-segment quantity over reports on the same time grid: bands between the
-    quantiles 1-99 %, 5-95 % and 25-75 %, and the median. This is the ensemble meteogram.
+    Spread of a per-segment quantity over reports.
+
+    The reports are on the same time grid. The figure has bands between
+    the quantiles 1-99 %, 5-95 % and 25-75 %, and the median. This is
+    the ensemble meteogram.
 
     Args:
         reports: Reports on the same `ctim`, typically ensemble members.
-        variable: Report entry, for example `avg_bhp`, `tws`, `swh`, `sog`.
+        variable: Report entry, for example `avg_bhp`, `tws`, `swh`,
+            `sog`.
         unit: Unit shown in the axis label.
-        prefix: Text before the band labels, for example `"IFS ensemble "`.
+        prefix: Text before the band labels, for example `"IFS ensemble
+            "`.
         title: Figure title.
         ylim: Vertical limits.
         daily_ticks: Whether to mark every day on the time axis.
         figsize: Size in inches.
-        save_as: File to write. Its extension gives the format, PDF if it has none.
+        save_as: File to write. Its extension gives the format, PDF if
+            it has none.
         show: Whether to call `plt.show()`. Pass False in a GUI.
 
     Returns:
@@ -617,7 +684,11 @@ def plot_quantiles(reports, variable, unit="", prefix="", title=None, ylim=None,
 
 
 def _members_along_route(report, forecast, key):
-    """A field of an ensemble forecast at the segment centers of a route: (members, segments)."""
+    """
+    A field of an ensemble forecast at the segment centers of a route.
+
+    Its shape is (members, segments).
+    """
     ctim, clat, clon = (onp.ravel(report[entry]) for entry in ("ctim", "clat", "clon"))
     members = forecast.data["number"].values
 
@@ -633,19 +704,24 @@ def _members_along_route(report, forecast, key):
 
 def plot_ensemble_along_route(report, atmosphere, wave, ylim=None, figsize=(10, 8), save_as=None, show=True):
     """
-    The weather spread along one route, whatever the member it was optimized for, on three
-    stacked panels: BHP with load fluctuations, then SWH and TWS with their quantile bands over
-    the members of an ensemble.
+    The weather spread along one route, on three stacked panels.
+
+    This holds whatever the member it was optimized for: BHP with load
+    fluctuations, then SWH and TWS with their quantile bands over the
+    members of an ensemble.
 
     Args:
         report: The report of the route.
-        atmosphere: Ensemble forecast with the `u10` and `v10` interpolators, for example
-            `presets.ensemble_atmosphere`.
-        wave: Ensemble forecast with the `swh` interpolator, for example `presets.ensemble_wave`.
-        ylim: Vertical limits by panel name, `bhp`, `swh` or `tws`, for example
-            `{"bhp": (0., 2700.), "swh": (0., 7.), "tws": (0., 40.)}`. They start at 0 by default.
+        atmosphere: Ensemble forecast with the `u10` and `v10`
+            interpolators, for example `presets.ensemble_atmosphere`.
+        wave: Ensemble forecast with the `swh` interpolator, for example
+            `presets.ensemble_wave`.
+        ylim: Vertical limits by panel name, `bhp`, `swh` or `tws`, for
+            example `{"bhp": (0., 2700.), "swh": (0., 7.), "tws": (0.,
+            40.)}`. They start at 0 by default.
         figsize: Size in inches.
-        save_as: File to write. Its extension gives the format, PDF if it has none.
+        save_as: File to write. Its extension gives the format, PDF if
+            it has none.
         show: Whether to call `plt.show()`. Pass False in a GUI.
 
     Returns:
@@ -696,15 +772,21 @@ def plot_ensemble_along_route(report, atmosphere, wave, ylim=None, figsize=(10, 
 
 def plot_fuel_quantiles(reports, daily=False, converged_only=True, figsize=(8, 4), save_as=None, show=True):
     """
-    Spread of the fuel over reports, against ETA: bands between the quantiles 1-99 %, 5-95 %
-    and 25-75 %, and the median.
+    Spread of the fuel over reports, against ETA.
+
+    The figure has bands between the quantiles 1-99 %, 5-95 % and 25-75
+    %, and the median.
 
     Args:
-        reports: Reports with several ETA, typically an ETA sweep or ensemble members.
-        daily: Whether to show tons per day of transit instead of the total.
-        converged_only: Whether to leave out the reports with `status` other than 1.
+        reports: Reports with several ETA, typically an ETA sweep or
+            ensemble members.
+        daily: Whether to show tons per day of transit instead of the
+            total.
+        converged_only: Whether to leave out the reports with `status`
+            other than 1.
         figsize: Size in inches.
-        save_as: File to write. Its extension gives the format, PDF if it has none.
+        save_as: File to write. Its extension gives the format, PDF if
+            it has none.
         show: Whether to call `plt.show()`. Pass False in a GUI.
 
     Returns:
@@ -734,13 +816,16 @@ def plot_fuel_quantiles(reports, daily=False, converged_only=True, figsize=(8, 4
 
 def plot_convergence(reports, figsize=(8, 4), save_as=None, show=True):
     """
-    Share of the reports that converged (`status` 1) for each ETA: the probability that this
-    ETA is possible, when the reports are ensemble members.
+    Share of the reports that converged (`status` 1) for each ETA.
+
+    This is the probability that this ETA is possible, when the reports
+    are ensemble members.
 
     Args:
         reports: Reports with several ETA.
         figsize: Size in inches.
-        save_as: File to write. Its extension gives the format, PDF if it has none.
+        save_as: File to write. Its extension gives the format, PDF if
+            it has none.
         show: Whether to call `plt.show()`. Pass False in a GUI.
 
     Returns:
@@ -763,11 +848,13 @@ def plot_fuel_distribution(groups, horizontal=False, figsize=(8, 3), save_as=Non
     Fuel distributions side by side, as violins with box plots.
 
     Args:
-        groups: Reports by label, for example
-            `{"Eff. 45%": reports.select(vessel="eff45"), "Eff. 60%": reports.select(vessel="eff60")}`.
+        groups: Reports by label, for example `{"Eff. 45%":
+            reports.select(vessel="eff45"), "Eff. 60%":
+            reports.select(vessel="eff60")}`.
         horizontal: Whether the fuel runs along the horizontal axis.
         figsize: Size in inches.
-        save_as: File to write. Its extension gives the format, PDF if it has none.
+        save_as: File to write. Its extension gives the format, PDF if
+            it has none.
         show: Whether to call `plt.show()`. Pass False in a GUI.
 
     Returns:
@@ -797,6 +884,24 @@ def plot_fuel_distribution(groups, horizontal=False, figsize=(8, 3), save_as=Non
 #%% FORMER FIGURES
 
 def plot_routing_report(cvtim, stw, sog, tws, twa, swh, wa, avg_bhp, max_bhp, sol, maxBHP):
+    """
+    The former figure of a routing, on four stacked panels.
+
+    `plot_report` is the current one.
+
+    Args:
+        cvtim: Times of the x axis.
+        stw: Symbolic speed through water.
+        sog: Symbolic speed over ground.
+        tws: Symbolic true wind speed.
+        twa: Symbolic true wind angle.
+        swh: Symbolic significant wave height.
+        wa: Symbolic wave angle.
+        avg_bhp: Symbolic average brake power.
+        max_bhp: Symbolic maximum brake power.
+        sol: Solution that evaluates these quantities.
+        maxBHP: Power limit of the vessel.
+    """
     # ------------------------------------------------------------------
     # Prepare data
     # ------------------------------------------------------------------

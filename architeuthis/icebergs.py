@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
 """
+The iceberg limit of the International Ice Patrol (IIP).
+
+It is fetched on first use and never when this module is imported.
+
 Created on Mon Feb  9 14:14:45 2026
 
 @author: jrich
@@ -26,6 +30,16 @@ from architeuthis.common import _HOME, status
 
 # Helper to extract coordinate block from start keyword to first period
 def extract_coord_block(text, start_phrase):
+    """
+    The text from a phrase to the first period after it.
+
+    Args:
+        text: Text of the bulletin.
+        start_phrase: The phrase that starts the block.
+
+    Raises:
+        ValueError: If the phrase or the period is not found.
+    """
     # find start
     start_idx = text.find(start_phrase)
     if start_idx == -1:
@@ -40,6 +54,15 @@ def extract_coord_block(text, start_phrase):
 # Helper to parse coordinates from block
 coord_pattern = re.compile(r"(\d{1,2}-\d{2}[NS])\s+(\d{2,3}-\d{2}[EW])")
 def parse_coords(block_text):
+    """
+    Convert `DD-MMN` and `DDD-MMW` coordinates to decimal degrees.
+
+    Args:
+        block_text: Text holding the coordinates.
+
+    Returns:
+        A list of `[lat, lon]` positions.
+    """
     coords = []
     for lat_str, lon_str in coord_pattern.findall(block_text):
         # Latitude
@@ -56,6 +79,18 @@ def parse_coords(block_text):
     return coords
 
 def get_iip_zone_from_bulletin(text):
+    """
+    The iceberg limit of a bulletin, as a closed polygon.
+
+    The polygon follows the limit, then closes 10 degrees west of its
+    last point.
+
+    Args:
+        text: Text of the bulletin.
+
+    Returns:
+        A list of `[lat, lon]` positions.
+    """
     # Extract and parse the blocks
     iceberg_block = extract_coord_block(text, "ICEBERG LIMIT ALONG TRACKLINE JOINING")
     # western_block = extract_coord_block(text, "WESTERN ICEBERG LIMIT ALONG TRACKLINE JOINING")
@@ -94,8 +129,10 @@ def _age(path: Path) -> str:
 
 def get_latest_iip_zone():
     """
-    Iceberg limit polygon from the latest IIP bulletin. If the server cannot be reached,
-    the last downloaded bulletin is used, and an empty polygon if there is none.
+    Iceberg limit polygon from the latest IIP bulletin.
+
+    If the server cannot be reached, the last downloaded bulletin is
+    used, and an empty polygon if there is none.
     """
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -126,6 +163,13 @@ def get_latest_iip_zone():
 # ---------------------------------------------------------------------
 
 def download_and_extract_zip(url: str, out_dir: Path) -> None:
+    """
+    Download a ZIP archive and extract it.
+
+    Args:
+        url: Address of the archive.
+        out_dir: Folder to extract it to.
+    """
     r = requests.get(url, timeout=TIMEOUT)
     r.raise_for_status()
 
@@ -139,6 +183,20 @@ def download_and_extract_zip(url: str, out_dir: Path) -> None:
 
 
 def load_all_shapefiles(base_dir: Path) -> gpd.GeoDataFrame:
+    """
+    The polylines of the `blim*` shapefiles of a folder.
+
+    Each feature has a Leaflet `style`, in EPSG:4326. The `ilim*`
+    folders are recognized but not kept so far, and other folders are
+    ignored.
+
+    Args:
+        base_dir: Folder searched recursively.
+
+    Raises:
+        FileNotFoundError: If there is no shapefile.
+        ValueError: If no polyline is found.
+    """
     shp_files = list(base_dir.rglob("*.shp"))
 
     if not shp_files:
@@ -197,8 +255,10 @@ def load_all_shapefiles(base_dir: Path) -> gpd.GeoDataFrame:
 
 def get_berg_geojson() -> dict:
     """
-    Iceberg limit lines (display only, for the UI). If the server cannot be reached, the
-    last downloaded shapefiles are used, and an empty collection if there are none.
+    Iceberg limit lines (display only, for the UI).
+
+    If the server cannot be reached, the last downloaded shapefiles are
+    used, and an empty collection if there are none.
     """
     try:
         download_and_extract_zip(ZIP_URL, WORKDIR)
@@ -221,25 +281,39 @@ _cache = {}
 
 
 def iceberg_polygon() -> list:
-    """Iceberg limit polygon, downloaded once per session. See `refresh`."""
+    """
+    Iceberg limit polygon, downloaded once per session. See `refresh`.
+    """
     if "polygon" not in _cache:
         _cache["polygon"] = get_latest_iip_zone()
     return _cache["polygon"]
 
 
 def iceberg_geojson() -> dict:
-    """Iceberg limit lines, downloaded once per session. See `refresh`."""
+    """
+    Iceberg limit lines, downloaded once per session. See `refresh`.
+    """
     if "geojson" not in _cache:
         _cache["geojson"] = get_berg_geojson()
     return _cache["geojson"]
 
 
 def refresh() -> None:
-    """Forget the downloaded data, so that the next use fetches the latest bulletin."""
+    """
+    Forget the downloaded data.
+
+    The next use then fetches the latest bulletin.
+    """
     _cache.clear()
 
 
 def __getattr__(name: str):
+    """
+    Compute `polygon`, `berg_zone` and `berg_geojson` when read.
+
+    They remain module attributes, without any download when the module
+    is imported.
+    """
     # polygon, berg_zone and berg_geojson remain module attributes, without any download
     # when the module is imported.
     if name in ("polygon", "berg_zone"):

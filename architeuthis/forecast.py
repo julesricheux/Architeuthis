@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
 """
+Topography and weather forecasts, as differentiable lookup tables.
+
+Each data source follows the `load_data` pipeline of `ArchiteuthisData`.
+
 Created on Thu Jan 15 14:02:43 2026
 
 @author: jrich
@@ -32,10 +36,32 @@ logging.getLogger("copernicusmarine").handlers.clear()
 
 
 def preprocess(ds):
+    """
+    Drop the `step` variable, so that the files can be concatenated.
+    """
     return ds.drop_vars("step", errors="ignore")
 
 
 class Topography(ArchiteuthisSpatialData):
+    """
+    ETOPO 2022 topography, as a signed distance to the boundary.
+
+    `distance_to_iso0`, normally registered with `var_key="z"`, is in
+    nautical miles: positive on land or inside exclusion zones and
+    negative at sea. Coordinates are `lat` and `lon`.
+
+    Args:
+        name: Name of this object, used in status messages.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+        depth_offset: Treats water shallower than this as land, in m.
+        z_margin: Clearance added to the distance, in nm.
+        exclusion_zones: `ExclusionZone` objects or lists of `[lat,
+            lon]` points, rasterized into the field.
+        verbose: Whether to report progress.
+    """
     
     def __init__(
         self,
@@ -201,6 +227,19 @@ class Topography(ArchiteuthisSpatialData):
         longitude_slice: slice = slice(None, None, None),
         method: str = "linear",
     ):
+        """
+        Build the lookup table of a variable of the topography.
+
+        Args:
+            var_dim: Name of the variable, normally `distance_to_iso0`.
+            latitude_dim: Name of the latitude coordinate.
+            longitude_dim: Name of the longitude coordinate.
+            var_key: Key of the lookup table, by default `var_dim`.
+            latitude_slice: Slice of the latitudes.
+            longitude_slice: Slice of the longitudes.
+            method: CasADi interpolation method, such as "linear" or
+                "bspline".
+        """
         if var_key is None:
             var_key = var_dim
         
@@ -211,6 +250,22 @@ class Topography(ArchiteuthisSpatialData):
 
 
 class Forecast(ArchiteuthisSpatialData):
+    """
+    Base class of the forecasts, on a time, latitude and longitude grid.
+
+    Args:
+        name: Name of this object, used in status messages.
+        date: Base time of the forecast. If None, the latest one is
+            found by `_find_latest`.
+        fxx: Lead times of the forecast.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+        time_unit: Resolution used to convert times to floats, "s" for
+            epoch seconds.
+        verbose: Whether to report progress.
+    """
     
     def __init__(
         self,
@@ -236,10 +291,16 @@ class Forecast(ArchiteuthisSpatialData):
     
     @property
     def forecast_time(self):
+        """
+        The base time of the forecast, `f00`.
+        """
         return self.f00
     
     @property
     def valid_time(self):
+        """
+        The lead times of the forecast, `fxx`.
+        """
         return self.fxx
     
     def _find_latest(self):
@@ -259,6 +320,23 @@ class Forecast(ArchiteuthisSpatialData):
         fac: float = 1.0,
         
     ):
+        """
+        Build the lookup table of a variable of the forecast.
+
+        Args:
+            var_dim: Name of the variable in the data.
+            time_dim: Name of the time coordinate.
+            latitude_dim: Name of the latitude coordinate.
+            longitude_dim: Name of the longitude coordinate.
+            var_key: Key of the lookup table, by default `var_dim`.
+            time_slice: Slice of the times.
+            latitude_slice: Slice of the latitudes.
+            longitude_slice: Slice of the longitudes.
+            method: CasADi interpolation method, such as "linear" or
+                "bspline".
+            fac: Factor applied to the values, to correct or convert
+                them.
+        """
         if var_key is None:
             var_key = var_dim
         
@@ -269,6 +347,25 @@ class Forecast(ArchiteuthisSpatialData):
     
     
 class HerbieForecast(Forecast):
+    """
+    Base class of the GRIB2 forecasts downloaded with Herbie.
+
+    Args:
+        name: Name of this object, used in status messages.
+        model: Herbie model, such as "ifs" or "gfs".
+        product: Herbie product of this model.
+        regex: Search string that selects the GRIB2 variables.
+        date: Base time of the forecast, by default the latest one.
+        fxx: Lead times of the forecast, in hours.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+        time_unit: Resolution used to convert times to floats, "s" for
+            epoch seconds.
+        verbose: Whether to report progress.
+    """
+
     def __init__(
         self,
         name: str,
@@ -342,6 +439,25 @@ class HerbieForecast(Forecast):
         
 
 class DeterministicHerbieForecast(HerbieForecast):
+    """
+    A forecast of a single member, downloaded with Herbie.
+
+    Args:
+        name: Name of this object, used in status messages.
+        model: Herbie model, such as "ifs" or "gfs".
+        product: Herbie product of this model.
+        regex: Search string that selects the GRIB2 variables.
+        date: Base time of the forecast, by default the latest one.
+        fxx: Lead times of the forecast, in hours.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+        time_unit: Resolution used to convert times to floats, "s" for
+            epoch seconds.
+        verbose: Whether to report progress.
+    """
+
     def __init__(
         self,
         name: str,
@@ -376,14 +492,17 @@ class DeterministicHerbieForecast(HerbieForecast):
         
 def _regrid_to_lat_lon(data: xr.Dataset, crs, latitude, longitude, skip: int = 5) -> xr.Dataset:
     """
-    A dataset on a projected `x`, `y` grid, with 2D `latitude` and `longitude` coordinates,
-    interpolated on a regular latitude and longitude grid.
+    Interpolate a dataset on a regular latitude and longitude grid.
+
+    The dataset is on a projected `x`, `y` grid, with 2D `latitude` and
+    `longitude` coordinates.
 
     Args:
         data: The dataset, with `x` and `y` dimensions.
         crs: Coordinate reference system of the projected grid.
         latitude, longitude: The target coordinates.
-        skip: Keeps one point out of `skip` of the 2D coordinates to find the extent of the grid.
+        skip: Keeps one point out of `skip` of the 2D coordinates to
+            find the extent of the grid.
     """
     import pyproj
 
@@ -419,19 +538,24 @@ def _regrid_to_lat_lon(data: xr.Dataset, crs, latitude, longitude, skip: int = 5
 
 class HRDPSForecast(DeterministicHerbieForecast):
     """
-    The 10 m wind of HRDPS continental, regridded from its rotated grid on a regular latitude
-    and longitude grid, as routing requires.
+    The 10 m wind of HRDPS continental.
 
-    The positions and the wind speed are right, but not yet the wind direction: the components
-    of the files are relative to the rotated grid (`uvRelativeToGrid` = 1) and are not rotated
-    here, about 45 deg off around Saint-Pierre-et-Miquelon.
+    It is regridded from its rotated grid on a regular latitude and
+    longitude grid, as routing requires.
+
+    The positions and the wind speed are right, but not yet the wind
+    direction: the components of the files are relative to the rotated
+    grid (`uvRelativeToGrid` = 1) and are not rotated here, about 45 deg
+    off around Saint-Pierre-et-Miquelon.
 
     Args:
         name: Name of the forecast.
         date: Forecast base time. The latest run by default.
         fxx: Lead times, in hours.
-        min_lon, max_lon, min_lat, max_lat: Area to keep, inside the area of the model.
-        resolution: Step of the regular grid, in degrees. About 2.5 km by default.
+        min_lon, max_lon, min_lat, max_lat: Area to keep, inside the
+            area of the model.
+        resolution: Step of the regular grid, in degrees. About 2.5 km
+            by default.
     """
 
     VARIABLES = ("UGRD", "VGRD")
@@ -528,6 +652,25 @@ class HRDPSForecast(DeterministicHerbieForecast):
 
 
 class EnsembleHerbieForecast(HerbieForecast):
+    """
+    A forecast of several members, downloaded with Herbie.
+
+    Args:
+        name: Name of this object, used in status messages.
+        model: Herbie model, such as "ifs" or "gfs".
+        product: Herbie product of this model, an ensemble one.
+        regex: Search string that selects the GRIB2 variables.
+        date: Base time of the forecast, by default the latest one.
+        fxx: Lead times of the forecast, in hours.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+        time_unit: Resolution used to convert times to floats, "s" for
+            epoch seconds.
+        verbose: Whether to report progress.
+    """
+
     def __init__(
         self,
         name: str,
@@ -578,6 +721,28 @@ class EnsembleHerbieForecast(HerbieForecast):
         method: str = "linear",
         fac: float = 1.0,
     ):
+        """
+        Build the lookup table of a variable of the ensemble.
+
+        The array is positional: its order must be (time, member, lat,
+        lon), the one of the queries of `RoutingAnalysis`.
+
+        Args:
+            var_dim: Name of the variable in the data.
+            time_dim: Name of the time coordinate.
+            member_dim: Name of the member coordinate.
+            latitude_dim: Name of the latitude coordinate.
+            longitude_dim: Name of the longitude coordinate.
+            var_key: Key of the lookup table, by default `var_dim`.
+            time_slice: Slice of the times.
+            member_slice: Slice of the members.
+            latitude_slice: Slice of the latitudes.
+            longitude_slice: Slice of the longitudes.
+            method: CasADi interpolation method, such as "linear" or
+                "bspline".
+            fac: Factor applied to the values, to correct or convert
+                them.
+        """
         from casadi import interpolant
         
         if var_key is None:
@@ -613,6 +778,28 @@ class EnsembleHerbieForecast(HerbieForecast):
 
           
 class CopernicusForecast(Forecast):
+    """
+    A forecast of the Copernicus Marine Service (CMEMS).
+
+    Credentials come from `CMEMS_USER` and `CMEMS_PWD`.
+
+    Args:
+        name: Name of this object, used in status messages.
+        dataset: Identifier of the CMEMS dataset.
+        variables: Variables to download.
+        date: Start of the period to download.
+        end: End of the period to download.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+        time_unit: Resolution used to convert times to floats, "s" for
+            epoch seconds.
+        verbose: Whether to report progress.
+        compression_level: Compression level of the NetCDF file.
+        engine: The xarray engine that reads the file.
+    """
+
     def __init__(
         self,
         name: str,
@@ -695,6 +882,31 @@ class CopernicusForecast(Forecast):
 
 
 class CDSForecast(Forecast):
+    """
+    Data of the Copernicus Climate Data Store (CDS), such as ERA5.
+
+    Credentials come from `CDS_API_KEY` or `~/.cdsapirc`.
+
+    Args:
+        name: Name of this object, used in status messages.
+        dataset: Identifier of the CDS dataset.
+        products: Product or products of this dataset.
+        variables: Variables to download.
+        start: Start of the period to download.
+        end: End of the period to download, by default one hour after
+            `start`.
+        freq: Pandas frequency of the times to download.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+        time_unit: Resolution used to convert times to floats, "s" for
+            epoch seconds.
+        verbose: Whether to report progress.
+        compression_level: Compression level of the download.
+        file_format: Format of the download, "grib" or "netcdf".
+    """
+
     def __init__(
         self,
         name: str,
@@ -817,6 +1029,18 @@ class CDSForecast(Forecast):
 # for images and data not reachable Herbie or another API
 # TODO generalize to RasterForecast?
 class ECMWFForecast(Forecast):
+    """
+    A forecast of ECMWF. Not functional yet.
+
+    Args:
+        name: Name of this object, used in status messages.
+        date: Base time of the forecast.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+    """
+
     def __init__(
         self,
         name: str,
@@ -832,6 +1056,10 @@ class ECMWFForecast(Forecast):
 
 # TODO: see if it has any interest
 class AtmosphericForecast(Forecast):
+    """
+    An atmospheric forecast. Not functional yet.
+    """
+
     def __init__(
         self,
     ):
@@ -840,6 +1068,10 @@ class AtmosphericForecast(Forecast):
         
 # TODO: see if it has any interest
 class OceanographicForecast(Forecast):
+    """
+    An oceanographic forecast. Not functional yet.
+    """
+
     def __init__(
         self,
     ):

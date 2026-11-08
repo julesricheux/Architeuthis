@@ -88,9 +88,11 @@ and this project follows Semantic Versioning https://semver.org
 - `RoutingReport.summary` and `ReportCollection.summary`: the key figures of reports. A slice of a `ReportCollection` is a `ReportCollection`.
 - `plot_utils.plot_route_set` and `plot_ensemble_along_route`. `plot_fuel_distribution` takes `horizontal`.
 - Tests running every example from start to finish on synthetic data (`tests/domain/test_examples.py`).
+- README tutorials to set the credentials of Copernicus Marine, the Climate Data Store and EUMETSAT.
 - New README for engineers who route motor and hybrid vessels, with credits and license. The reference of the former README moved word for word to `docs/user_guide.md`.
 
 ### Changed
+- Docstrings of the package, outside the vendored `numpy`, `modeling` and `optimization`, follow one layout: `"""` alone on its first and last lines, a one-line summary, Google-style sections, 72 columns. Every public module, class, function and method now has a docstring.
 - Importing Architeuthis has no side effect: no network access, logging setup or file writing. The iceberg limit is fetched on first use, logging is set up by `load_data` (`common.setup_logging`) and `~/.cdsapirc` is written before a CDS download (`common.ensure_cdsapirc`). Importing `plot_utils` no longer changes the matplotlib style: call `set_plot_style()` for your own figures.
 - The JSON codec moved to `toolbox/json_utils.py`, so that reports do not need Dash. `wrappers/json_wrapper.py` still exports it.
 

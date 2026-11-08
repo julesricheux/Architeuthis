@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
 """
+Base classes of the domain and data objects, and shared helpers.
+
+It defines `ArchiteuthisObject`, `ArchiteuthisData` with its `load_data`
+pipeline and its lookup tables, `ArchiteuthisSpatialData` and `Domain`.
+It reads the credentials from the environment and holds the `status`
+output.
+
 Created on Thu Jan 15 12:44:25 2026
 
 @author: jrich
@@ -63,7 +70,9 @@ _status_sink = None
 
 def status(message: str = "") -> None:
     """
-    Report progress to the user: printed by default, or sent to the function given to
+    Report progress to the user.
+
+    It is printed by default, or sent to the function given to
     `set_status_sink`, for example to display it in a GUI.
     """
     if _status_sink is None:
@@ -73,7 +82,9 @@ def status(message: str = "") -> None:
 
 
 def set_status_sink(sink: Optional[Callable[[str], Any]]) -> None:
-    """Send `status` messages to `sink(message)`. `None` restores printing."""
+    """
+    Send `status` messages to `sink(message)`. `None` restores printing.
+    """
     global _status_sink
     _status_sink = sink
 
@@ -88,10 +99,10 @@ _credentials_reported = False
 
 def setup_logging(level: int = logging.INFO, force: bool = False) -> None:
     """
-    Log to the console, and report the data providers that lack credentials.
+    Log to the console and report data providers without credentials.
 
-    `load_data` calls this. It leaves logging alone if the application has already
-    configured it, unless `force` is True.
+    `load_data` calls this. It leaves logging alone if the application
+    has already configured it, unless `force` is True.
     """
     global _credentials_reported
 
@@ -115,7 +126,11 @@ def setup_logging(level: int = logging.INFO, force: bool = False) -> None:
 
 
 def ensure_cdsapirc() -> None:
-    """Write `~/.cdsapirc` if it is missing, from `CDS_API_KEY`. Called before a CDS download."""
+    """
+    Write `~/.cdsapirc` if it is missing, from `CDS_API_KEY`.
+
+    Called before a CDS download.
+    """
     if os.path.exists(file_path):
         return
 
@@ -152,18 +167,27 @@ GUST_DEFAULT_RATIO = 1.23 # (https://cimmse.wordpress.com/2013/09/20/a-wind-gust
 
 
 def tall(array):
+    """
+    Reshape an array to a column vector.
+    """
     return np.reshape(array, (-1, 1))
 
 def wide(array):
+    """
+    Reshape an array to a row vector.
+    """
     return np.reshape(array, (1, -1))
 
 
 def to_timestamp(value: Union[Datetime, float, int]) -> float:
     """
-    Convert a date to float epoch seconds, the time unit used throughout Architeuthis.
+    Convert a date to float epoch seconds.
 
-    Numbers are returned unchanged (as float). Datetimes, pandas Timestamps,
-    numpy datetime64 values and ISO strings are converted; naive values are UTC.
+    This is the time unit used throughout Architeuthis.
+
+    Numbers are returned unchanged (as float). Datetimes, pandas
+    Timestamps, numpy datetime64 values and ISO strings are converted;
+    naive values are UTC.
     """
     if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
         return float(value)
@@ -176,11 +200,15 @@ def to_timestamp(value: Union[Datetime, float, int]) -> float:
 @dataclass(frozen=True)
 class Domain:
     """
-    A longitude and latitude box, unpacked with `**domain` wherever `min_lon`, `max_lon`,
+    A longitude and latitude box.
+
+    It is unpacked with `**domain` wherever `min_lon`, `max_lon`,
     `min_lat` and `max_lat` are expected.
 
     Example:
-        >>> north_atlantic = Domain(min_lon=-70., max_lon=5., min_lat=30., max_lat=60.)
+        >>> north_atlantic = Domain(
+        ...     min_lon=-70., max_lon=5., min_lat=30., max_lat=60.
+        ... )
         >>> Topography("topo", **north_atlantic)
     """
 
@@ -190,15 +218,31 @@ class Domain:
     max_lat: float = 90.
 
     def keys(self):
+        """
+        The keys that `**domain` unpacks.
+        """
         return ("min_lon", "max_lon", "min_lat", "max_lat")
 
     def __getitem__(self, key: str) -> float:
+        """
+        Read a bound by its name, for `**domain`.
+
+        Raises:
+            KeyError: If `key` is not one of `keys()`.
+        """
         if key not in self.keys():
             raise KeyError(key)
         return getattr(self, key)
 
 
 class ArchiteuthisObject(ABC):
+    """
+    Base class of the domain objects.
+
+    Args:
+        name: Name of this object, used in status messages.
+        verbose: Whether to report progress.
+    """
     
     @abstractmethod
     def __init__(
@@ -211,6 +255,16 @@ class ArchiteuthisObject(ABC):
     
     
 class ArchiteuthisData(ArchiteuthisObject):
+    """
+    Base class of the objects backed by a dataset.
+
+    `load_data` fills `data`, and `add_interpolator` builds the lookup
+    tables that calling this object queries.
+
+    Args:
+        name: Name of this object, used in status messages.
+        verbose: Whether to report progress.
+    """
     
     @abstractmethod
     def __init__(
@@ -226,6 +280,13 @@ class ArchiteuthisData(ArchiteuthisObject):
         self.interpolators = {}
         
     def load_data(self):
+        """
+        Locate, download, read, convert and extend the data.
+
+        This template method calls `_locate_data`, `_download_data`,
+        `_read_data`, `_convert_data` and `_extend_data`, the hooks that
+        a data source overrides.
+        """
         setup_logging()
 
         self._locate_data()
@@ -262,6 +323,26 @@ class ArchiteuthisData(ArchiteuthisObject):
         method: Literal["bspline", "linear", "nearest"] = "linear",
         fac: float = 1.0,
     ):
+        """
+        Build a CasADi lookup table of a variable of `data`.
+
+        Dimensions are positional: the array is squeezed, sliced and
+        raveled in Fortran order, so its dimension order must be the one
+        of `coord_dims`. NaN values become 0. A `var_key` that already
+        exists is left as it is.
+
+        Args:
+            var_dim: Name of the variable in `data`.
+            coord_dims: Names of the coordinates, in the order of the
+                array.
+            coord_slices: One slice per coordinate, applied to the
+                coordinates and the data.
+            var_key: Key of the lookup table when calling this object.
+            method: CasADi interpolation method, such as "linear" or
+                "bspline".
+            fac: Factor applied to the values, to correct or convert
+                them.
+        """
         if var_key in self.var_keys:
             status(f"🟦 {var_key} already in {self.name} interpolators.")
         else:
@@ -315,6 +396,12 @@ class ArchiteuthisData(ArchiteuthisObject):
         self,
         var_key: str,
     ):
+        """
+        Remove a lookup table, if it exists.
+
+        Args:
+            var_key: Key given to `add_interpolator`.
+        """
         if var_key in self.var_keys:
             del self.interpolators[var_key]
             self.var_keys.remove(var_key)
@@ -327,6 +414,16 @@ class ArchiteuthisData(ArchiteuthisObject):
         var_key,
         X,
     ):
+        """
+        Query a lookup table.
+
+        Args:
+            var_key: Key given to `add_interpolator`.
+            X: Query points, of shape (n_queries, n_dims).
+
+        Returns:
+            A column vector, or None if this object has no lookup table.
+        """
         if not self.interpolators:
             status(f"💔 {self.name} has no interpolators and thus cannot be called.")
             return None
@@ -338,6 +435,17 @@ class ArchiteuthisData(ArchiteuthisObject):
 
     
 class ArchiteuthisSpatialData(ArchiteuthisData):
+    """
+    Base class of the datasets limited to a domain.
+
+    Args:
+        name: Name of this object, used in status messages.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+        verbose: Whether to report progress.
+    """
     
     @abstractmethod
     def __init__(

@@ -1,20 +1,21 @@
 # -*- coding: utf-8 -*-
 """
+Marine weather routing for hybrid sailing ships.
+
 Created on Thu Jan 15 17:01:59 2026
 
 @author: jrich
 
-                  ▄▄                               ▄▄              
-                  ██    ▀▀  ██                ██   ██    ▀▀        
- ▀▀█▄ ████▄ ▄████ ████▄ ██ ▀██▀▀ ▄█▀█▄ ██ ██ ▀██▀▀ ████▄ ██  ▄█▀▀▀ 
-▄█▀██ ██ ▀▀ ██    ██ ██ ██  ██   ██▄█▀ ██ ██  ██   ██ ██ ██  ▀███▄ 
-▀█▄██ ██    ▀████ ██ ██ ██▄ ██   ▀█▄▄▄ ▀██▀█  ██   ██ ██ ██▄ ▄▄▄█▀ 
+                  ▄▄                               ▄▄
+                  ██    ▀▀  ██                ██   ██    ▀▀
+ ▀▀█▄ ████▄ ▄████ ████▄ ██ ▀██▀▀ ▄█▀█▄ ██ ██ ▀██▀▀ ████▄ ██  ▄█▀▀▀
+▄█▀██ ██ ▀▀ ██    ██ ██ ██  ██   ██▄█▀ ██ ██  ██   ██ ██ ██  ▀███▄
+▀█▄██ ██    ▀████ ██ ██ ██▄ ██   ▀█▄▄▄ ▀██▀█  ██   ██ ██ ██▄ ▄▄▄█▀
 
 🦑 An open-source marine weather and decision-making framework for
 hybrid sailing ships. It couples mesh-free, fully differentiable
 methods in a unified optimization environment to compute optimal
 routes under real-world constraints.
-
 """
 
 __author__ = "Jules Richeux"

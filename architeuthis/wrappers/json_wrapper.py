@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
 """
+GeoJSON of route reports, for the map of the UI.
+
+Importing it writes `assets/dashExtensions_default.js` to the working
+directory.
+
 Created on Sun Jan 25 21:54:43 2026
 
 @author: jules
@@ -14,6 +19,21 @@ from architeuthis.toolbox.json_utils import CustomEncoder, custom_decoder  # noq
 
 
 def route_to_geojson(route: dict, valid_time: float | None = None, color: str = "#ffffff") -> dict:
+    """
+    A route report as GeoJSON, for the map of the UI.
+
+    It holds the line of the route and one point per segment center,
+    with a tooltip of the conditions there. The point at `valid_time` is
+    a larger arrow along the course.
+
+    Args:
+        route: The report, which also needs `init_fac`.
+        valid_time: Time of the position shown, in epoch seconds.
+        color: Color of the line and of the current position.
+
+    Returns:
+        A GeoJSON FeatureCollection, as a dict.
+    """
     lat = route["lat"]
     lon = route["lon"]
     ctim = route["ctim"]

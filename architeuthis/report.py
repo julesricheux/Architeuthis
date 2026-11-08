@@ -2,13 +2,14 @@
 """
 Results of a routing: `RoutingReport` and `ReportCollection`.
 
-A `RoutingReport` is the dict returned by `RoutingAnalysis.run` and `evaluate`, with the same
-keys and the same JSON file format as before, and helpers for tables, GPX export and plots.
-A `ReportCollection` is a list of reports that can be selected, tabulated, saved and reloaded.
+A `RoutingReport` is the dict returned by `RoutingAnalysis.run` and
+`evaluate`, with the same keys and the same JSON file format as before,
+and helpers for tables, GPX export and plots. A `ReportCollection` is a
+list of reports that can be selected, tabulated, saved and reloaded.
 Both can still be used as a plain dict and a plain list.
 
-The UI (`ui.py`) displays the most recent file of `~/data/routes/`, as written by
-`ReportCollection.save`.
+The UI (`ui.py`) displays the most recent file of `~/data/routes/`, as
+written by `ReportCollection.save`.
 """
 
 from __future__ import annotations
@@ -39,13 +40,16 @@ def routes_to_table(
     variables: Sequence[str] = DEFAULT_TABLE_VARIABLES,
 ) -> pd.DataFrame:
     """
-    A table of several routes against time, with a `timestamp` column and, for each selected
-    row `I` of `frame`, one column `{variable}_{I}` per variable. Times missing from a route
-    are left empty.
+    A table of several routes against time.
+
+    It has a `timestamp` column and, for each selected row `I` of
+    `frame`, one column `{variable}_{I}` per variable. Times missing
+    from a route are left empty.
 
     Args:
         frame: One report per row, as given by `ReportCollection.frame`.
-        mask: Rows to keep, any `frame.loc` selector. All of them by default.
+        mask: Rows to keep, any `frame.loc` selector. All of them by
+            default.
         variables: Report entries with one value per segment.
     """
     rows = frame if mask is None else frame.loc[mask]
@@ -77,18 +81,32 @@ def routes_to_table(
 
 
 class RoutingReport(dict):
-    """The result of a routing: a dict of numeric arrays and scalars, in float epoch seconds."""
+    """
+    The result of a routing.
+
+    It is a dict of numeric arrays and scalars, in float epoch seconds.
+    """
 
     @property
     def etd_time(self) -> pd.Timestamp:
+        """
+        The departure time, as a timestamp.
+        """
         return pd.to_datetime(self["etd"], unit="s")
 
     @property
     def eta_time(self) -> pd.Timestamp:
+        """
+        The arrival time, as a timestamp.
+        """
         return pd.to_datetime(self["eta"], unit="s")
 
     def summary(self) -> dict:
-        """The key figures of this route, as a row of `ReportCollection.summary`."""
+        """
+        The key figures of this route.
+
+        They form a row of `ReportCollection.summary`.
+        """
         return {
             "etd": self.etd_time,
             "eta": self.eta_time,
@@ -108,13 +126,21 @@ class RoutingReport(dict):
         }
 
     def steps(self, quantity: str):
-        """Times and values of a per-segment quantity, to plot it as steps. See `plot_utils.get_steps`."""
+        """
+        Times and values of a per-segment quantity, to plot it as steps.
+
+        See `plot_utils.get_steps`.
+        """
         from architeuthis.toolbox.plot_utils import get_steps
 
         return get_steps(self, quantity)
 
     def table(self, variables: Sequence[str] = DEFAULT_TABLE_VARIABLES) -> pd.DataFrame:
-        """A table of this route against time, with a `timestamp` column and one column per variable."""
+        """
+        A table of this route against time.
+
+        It has a `timestamp` column and one column per variable.
+        """
         data = {"timestamp": pd.to_datetime(onp.ravel(self["tim"])[:-1], unit="s")}
         for variable in variables:
             data[variable] = onp.asarray(self[variable])
@@ -122,9 +148,11 @@ class RoutingReport(dict):
 
     def to_gpx(self, filename: Optional[str] = None, track_name: Optional[str] = None) -> str:
         """
-        Write the track as a GPX file and return its name. The default name is
-        `track_<MODEL>_<vessel>_<ETD date>.gpx`, in the working directory, and the default
-        track name is `track_<MODEL>`.
+        Write the track as a GPX file and return its name.
+
+        The default name is `track_<MODEL>_<vessel>_<ETD date>.gpx`, in
+        the working directory, and the default track name is
+        `track_<MODEL>`.
         """
         from architeuthis.toolbox.os_utils import save_gpx
 
@@ -144,7 +172,11 @@ class RoutingReport(dict):
         return filename
 
     def plot(self, save_as: Optional[str] = None, show: bool = True, **kwargs):
-        """The A4 page of this report. See `plot_utils.plot_report` for the options."""
+        """
+        The A4 page of this report.
+
+        See `plot_utils.plot_report` for the options.
+        """
         from architeuthis.toolbox.plot_utils import plot_report
 
         return plot_report(self, save_as=save_as, show=show, **kwargs)
@@ -157,7 +189,7 @@ class ReportCollection(list):
     Example:
         >>> reports = ReportCollection()
         >>> reports.append(analysis.run(tags={"model": "ifs"}))
-        >>> reports.save()                                    # displayed by ui.py
+        >>> reports.save()  # displayed by ui.py
         >>> for report in reports.select(vessel="eff60", solve=1):
         ...     report.plot()
     """
@@ -169,15 +201,24 @@ class ReportCollection(list):
         )
 
     def append(self, report: dict) -> None:
+        """
+        Add a report, converted to a `RoutingReport` if needed.
+        """
         super().append(report if isinstance(report, RoutingReport) else RoutingReport(report))
 
     def __getitem__(self, index):
+        """
+        A report, or a `ReportCollection` for a slice.
+        """
         selected = super().__getitem__(index)
         return ReportCollection(selected) if isinstance(index, slice) else selected
 
     def select(self, slicing: Optional[Callable[[dict], bool]] = None, **criteria) -> "ReportCollection":
         """
-        The reports for which `slicing(report)` is true and whose entries equal `criteria`.
+        The reports matching a condition and some criteria.
+
+        These are the reports for which `slicing(report)` is true and
+        whose entries equal `criteria`.
 
         Example:
             >>> reports.select(vessel="eff45", model="ifs")
@@ -191,30 +232,45 @@ class ReportCollection(list):
         )
 
     def frame(self) -> pd.DataFrame:
-        """One row per report, one column per entry."""
+        """
+        One row per report, one column per entry.
+        """
         return pd.DataFrame(self)
 
     def summary(self) -> pd.DataFrame:
         """
-        One row of key figures per report: schedule, tags, `status`, distance in nm and above
-        the reference in %, mean `stw` and `sog` in kt, `fuel` in t, in t per day, and `max_z`
-        in nm, positive when the route touches land or an exclusion zone.
+        One row of key figures per report.
+
+        The figures are the schedule, tags, `status`, distance in nm and
+        above the reference in %, mean `stw` and `sog` in kt, `fuel` in
+        t, in t per day, and `max_z` in nm, positive when the route
+        touches land or an exclusion zone.
         """
         return pd.DataFrame([report.summary() for report in self])
 
     def table(self, variables: Sequence[str] = DEFAULT_TABLE_VARIABLES, mask=None) -> pd.DataFrame:
-        """A table of the routes against time. See `routes_to_table`."""
+        """
+        A table of the routes against time. See `routes_to_table`.
+        """
         return routes_to_table(self.frame(), mask, variables)
 
     def quantiles(self, variable: str, quantiles: Sequence[float] = DEFAULT_QUANTILES) -> dict:
-        """Quantiles of a per-segment quantity over the reports, at each segment: `{q: array}`."""
+        """
+        Quantiles of a per-segment quantity over the reports.
+
+        They are given at each segment: `{q: array}`.
+        """
         if len(self) == 0:
             raise ValueError("ReportCollection.quantiles: no report selected.")
         values = onp.array([report[variable] for report in self], dtype=float)
         return {q: onp.quantile(values, q, axis=0) for q in quantiles}
 
     def to_gpx(self, track_name: Optional[str] = None) -> list:
-        """Write one GPX file per report, with the default names of `RoutingReport.to_gpx`."""
+        """
+        Write one GPX file per report.
+
+        The files have the default names of `RoutingReport.to_gpx`.
+        """
         return [report.to_gpx(track_name=track_name) for report in self]
 
     # --------------------------------------------------------------------------
@@ -223,8 +279,10 @@ class ReportCollection(list):
 
     def save(self, path: Optional[str] = None) -> str:
         """
-        Write the reports as JSON and return the path. The default path,
-        `~/data/routes/output_<today>.json`, is the one that `ui.py` displays.
+        Write the reports as JSON and return the path.
+
+        The default path, `~/data/routes/output_<today>.json`, is the
+        one that `ui.py` displays.
         """
         if path is None:
             path = os.path.join(ROUTES_DIRECTORY, f"output_{datetime.now():%Y-%m-%d}.json")
@@ -238,18 +296,32 @@ class ReportCollection(list):
 
     @classmethod
     def load(cls, path: str) -> "ReportCollection":
-        """Reports written by `save`, or by `json.dump(reports, f, cls=CustomEncoder)`."""
+        """
+        Read reports from a file.
+
+        The file was written by `save`, or by `json.dump(reports, f,
+        cls=CustomEncoder)`.
+        """
         with open(path, "r") as file:
             return cls(json.load(file, object_hook=custom_decoder))
 
     @classmethod
     def latest(cls, directory: Optional[str] = None) -> "ReportCollection":
-        """The reports of the most recently modified file of `directory`, by default `~/data/routes/`."""
+        """
+        The reports of the most recently modified file.
+
+        The file is searched in `directory`, by default
+        `~/data/routes/`.
+        """
         return cls.load(latest_report_file(directory))
 
 
 def latest_report_file(directory: Optional[str] = None) -> Path:
-    """The most recently modified JSON file of `directory`, by default `~/data/routes/`."""
+    """
+    The most recently modified JSON file of `directory`.
+
+    `directory` is by default `~/data/routes/`.
+    """
     json_files = list(Path(directory if directory is not None else ROUTES_DIRECTORY).glob("*.json"))
 
     if not json_files:

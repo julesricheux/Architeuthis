@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """
+The vessel: polars, with hotel load, fuel use and power limit.
+
 Created on Thu Jan 15 10:16:15 2026
 
 @author: jrich
@@ -26,7 +28,11 @@ POLAR_DIMS = ("stw", "tws", "twa", "hs", "wa")
 
 
 def _label_from_path(filepath: str) -> str:
-    """Short label of a polar file: the `eff45` of `..._eff45.nc`, otherwise the file name."""
+    """
+    Short label of a polar file.
+
+    This is the `eff45` of `..._eff45.nc`, otherwise the file name.
+    """
     stem = os.path.splitext(os.path.basename(str(filepath)))[0]
     match = re.search(r"eff\d+$", stem)
     return match.group(0) if match else stem
@@ -36,8 +42,9 @@ class Vessel(ArchiteuthisData):
     """
     Represents the vessel and its performance characteristics.
 
-    `label` is a short identifier that tags the reports of this vessel and appears in the
-    UI, `eff45` for example. By default it is taken from the polar file name.
+    `label` is a short identifier that tags the reports of this vessel
+    and appears in the UI, `eff45` for example. By default it is taken
+    from the polar file name.
     """
 
     def __init__(
@@ -90,6 +97,25 @@ class Vessel(ArchiteuthisData):
         wa_slice: slice = slice(None, None, None),
         method: str = "linear",
     ):
+        """
+        Build the lookup table of a variable of the polars.
+
+        Args:
+            var_dim: Name of the variable in the data.
+            stw_dim: Name of the speed through water coordinate.
+            tws_dim: Name of the true wind speed coordinate.
+            twa_dim: Name of the true wind angle coordinate.
+            hs_dim: Name of the significant wave height coordinate.
+            wa_dim: Name of the wave angle coordinate.
+            var_key: Key of the lookup table, by default `var_dim`.
+            stw_slice: Slice of the speeds through water.
+            tws_slice: Slice of the true wind speeds.
+            twa_slice: Slice of the true wind angles.
+            hs_slice: Slice of the wave heights.
+            wa_slice: Slice of the wave angles.
+            method: CasADi interpolation method, such as "linear" or
+                "bspline".
+        """
         if var_key is None:
             var_key = var_dim
         
@@ -104,7 +130,11 @@ class Vessel(ArchiteuthisData):
         dims: Sequence[str] = POLAR_DIMS,
         method: str = "linear",
     ):
-        """Add an interpolator for each variable of `keys`, by default those routing requires."""
+        """
+        Add an interpolator for each variable of `keys`.
+
+        By default `keys` holds the variables that routing requires.
+        """
         for key in keys:
             self.add_interpolator(key, *dims, method=method)
 

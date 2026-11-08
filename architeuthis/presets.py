@@ -2,20 +2,29 @@
 """
 Ready-made data sources for the routing scripts.
 
-Each function builds, loads and prepares an ordinary forecast or topography object: the same
-as writing `DeterministicHerbieForecast(...)`, `load_data()` and `add_interpolator(...)` by
-hand, which remains valid and is needed for anything these functions do not offer.
+Each function builds, loads and prepares an ordinary forecast or
+topography object: the same as writing
+`DeterministicHerbieForecast(...)`, `load_data()` and
+`add_interpolator(...)` by hand, which remains valid and is needed for
+anything these functions do not offer.
 
-Import this module with its name, as `wave` is a usual variable name in scripts:
+Import this module with its name, as `wave` is a usual variable name in
+scripts:
 
     >>> from architeuthis import presets
     >>> from architeuthis.common import Domain
-    >>> domain = Domain(min_lon=-70., max_lon=5., min_lat=30., max_lat=60.)
-    >>> atmosphere = presets.atmosphere("ifs", domain, date=recent, fxx=steps, wind_factor=1.20)
+    >>> domain = Domain(
+    ...     min_lon=-70., max_lon=5., min_lat=30., max_lat=60.
+    ... )
+    >>> atmosphere = presets.atmosphere(
+    ...     "ifs", domain, date=recent, fxx=steps, wind_factor=1.20
+    ... )
     >>> wave = presets.wave("gfs", domain, date=recent, fxx=steps)
     >>> current = presets.current_mercator(domain, date=recent)
     >>> topography = presets.topography(domain)
-    >>> vessel = presets.vessel("polar_eff60.nc", sfc=220., hotel_load=194., max_power=4100.)
+    >>> vessel = presets.vessel(
+    ...     "polar_eff60.nc", sfc=220., hotel_load=194., max_power=4100.
+    ... )
 """
 
 from __future__ import annotations
@@ -102,21 +111,25 @@ def atmosphere(
     verbose: bool = True,
 ) -> DeterministicHerbieForecast:
     """
-    Wind forecast with the `u10`, `v10` and `gust` interpolators that routing requires.
+    Wind forecast with the `u10`, `v10` and `gust` interpolators.
 
-    Where a gust is lower than the mean wind speed, which is not physical, it is replaced by
-    the mean wind speed times `gust_factor`.
+    These are the interpolators that routing requires.
+
+    Where a gust is lower than the mean wind speed, which is not
+    physical, it is replaced by the mean wind speed times `gust_factor`.
 
     Args:
         model: `"ifs"` or `"gfs"`.
         domain: Area to keep.
         date: Forecast base time. The latest run by default.
         fxx: Lead times, in hours.
-        wind_factor: Correction applied to the wind and the gust, for example 1.20 at 10 m
-            for global models.
-        gust_factor: Ratio of gust to mean wind speed used to correct unphysical gusts.
-        regex: Fields to download, replacing those of the preset. If the gust is not among
-            them, no `gust` interpolator is added: `RoutingAnalysis` then uses the standard ratio.
+        wind_factor: Correction applied to the wind and the gust, for
+            example 1.20 at 10 m for global models.
+        gust_factor: Ratio of gust to mean wind speed used to correct
+            unphysical gusts.
+        regex: Fields to download, replacing those of the preset. If the
+            gust is not among them, no `gust` interpolator is added:
+            `RoutingAnalysis` then uses the standard ratio.
         name: Name of the forecast. `wind_<model>` by default.
         verbose: Whether the forecast reports its progress.
     """
@@ -161,15 +174,18 @@ def hrdps_atmosphere(
     verbose: bool = True,
 ) -> HRDPSForecast:
     """
-    HRDPS continental wind on a regular grid, with the `u10` and `v10` interpolators. Its domain
-    must stay inside the area of the model, which covers Canada and its approaches.
+    HRDPS continental wind with `u10` and `v10` interpolators.
+
+    The wind is on a regular grid. Its domain must stay inside the area
+    of the model, which covers Canada and its approaches.
 
     Args:
         domain: Area to keep.
         date: Forecast base time. The latest run by default.
         fxx: Lead times, in hours.
         wind_factor: Correction applied to the wind.
-        resolution: Step of the regular grid, in degrees. About 2.5 km by default.
+        resolution: Step of the regular grid, in degrees. About 2.5 km
+            by default.
         name: Name of the forecast.
         verbose: Whether the forecast reports its progress.
     """
@@ -198,7 +214,9 @@ def wave(
     verbose: bool = True,
 ) -> DeterministicHerbieForecast:
     """
-    Wave forecast with the `swh` and `mwd` interpolators that routing requires.
+    Wave forecast with the `swh` and `mwd` interpolators.
+
+    These are the interpolators that routing requires.
 
     Args:
         model: `"ifs"` or `"gfs"`.
@@ -249,8 +267,9 @@ def ensemble_atmosphere(
     verbose: bool = True,
 ) -> EnsembleHerbieForecast:
     """
-    Ensemble wind forecast with the `u10` and `v10` interpolators. Select a member with
-    `RoutingAnalysis(..., atmosphere_member=m)`.
+    Ensemble wind forecast with the `u10` and `v10` interpolators.
+
+    Select a member with `RoutingAnalysis(..., atmosphere_member=m)`.
 
     Args:
         model: `"ifs"`.
@@ -258,7 +277,8 @@ def ensemble_atmosphere(
         date: Forecast base time. The latest run by default.
         fxx: Lead times, in hours.
         wind_factor: Correction applied to the wind.
-        stride: Keeps one latitude and longitude out of `stride`, as ensembles are memory heavy.
+        stride: Keeps one latitude and longitude out of `stride`, as
+            ensembles are memory heavy.
         name: Name of the forecast.
         verbose: Whether the forecast reports its progress.
     """
@@ -288,15 +308,17 @@ def ensemble_wave(
     verbose: bool = True,
 ) -> EnsembleHerbieForecast:
     """
-    Ensemble wave forecast with the `swh` and `mwd` interpolators. Select a member with
-    `RoutingAnalysis(..., wave_member=m)`.
+    Ensemble wave forecast with the `swh` and `mwd` interpolators.
+
+    Select a member with `RoutingAnalysis(..., wave_member=m)`.
 
     Args:
         model: `"ifs"`.
         domain: Area to keep.
         date: Forecast base time. The latest run by default.
         fxx: Lead times, in hours.
-        stride: Keeps one latitude and longitude out of `stride`, as ensembles are memory heavy.
+        stride: Keeps one latitude and longitude out of `stride`, as
+            ensembles are memory heavy.
         name: Name of the forecast.
         verbose: Whether the forecast reports its progress.
     """
@@ -326,7 +348,9 @@ def current_mercator(
     verbose: bool = True,
 ) -> CopernicusForecast:
     """
-    Mercator SMOC currents with the `uo` and `vo` interpolators. Needs CMEMS credentials.
+    Mercator SMOC currents with the `uo` and `vo` interpolators.
+
+    Needs CMEMS credentials.
 
     Args:
         domain: Area to keep.
@@ -362,8 +386,10 @@ def current_mercator(
 
 def calm_current(like: Forecast, name: str = "calm_current", verbose: bool = True) -> Forecast:
     """
-    No current, on the grid of another forecast, with the `uo` and `vo` interpolators: to route
-    without CMEMS credentials.
+    No current, with the `uo` and `vo` interpolators.
+
+    It is on the grid of another forecast, to route without CMEMS
+    credentials.
 
     Args:
         like: A deterministic forecast, whose `u10` gives the grid.
@@ -391,17 +417,20 @@ def vessel(
     verbose: bool = True,
 ) -> Vessel:
     """
-    A vessel from its polar file, with the `bhp`, `max_bhp` and `sails_contribution` interpolators.
+    A vessel from its polar file.
+
+    It has the `bhp`, `max_bhp` and `sails_contribution` interpolators.
 
     Args:
         filepath: Polar NetCDF file.
-        sfc: Specific fuel consumption, in g/kWh, or a function of the power. It must be given
-            for a routing: the objective is zero without it.
+        sfc: Specific fuel consumption, in g/kWh, or a function of the
+            power. It must be given for a routing: the objective is zero
+            without it.
         hotel_load: Hotel load, in kW, or a function of the power.
         max_power: Maximum brake power, in kW.
         name: Name of the vessel.
-        label: Short identifier in reports and in the UI. By default, from the file name:
-            `eff45` for `..._eff45.nc`.
+        label: Short identifier in reports and in the UI. By default,
+            from the file name: `eff45` for `..._eff45.nc`.
         verbose: Whether the vessel reports its progress.
     """
     boat = Vessel(
@@ -429,12 +458,15 @@ def topography(
     verbose: bool = True,
 ) -> Topography:
     """
-    ETOPO topography with the `z` interpolator: the signed distance to the navigable boundary.
+    ETOPO topography with the `z` interpolator.
+
+    `z` is the signed distance to the navigable boundary.
 
     Args:
         domain: Area to keep.
-        exclusion_zones: `ExclusionZone` objects or lists of `[lat, lon]` points. By default,
-            `default_exclusion_zones()`, which fetches the iceberg limit. Pass `[]` for none.
+        exclusion_zones: `ExclusionZone` objects or lists of `[lat,
+            lon]` points. By default, `default_exclusion_zones()`, which
+            fetches the iceberg limit. Pass `[]` for none.
         depth_offset: Treats water shallower than this as land, in m.
         z_margin: Clearance added to the distance, in nm.
         name: Name of the topography.

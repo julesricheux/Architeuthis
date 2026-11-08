@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """
+Satellite observations, to validate forecasts against them.
+
 Created on Thu Jan 29 16:15:59 2026
 
 @author: jrich
@@ -18,6 +20,19 @@ from architeuthis.common import ArchiteuthisSpatialData, Datetime, _EUMDAC_CREDE
 
 
 class ArchiteuthisSatelliteData(ArchiteuthisSpatialData):
+    """
+    Base class of the satellite data, over a period and a domain.
+
+    Args:
+        name: Name of this object, used in status messages.
+        start: Start of the period.
+        end: End of the period.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+        verbose: Whether to report progress.
+    """
     
     def __init__(
         self,
@@ -37,6 +52,23 @@ class ArchiteuthisSatelliteData(ArchiteuthisSpatialData):
         
 
 class EUMETSATData(ArchiteuthisSatelliteData):
+    """
+    Satellite data downloaded from the EUMETSAT Data Store.
+
+    Credentials come from `EUMDAC_USER` and `EUMDAC_PWD`, which hold the
+    Consumer Key and Secret.
+
+    Args:
+        name: Name of this object, used in status messages.
+        dataset: Identifier of the EUMETSAT collection.
+        start: Start of the period.
+        end: End of the period.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+        verbose: Whether to report progress.
+    """
     
     def __init__(
         self,
@@ -139,6 +171,19 @@ class EUMETSATData(ArchiteuthisSatelliteData):
         
         
 class ASCATData(EUMETSATData):
+    """
+    ASCAT scatterometer winds, collection `EO:EUM:DAT:METOP:OSI-104`.
+
+    Args:
+        name: Name of this object, used in status messages.
+        start: Start of the period.
+        end: End of the period.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+        verbose: Whether to report progress.
+    """
     
     def __init__(
         self,
@@ -183,6 +228,19 @@ class ASCATData(EUMETSATData):
         
 # TODO find a better class name?
 class PoseidonData(EUMETSATData):
+    """
+    Poseidon-4 Level 2P wind and wave data, `EO:EUM:DAT:0142`.
+
+    Args:
+        name: Name of this object, used in status messages.
+        start: Start of the period.
+        end: End of the period.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+        verbose: Whether to report progress.
+    """
     
     def __init__(
         self,

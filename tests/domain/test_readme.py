@@ -60,6 +60,44 @@ def test_adapted_code_keeps_its_credit_and_license_notice(readme):
         assert f"`{package}`" in readme
 
 
+def slug(heading):
+    return re.sub(r"[^a-z0-9 -]", "", heading.lower()).replace(" ", "-")
+
+
+def test_links_inside_the_readme_lead_to_a_heading(readme):
+    headings = {slug(heading) for heading in re.findall(r"^#+ (.+)$", readme, flags=re.MULTILINE)}
+
+    for anchor in re.findall(r"\]\(#([^)]+)\)", readme):
+        assert anchor in headings, anchor
+
+
+def test_tutorials_cover_every_credential_that_is_read():
+    common = (ROOT / "architeuthis" / "common.py").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    names = re.findall(r'_get_env_var\("(\w+)"\)', common)
+
+    assert set(names) == {"CDS_API_KEY", "CMEMS_USER", "CMEMS_PWD", "EUMDAC_USER", "EUMDAC_PWD"}
+    section = readme[readme.index("## Credentials"):readme.index("## Core Capabilities")]
+    for name in names:
+        assert f"`{name}`" in section
+
+
+def test_eumetsat_tutorial_asks_for_what_the_client_expects(readme):
+    import inspect
+
+    import eumdac
+
+    assert "consumer_key, consumer_secret" in inspect.getdoc(eumdac.AccessToken.__init__)
+    assert "`EUMDAC_USER` to your **Consumer Key**" in readme
+    assert "`EUMDAC_PWD` to your **Consumer Secret**" in readme
+
+
+def test_cds_tutorial_gives_the_url_that_is_written(readme):
+    from architeuthis.common import _CDS_URL
+
+    assert f"url: {_CDS_URL}" in readme
+
+
 def test_data_sources_of_the_readme_exist():
     from architeuthis import presets
 

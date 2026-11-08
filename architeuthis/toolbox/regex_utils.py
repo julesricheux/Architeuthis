@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """
+Parsing of forecast-style regexes into variables and levels.
+
 Created on Tue Feb 24 20:55:28 2026
 
 @author: jrich
@@ -35,7 +37,7 @@ def _split_top_level_or(pattern: str) -> List[str]:
 
 def _expand_non_capturing_groups(expr: str) -> List[str]:
     """
-    Expands simple flat groups of form (?:A|B|C)
+    Expands simple flat groups of form (?:A|B|C).
     """
 
     pattern = r"\(\?:([^)]+)\)"
@@ -59,7 +61,7 @@ def _expand_non_capturing_groups(expr: str) -> List[str]:
 
 def _extract_variable_and_level(expr: str) -> Optional[Tuple[str, Optional[str]]]:
     """
-    Extracts (variable, level)
+    Extracts (variable, level).
     """
 
     expr = expr.strip()
@@ -86,8 +88,7 @@ def parse_forecast_regex(
     pattern: str
 ) -> List[Tuple[str, Optional[str]]]:
     """
-    Parses forecast-style regex and returns list of
-    (variable, level)
+    Parses forecast-style regex and returns list of (variable, level)
     """
 
     results = []

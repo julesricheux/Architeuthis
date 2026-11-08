@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Time on top of geometry: `Schedule`, `Voyage` (a route plus a schedule) and
-`PassagePlan` (the timed positions that a routing produced, which can be stored,
-reloaded and evaluated again under other conditions).
+Time on top of geometry: schedules, voyages and passage plans.
+
+These are `Schedule`, `Voyage` (a route plus a schedule) and
+`PassagePlan` (the timed positions that a routing produced, which can be
+stored, reloaded and evaluated again under other conditions).
 
 This module does not import `architeuthis.core`, so it works offline.
 """
@@ -33,8 +35,11 @@ PASSAGE_PLAN_DIRECTORY = os.path.join(_HOME, "passage_plans")
 
 class Schedule(ArchiteuthisObject):
     """
-    Departure and arrival times. Dates of any common type (datetime, pandas Timestamp,
-    ISO string, numpy datetime64) are converted to float epoch seconds, naive ones as UTC.
+    Departure and arrival times.
+
+    Dates of any common type (datetime, pandas Timestamp, ISO string,
+    numpy datetime64) are converted to float epoch seconds, naive ones
+    as UTC.
     """
 
     def __init__(
@@ -55,10 +60,20 @@ class Schedule(ArchiteuthisObject):
         super().__init__(name, verbose)
 
     def to_dict(self) -> dict:
+        """
+        A JSON-friendly dict of this schedule, read by `from_dict`.
+        """
         return {"name": self.name, "etd": self.etd, "eta": self.eta}
 
     @classmethod
     def from_dict(cls, data: dict, verbose: bool = True) -> "Schedule":
+        """
+        Build a schedule from a dict written by `to_dict`.
+
+        Args:
+            data: The dict.
+            verbose: Whether the schedule reports progress.
+        """
         return cls(data["name"], data["etd"], data["eta"], verbose=verbose)
 
 
@@ -69,14 +84,19 @@ class Voyage(ArchiteuthisObject):
     """
     A route sailed on a schedule: the input of `RoutingAnalysis`.
 
-    Either give a `route`, or `departure` and `arrival` for a direct great-circle route.
-    `route_minus`, `route_ortho` and `route_plus` are the reference routes blended by the
-    deviation factor; each may be a Route or a function `s -> (lat, lon)`, and they
-    default to the paths derived from `route` and its spread.
+    Either give a `route`, or `departure` and `arrival` for a direct
+    great-circle route. `route_minus`, `route_ortho` and `route_plus`
+    are the reference routes blended by the deviation factor; each may
+    be a Route or a function `s -> (lat, lon)`, and they default to the
+    paths derived from `route` and its spread.
 
     Example:
-        >>> Voyage("crossing", etd="2026-02-05T12:00", eta="2026-02-17T06:00",
-        ...        route=RouteLibrary().load("FRMTX-PMFSP"))
+        >>> Voyage(
+        ...     "crossing",
+        ...     etd="2026-02-05T12:00",
+        ...     eta="2026-02-17T06:00",
+        ...     route=RouteLibrary().load("FRMTX-PMFSP"),
+        ... )
     """
 
     def __init__(
@@ -132,8 +152,10 @@ class Voyage(ArchiteuthisObject):
         verbose: bool = True,
     ) -> "Voyage":
         """
-        A voyage on the routes of a `RouteSet`: the ortho route is the route of the voyage,
-        and the minus and plus routes are its references, restarted by `from_position`.
+        A voyage on the routes of a `RouteSet`.
+
+        The ortho route is the route of the voyage, and the minus and
+        plus routes are its references, restarted by `from_position`.
         """
         return cls(
             name=name if name is not None else routes.name,
@@ -158,23 +180,37 @@ class Voyage(ArchiteuthisObject):
 
     @property
     def departure(self):
+        """
+        The departure position of the route.
+        """
         return self.route.departure
 
     @property
     def arrival(self):
+        """
+        The arrival position of the route.
+        """
         return self.route.arrival
 
     @property
     def distance(self):
-        """Distance through the route waypoints, in nautical miles."""
+        """
+        Distance through the route waypoints, in nautical miles.
+        """
         return self.route.distance
 
     @property
     def etd(self):
+        """
+        The departure time of the schedule, in epoch seconds.
+        """
         return self.schedule.etd
 
     @property
     def eta(self):
+        """
+        The arrival time of the schedule, in epoch seconds.
+        """
         return self.schedule.eta
 
     def from_position(
@@ -186,11 +222,14 @@ class Voyage(ArchiteuthisObject):
         tolerance: float = 5.0,
     ) -> "Voyage":
         """
-        The rest of this voyage from a position reached at `time`, keeping the same ETA.
+        The rest of this voyage from a position reached at `time`.
 
-        The route is restarted with `Route.from_position`. Reference routes given as
-        Route objects are restarted too; ones given as functions cannot be, and are
-        replaced by the paths derived from the restarted route.
+        It keeps the same ETA.
+
+        The route is restarted with `Route.from_position`. Reference
+        routes given as Route objects are restarted too; ones given as
+        functions cannot be, and are replaced by the paths derived from
+        the restarted route.
         """
         route = self.route.from_position(
             position,
@@ -217,22 +256,25 @@ class Voyage(ArchiteuthisObject):
 
 class PassagePlan(ArchiteuthisObject):
     """
-    The timed positions of a passage, typically the optimum of a `RoutingAnalysis`.
+    The timed positions of a passage.
+
+    This is typically the optimum of a `RoutingAnalysis`.
 
     Args:
-        name: Plan identifier, also its file name in a `PassagePlanLibrary`.
+        name: Plan identifier, also its file name in a
+            `PassagePlanLibrary`.
         route: The route the plan was computed from.
         schedule: Departure and arrival times.
         tim: Node times, float epoch seconds, from ETD to ETA.
         lat: Node latitudes.
         lon: Node longitudes.
-        ctim: Times at which weather is sampled on each segment; segment midpoints of
-            `tim` by default.
-        metadata: Free description of how the plan was obtained (vessel, forecasts,
-            options, fuel...). It must be JSON serializable.
+        ctim: Times at which weather is sampled on each segment; segment
+            midpoints of `tim` by default.
+        metadata: Free description of how the plan was obtained (vessel,
+            forecasts, options, fuel...). It must be JSON serializable.
 
-    `RoutingAnalysis.evaluate(plan)` computes the consumption of this plan, with its
-    positions fixed, for any vessel and weather.
+    `RoutingAnalysis.evaluate(plan)` computes the consumption of this
+    plan, with its positions fixed, for any vessel and weather.
     """
 
     def __init__(
@@ -267,27 +309,43 @@ class PassagePlan(ArchiteuthisObject):
             raise ValueError("tim must hold at least two increasing times.")
 
     def __repr__(self) -> str:
+        """
+        The name, number of nodes, distance and route of the plan.
+        """
         return f"PassagePlan({self.name!r}: {self.tim.size} nodes, {self.distance:.1f} nm, route {self.route.name!r})"
 
     @property
     def positions(self) -> onp.ndarray:
-        """Node positions, shape (n, 2), latitude first."""
+        """
+        Node positions, shape (n, 2), latitude first.
+        """
         return onp.column_stack((self.lat, self.lon))
 
     @property
     def distance(self) -> float:
+        """
+        The distance through the nodes, in nautical miles.
+        """
         return float(onp.sum(distances(self.lat, self.lon)))
 
     @property
     def etd(self) -> float:
+        """
+        The departure time of the schedule, in epoch seconds.
+        """
         return self.schedule.etd
 
     @property
     def eta(self) -> float:
+        """
+        The arrival time of the schedule, in epoch seconds.
+        """
         return self.schedule.eta
 
     def at(self, time: Union[Datetime, float]) -> onp.ndarray:
-        """Planned position at `time`, linearly interpolated between nodes."""
+        """
+        Planned position at `time`, linearly interpolated between nodes.
+        """
         time = to_timestamp(time)
         return onp.array([
             onp.interp(time, self.tim, self.lat),
@@ -295,7 +353,11 @@ class PassagePlan(ArchiteuthisObject):
         ])
 
     def to_route(self, name: Optional[str] = None) -> Route:
-        """A route through every node, for instance to use the plan as a reference route."""
+        """
+        A route through every node.
+
+        This can for instance use the plan as a reference route.
+        """
         waypoints = [Waypoint(lat, lon) for lat, lon in zip(self.lat, self.lon)]
         first, last = self.route.waypoints[0], self.route.waypoints[-1]
         waypoints[0] = Waypoint(self.lat[0], self.lon[0], first.name)
@@ -303,7 +365,9 @@ class PassagePlan(ArchiteuthisObject):
         return Route(name or f"{self.name}_route", waypoints, verbose=self.verbose)
 
     def voyage(self, name: Optional[str] = None) -> Voyage:
-        """The voyage the plan answers: its route and schedule."""
+        """
+        The voyage the plan answers: its route and schedule.
+        """
         return Voyage(
             name=name or f"{self.name}_voyage",
             etd=self.etd,
@@ -321,7 +385,11 @@ class PassagePlan(ArchiteuthisObject):
         metadata: Optional[dict] = None,
         verbose: bool = True,
     ) -> "PassagePlan":
-        """Build a plan from a `RoutingAnalysis.run` report, including one reloaded from JSON."""
+        """
+        Build a plan from a `RoutingAnalysis.run` report.
+
+        This includes a report reloaded from JSON.
+        """
         summary = {key: _plain(report[key]) for key in ("fuel", "dist", "status") if key in report}
         return cls(
             name=name,
@@ -336,6 +404,9 @@ class PassagePlan(ArchiteuthisObject):
         )
 
     def to_dict(self) -> dict:
+        """
+        A JSON-friendly dict of this plan, read by `from_dict`.
+        """
         return {
             "type": "PassagePlan",
             "name": self.name,
@@ -350,6 +421,13 @@ class PassagePlan(ArchiteuthisObject):
 
     @classmethod
     def from_dict(cls, data: dict, verbose: bool = True) -> "PassagePlan":
+        """
+        Build a plan from a dict written by `to_dict`.
+
+        Args:
+            data: The dict.
+            verbose: Whether the plan reports progress.
+        """
         return cls(
             name=data["name"],
             route=Route.from_dict(data["route"], verbose=verbose),
@@ -363,6 +441,15 @@ class PassagePlan(ArchiteuthisObject):
         )
 
     def save(self, path: str) -> str:
+        """
+        Write this plan to a JSON file.
+
+        Args:
+            path: Path of the file.
+
+        Returns:
+            The path of the file.
+        """
         _write_json(path, self.to_dict())
         if self.verbose:
             status(f"✅ Passage plan {self.name} saved to {path}.")
@@ -370,18 +457,31 @@ class PassagePlan(ArchiteuthisObject):
 
     @classmethod
     def load(cls, path: str, verbose: bool = True) -> "PassagePlan":
+        """
+        Read a plan from a JSON file written by `save`.
+
+        Args:
+            path: Path of the file.
+            verbose: Whether the plan reports progress.
+        """
         return cls.from_dict(_read_json(path), verbose=verbose)
 
 
 class PassagePlanLibrary(JsonLibrary):
-    """Passage plans stored as JSON files, in `~/data/passage_plans/` by default."""
+    """
+    Passage plans stored as JSON files.
+
+    They are in `~/data/passage_plans/` by default.
+    """
 
     item_class = PassagePlan
     default_directory = PASSAGE_PLAN_DIRECTORY
 
 
 def _plain(value: Any) -> Any:
-    """Convert numpy values (recursively) to JSON-friendly Python values."""
+    """
+    Convert numpy values (recursively) to JSON-friendly Python values.
+    """
     if isinstance(value, dict):
         return {str(key): _plain(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):

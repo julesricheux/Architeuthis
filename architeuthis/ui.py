@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
 """
+Dash and Leaflet viewer of forecast fields and saved route reports.
+
+This is a script, not a library: importing it downloads forecasts and
+needs a report in `~/data/routes/`. Run it from inside `architeuthis/`.
+It serves on port 8052.
+
 Created on Sun Jan 25 21:18:08 2026
 
 @author: jules
@@ -153,6 +159,15 @@ def remove_white_pixels(
     output_path: Path,
     threshold: int = 240,
 ):
+    """
+    Download an image and make its white pixels transparent.
+
+    Args:
+        image_url: Address of the image.
+        output_path: Path of the file to write.
+        threshold: Value of the three channels above which a pixel
+            counts as white.
+    """
     response = requests.get(image_url, timeout=30)
     response.raise_for_status()
 
@@ -422,9 +437,11 @@ server = app.server
 @server.route("/wind_arrows.geojson")
 def wind_arrows():
     """
+    Serve arrows representing wind vectors, as GeoJSON.
+
     Returns a GeoJSON FeatureCollection containing arrows representing
-    wind vectors for a given time index. Arrow length and thickness scale
-    with wind speed.
+    wind vectors for a given time index. Arrow length and thickness
+    scale with wind speed.
     """
     time_index = int(request.args.get("time", "0"))
     qvar = request.args.get("qvar", DEFAULT_QUIVER_VAR)
@@ -534,6 +551,12 @@ def wind_arrows():
 
 @server.route("/contour_field.geojson")
 def contour_field():
+    """
+    Serve the contours of a field as GeoJSON.
+
+    The query gives `var`, `time`, `member` and `model`. Values are
+    divided by 100 and the levels are 2 apart.
+    """
     var = request.args.get("var", DEFAULT_VECTOR_VAR)
     t   = int(request.args.get("time", 0))
     m   = int(request.args.get("member", DEFAULT_MEMBER))
@@ -596,6 +619,12 @@ def contour_field():
 
 @server.route("/raster.png")
 def raster_png():
+    """
+    Serve a field as a PNG image in the Mercator projection.
+
+    The query gives `var`, `time`, `member` and `model`. `swh` uses the
+    wave colormap and other variables the wind one.
+    """
     var = request.args.get("var", DEFAULT_RASTER_VAR)
     t   = int(request.args.get("time", 0))
     m   = int(request.args.get("member", DEFAULT_MEMBER))
@@ -650,7 +679,9 @@ def discrete_cmap_hex(
     n: int,
 ):
     """
-    Return n discrete colors sampled from a matplotlib colormap as hex strings.
+    Return n discrete colors sampled from a matplotlib colormap.
+
+    The colors are hex strings.
     """
     cmap = plt.get_cmap(cmap_name, n)
     return [mcolors.to_hex(cmap(i)) for i in range(n)]
@@ -662,6 +693,16 @@ def create_report_overlays(
     reports,
     valid_time=0,
 ):
+    """
+    One map overlay per report, checked if the report was optimized.
+
+    Args:
+        reports: The reports, one color of `COLORS` each.
+        valid_time: Time at which each route shows its position.
+
+    Returns:
+        A list of `dl.Overlay`.
+    """
     overlays = []
 
     for i, (report, color) in enumerate(zip(reports, COLORS)):
@@ -920,6 +961,19 @@ app.layout = dmc.MantineProvider(
     State("sensor", "position"),
 )
 def display_data(m, click_data, time_index, model, pos):
+    """
+    Tooltip of the weather at the position clicked on the map.
+
+    Args:
+        m: Selected member.
+        click_data: Data of the click, or None before any click.
+        time_index: Selected index of the time slider.
+        model: Selected model.
+        pos: Position of the sensor marker.
+
+    Returns:
+        The content of the tooltip, or None without any click.
+    """
     
     if click_data is not None:
         # print(click_data["latlng"])
@@ -983,6 +1037,17 @@ def display_data(m, click_data, time_index, model, pos):
     Input("model-select", "value"),
 )
 def update_time_index(time_index, model):
+    """
+    Update the routes when the time or the model changes.
+
+    Args:
+        time_index: Selected index of the time slider.
+        model: Selected model.
+
+    Returns:
+        The GeoJSON of the route if there is one report, otherwise one
+            per report.
+    """
     valid_time = DS[model].valid_time.data[time_index]
     updates = tuple(route_to_geojson(report, valid_time=valid_time, color=color) for report, color in zip(reports, COLORS))
     if len(reports) == 1:
@@ -1016,6 +1081,15 @@ def update_time_index(time_index, model):
     Input("model-select", "value"),
 )
 def update_raster(m, var, time_index, model):
+    """
+    The address of the raster image for the current selection.
+
+    Args:
+        m: Selected member.
+        var: Selected variable.
+        time_index: Selected index of the time slider.
+        model: Selected model.
+    """
     return f"/raster.png?var={var}&time={time_index}&member={m}&model={model}"
 
 
@@ -1026,6 +1100,14 @@ def update_raster(m, var, time_index, model):
     Input("model-select", "value"),
 )
 def update_contour(m, time_index, model):
+    """
+    The contours of the field for the current selection.
+
+    Args:
+        m: Selected member.
+        time_index: Selected index of the time slider.
+        model: Selected model.
+    """
     url = f"/contour_field.geojson?var={DEFAULT_VECTOR_VAR}&time={time_index}&member={m}&model={model}"
     
     with server.test_request_context(url):
@@ -1039,6 +1121,13 @@ def update_contour(m, time_index, model):
     Input("model-select", "value"),
 )
 def update_valid_time(time_index, model):
+    """
+    The text showing the valid time of the current selection.
+
+    Args:
+        time_index: Selected index of the time slider.
+        model: Selected model.
+    """
     vt = pd.to_datetime(DS[model].valid_time.data[time_index], unit="s").strftime("%Y-%m-%dT%H:%M")
     return f"Valid time: {vt}"
 
@@ -1052,6 +1141,16 @@ def update_valid_time(time_index, model):
     Input("map", "zoom"),
 )
 def update_arrows(m, qvar, time_index, model, zoom):
+    """
+    The arrows for the current selection, thinned by the zoom.
+
+    Args:
+        m: Selected member.
+        qvar: Selected variable.
+        time_index: Selected index of the time slider.
+        model: Selected model.
+        zoom: Zoom level of the map.
+    """
     
     density=density_from_zoom(zoom)
     

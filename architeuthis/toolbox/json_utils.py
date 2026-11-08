@@ -2,8 +2,9 @@
 """
 JSON encoding of routing reports, which hold numpy arrays and scalars.
 
-This module only needs numpy, so reports can be written and read without the Dash stack.
-`CustomEncoder` and `custom_decoder` also remain importable from `wrappers.json_wrapper`.
+This module only needs numpy, so reports can be written and read without
+the Dash stack. `CustomEncoder` and `custom_decoder` also remain
+importable from `wrappers.json_wrapper`.
 """
 
 import json
@@ -12,7 +13,20 @@ import numpy as np
 
 
 class CustomEncoder(json.JSONEncoder):
+    """
+    JSON encoder of tuples, NumPy arrays and NumPy scalars.
+
+    They are written as dicts tagged by `__type__`, which
+    `custom_decoder` reads back.
+    """
+
     def default(self, obj):
+        """
+        Encode a tuple, a NumPy array or a NumPy scalar.
+
+        Args:
+            obj: The value that JSON cannot encode by itself.
+        """
 
         if isinstance(obj, tuple):
             return {
@@ -38,6 +52,17 @@ class CustomEncoder(json.JSONEncoder):
 
 
 def custom_decoder(obj):
+    """
+    Rebuild the values written by `CustomEncoder`.
+
+    Use it as `object_hook` of `json.load`.
+
+    Args:
+        obj: A decoded dict, returned as it is without `__type__`.
+
+    Raises:
+        TypeError: If `__type__` is unknown.
+    """
 
     if "__type__" not in obj:
         return obj

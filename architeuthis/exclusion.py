@@ -2,14 +2,17 @@
 """
 Areas that a route must stay out of.
 
-An `ExclusionZone` is a named `[lat, lon]` polygon with what the UI needs to show it: a
-label, a color and whether it is displayed at first. Zones are stored as JSON in an
-`ExclusionZoneLibrary`, like routes in a `RouteLibrary`, and `Topography` rasterizes them
-into its distance field. An `ExclusionZone` behaves like the plain list of `[lat, lon]`
-points that it holds, and plain lists are still accepted wherever a zone is.
+An `ExclusionZone` is a named `[lat, lon]` polygon with what the UI
+needs to show it: a label, a color and whether it is displayed at first.
+Zones are stored as JSON in an `ExclusionZoneLibrary`, like routes in a
+`RouteLibrary`, and `Topography` rasterizes them into its distance
+field. An `ExclusionZone` behaves like the plain list of `[lat, lon]`
+points that it holds, and plain lists are still accepted wherever a zone
+is.
 
-`default_exclusion_zones()` gives the zones used by the routing scripts. The iceberg limit
-is only fetched when this function is called, never at import.
+`default_exclusion_zones()` gives the zones used by the routing scripts.
+The iceberg limit is only fetched when this function is called, never at
+import.
 """
 
 from __future__ import annotations
@@ -41,21 +44,29 @@ class ExclusionZone(ArchiteuthisObject):
     A named polygon that routes must stay out of.
 
     Args:
-        name: Identifier, also the file name in an `ExclusionZoneLibrary`.
-        polygon: The `[lat, lon]` points of the zone. It may be empty, for example the
-            iceberg limit when no bulletin is available: `Topography` then skips it.
+        name: Identifier, also the file name in an
+            `ExclusionZoneLibrary`.
+        polygon: The `[lat, lon]` points of the zone. It may be empty,
+            for example the iceberg limit when no bulletin is available:
+            `Topography` then skips it.
         label: Text displayed in the UI. Defaults to `name`.
         color: Color of the zone in the UI.
-        outline: The `[lat, lon]` points drawn in the UI, if not the whole polygon. The
-            routing always uses `polygon`.
-        visible: Whether the UI displays the zone at first. It can be hidden and shown
-            there at any time. This has no effect on the routing.
+        outline: The `[lat, lon]` points drawn in the UI, if not the
+            whole polygon. The routing always uses `polygon`.
+        visible: Whether the UI displays the zone at first. It can be
+            hidden and shown there at any time. This has no effect on
+            the routing.
         description: Free text, such as the source of the polygon.
 
     Example:
-        >>> zone = ExclusionZone("safety", [[49.2, -65.9], [49.2, -64.9], [48.0, -64.5]], label="Safety margin")
+        >>> zone = ExclusionZone(
+        ...     "safety",
+        ...     [[49.2, -65.9], [49.2, -64.9], [48.0, -64.5]],
+        ...     label="Safety margin",
+        ... )
         >>> ExclusionZoneLibrary().save(zone)
-        >>> Topography("topo", exclusion_zones=default_exclusion_zones() + [zone], **domain)
+        >>> zones = default_exclusion_zones() + [zone]
+        >>> Topography("topo", exclusion_zones=zones, **domain)
     """
 
     def __init__(
@@ -89,16 +100,22 @@ class ExclusionZone(ArchiteuthisObject):
 
     @property
     def outline(self) -> list:
-        """The `[lat, lon]` points drawn on a map."""
+        """
+        The `[lat, lon]` points drawn on a map.
+        """
         return self.polygon if self._outline is None else self._outline
 
     @property
     def is_empty(self) -> bool:
-        """True when the zone has too few points to enclose anything."""
+        """
+        True when the zone has too few points to enclose anything.
+        """
         return len(self.polygon) < 3
 
     def contains(self, lat, lon):
-        """Whether positions are inside the zone, as a boolean array."""
+        """
+        Whether positions are inside the zone, as a boolean array.
+        """
         lat, lon = onp.ravel(lat), onp.ravel(lon)
         if self.is_empty:
             return onp.zeros(lat.shape, dtype=bool)
@@ -106,18 +123,33 @@ class ExclusionZone(ArchiteuthisObject):
 
     # The zone reads like its list of points, the former representation of exclusion zones.
     def __len__(self) -> int:
+        """
+        The number of points of the polygon.
+        """
         return len(self.polygon)
 
     def __iter__(self):
+        """
+        Iterate over the `[lat, lon]` points of the polygon.
+        """
         return iter(self.polygon)
 
     def __getitem__(self, index):
+        """
+        A point or a slice of the polygon.
+        """
         return self.polygon[index]
 
     def __array__(self, dtype=None, copy=None):
+        """
+        The polygon as an array, for NumPy, of floats by default.
+        """
         return onp.asarray(self.polygon, dtype=float if dtype is None else dtype)
 
     def __repr__(self) -> str:
+        """
+        The name, number of points and label of the zone.
+        """
         return f"ExclusionZone({self.name!r}, {len(self)} points, label={self.label!r})"
 
     # --------------------------------------------------------------------------
@@ -125,6 +157,9 @@ class ExclusionZone(ArchiteuthisObject):
     # --------------------------------------------------------------------------
 
     def to_dict(self) -> dict:
+        """
+        A JSON-friendly dict of this zone, read by `from_dict`.
+        """
         return {
             "name": self.name,
             "label": self.label,
@@ -137,6 +172,13 @@ class ExclusionZone(ArchiteuthisObject):
 
     @classmethod
     def from_dict(cls, data: dict, verbose: bool = True) -> "ExclusionZone":
+        """
+        Build a zone from a dict written by `to_dict`.
+
+        Args:
+            data: The dict.
+            verbose: Whether the zone reports progress.
+        """
         return cls(
             data["name"],
             data["polygon"],
@@ -149,16 +191,34 @@ class ExclusionZone(ArchiteuthisObject):
         )
 
     def save(self, path: str) -> str:
+        """
+        Write this zone to a JSON file.
+
+        Args:
+            path: Path of the file.
+
+        Returns:
+            The path of the file.
+        """
         _write_json(path, self.to_dict())
         return path
 
     @classmethod
     def load(cls, path: str, verbose: bool = True) -> "ExclusionZone":
+        """
+        Read a zone from a JSON file written by `save`.
+
+        Args:
+            path: Path of the file.
+            verbose: Whether the zone reports progress.
+        """
         return cls.from_dict(_read_json(path), verbose=verbose)
 
     @classmethod
     def from_geojson(cls, path: str, feature_id: str, name: Optional[str] = None, **kwargs) -> "ExclusionZone":
-        """A zone from the feature `feature_id` of a GeoJSON file."""
+        """
+        A zone from the feature `feature_id` of a GeoJSON file.
+        """
         from architeuthis.toolbox.os_utils import extract_polygons_from_geojson
 
         polygons = extract_polygons_from_geojson(path, [feature_id])
@@ -169,7 +229,9 @@ class ExclusionZone(ArchiteuthisObject):
 
 class ExclusionZoneLibrary(JsonLibrary):
     """
-    Exclusion zones stored as JSON files, one per zone, in `~/data/exclusion_zones/` by default.
+    Exclusion zones stored as JSON files, one per zone.
+
+    They are in `~/data/exclusion_zones/` by default.
 
     Example:
         >>> library = ExclusionZoneLibrary()
@@ -277,17 +339,32 @@ BRITTANY_POLYGON = [
 
 
 def north_america_zone(verbose: bool = True) -> ExclusionZone:
+    """
+    The zone that keeps routes away from North America.
+
+    Args:
+        verbose: Whether the zone reports progress.
+    """
     return ExclusionZone("north_america", NORTH_AMERICA_POLYGON, label="North America", verbose=verbose)
 
 
 def brittany_zone(verbose: bool = True) -> ExclusionZone:
+    """
+    The zone that keeps routes away from Brittany.
+
+    Args:
+        verbose: Whether the zone reports progress.
+    """
     return ExclusionZone("brittany", BRITTANY_POLYGON, label="Brittany", verbose=verbose)
 
 
 def iceberg_zone(verbose: bool = True) -> ExclusionZone:
     """
-    The latest IIP iceberg limit, downloaded the first time it is needed in a session (see
-    `architeuthis.icebergs`). The zone is empty when no bulletin is available.
+    The latest IIP iceberg limit.
+
+    It is downloaded the first time it is needed in a session (see
+    `architeuthis.icebergs`). The zone is empty when no bulletin is
+    available.
     """
     from architeuthis.icebergs import berg_zone
 
@@ -303,12 +380,20 @@ def iceberg_zone(verbose: bool = True) -> ExclusionZone:
 
 
 def default_exclusion_zones(verbose: bool = True) -> list:
-    """The zones used by default, in this order: North America, Brittany, iceberg limit."""
+    """
+    The zones used by default.
+
+    In this order: North America, Brittany, iceberg limit.
+    """
     return [north_america_zone(verbose), brittany_zone(verbose), iceberg_zone(verbose)]
 
 
 def merge_exclusion_zones(*groups: Iterable) -> list:
-    """All the zones of several groups, in order. A zone replaces an earlier one of the same name."""
+    """
+    All the zones of several groups, in order.
+
+    A zone replaces an earlier one of the same name.
+    """
     zones = {}
     for group in groups:
         for zone in group:

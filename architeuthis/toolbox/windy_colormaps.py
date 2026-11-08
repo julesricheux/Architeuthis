@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """
+Colormaps of wind and waves for the map display.
+
 Created on Tue Dec  9 00:49:14 2025
 
 @author: jules
@@ -10,6 +12,12 @@ import matplotlib.colors as mcolors
 
 
 def get_wind_cmap():
+    """
+    The colormap of wind speeds, in m/s.
+
+    Returns:
+        The colormap, smooth between its anchor colors, and its norm.
+    """
     # Beaufort-like bins (m/s)
     bounds = np.array([0, 2, 6, 10, 14, 17, 21, 25, 29, 33, 37, 41, 47, 52, 56, 70, 89, 99, 150, 202]) * 0.5144
     
@@ -52,6 +60,12 @@ def get_wind_cmap():
 
 
 def get_wave_cmap():
+    """
+    The colormap of wave heights, in m.
+
+    Returns:
+        The colormap, smooth between its anchor colors, and its norm.
+    """
     # Beaufort-like bins (m/s)
     bounds = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 7.0, 10., 12.,])
     
