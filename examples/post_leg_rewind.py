@@ -8,7 +8,11 @@ Created on Mon Feb  2 12:26:52 2026
 import pandas as pd
 import architeuthis.numpy as np
 
+from architeuthis import presets
+from architeuthis.common import Domain
+from architeuthis.route import Route
 from architeuthis.vessel import Vessel
+from architeuthis.toolbox.plot_utils import draw, get_steps
 from architeuthis.forecast import (
     DeterministicHerbieForecast,
     CopernicusForecast,
@@ -31,6 +35,11 @@ maximum_longitude=-50.
 minimum_latitude=35.
 maximum_latitude=50.
 
+domain = Domain(
+    min_lon=minimum_longitude, max_lon=maximum_longitude,
+    min_lat=minimum_latitude, max_lat=maximum_latitude,
+)
+
 steps = list(range(0, 145, 3)) #+ list(range(150, 361, 6))
 
 departure = np.array([36.995605446063365, -75.94119037659861]) # Chesapeake exit
@@ -42,10 +51,17 @@ departure = np.array([36.995605446063365, -75.94119037659861]) # Chesapeake exit
 # departure = np.array([46.781, -56.091]) # SPM pilot
 arrival = np.array([46.781, -56.091]) # SPM pilot
 
+route = Route("post_leg", [departure, arrival])
+
 etd = pd.to_datetime("2025-12-17T11:30").timestamp() # LT 21h
 eta = pd.to_datetime("2025-12-21T11:30").timestamp() # LT 17h
 # eta = pd.to_datetime("2026-02-05T23:00").timestamp()
 # eta = pd.to_datetime("2026-01-22T12:00").timestamp()
+
+# Routing after the start of the leg: the voyage restarts from this position, reached at
+# this time, and keeps its ETA (Voyage.from_position). None routes the whole leg.
+restart = None
+# restart = ([43.612500, -60.603333], "2025-12-18T12:00")
 
 solver_options = DEFAULT_SOLVER_OPTIONS
     
@@ -66,10 +82,8 @@ columns = ["bhp", "max_bhp", "leeway"]
 vessel = Vessel("base_vessel", filepath=vessel_data, sfc=196., hotel_load=172., max_power=3e3)
 vessel.load_data()
 
-vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
-vessel.add_interpolator("max_bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
+vessel.add_interpolators() # bhp, max_bhp, sails_contribution
 # vessel.add_interpolator("leeway", "stw", "tws", "twa", "hs", "wa", method="linear")
-vessel.add_interpolator("sails_contribution", "stw", "tws", "twa", "hs", "wa", method="linear")
     
 
 #%% BUILD WIND INTERPOLATORS
@@ -78,103 +92,35 @@ mirror_date = pd.Timestamp('2025-12-17 12:00')
 mirror_end = pd.Timestamp('2025-12-21 12:00')
 
 # IFS atmospheric data
-atmos = DeterministicHerbieForecast(
-    "wind", model="ifs", product="oper", regex=r":10[u|v]:|:msl:", fxx=steps,
-    min_lon=minimum_longitude, max_lon=maximum_longitude,
-    min_lat=minimum_latitude, max_lat=maximum_latitude,
-    date=mirror_date
-)
-atmos.load_data()
-
-atmos.add_interpolator("u10", "valid_time", "latitude", "longitude")
-atmos.add_interpolator("v10", "valid_time", "latitude", "longitude")
+atmos = presets.atmosphere("ifs", domain, date=mirror_date, fxx=steps, regex=r":10[u|v]:|:msl:", name="wind")
 
 #%% BUILD WAVE INTERPOLATORS
 
 # IFS ocean data
-wave = DeterministicHerbieForecast(
-    "wave", model="ifs", product="wave", regex=r":swh:|:mwd:", fxx=steps,
-    min_lon=minimum_longitude, max_lon=maximum_longitude,
-    min_lat=minimum_latitude, max_lat=maximum_latitude,
-    date=mirror_date
-)
-wave.load_data()
-
-wave.add_interpolator("swh", "valid_time", "latitude", "longitude")
-wave.add_interpolator("mwd", "valid_time", "latitude", "longitude")
+wave = presets.wave("ifs", domain, date=mirror_date, fxx=steps, name="wave")
 
 
 #%% BUILD CURRENT INTERPOLATORS
 
 # Mercator SMOC data
-current = CopernicusForecast(
-    "current", dataset="cmems_mod_glo_phy_anfc_0.083deg_PT1H-m", variables=["uo", "vo"],
-    min_lon=minimum_longitude, max_lon=maximum_longitude,
-    min_lat=minimum_latitude, max_lat=maximum_latitude,
-    date=mirror_date, end=mirror_end
-)
-current.load_data()
-
-current.add_interpolator(
-    "uo", "valid_time", "latitude", "longitude",
-    latitude_slice=slice(None, None, 1),
-    longitude_slice=slice(None, None, 1),
-    time_slice=slice(None, None, 3),
-)
-current.add_interpolator(
-    "vo", "valid_time", "latitude", "longitude",
-    latitude_slice=slice(None, None, 1),
-    longitude_slice=slice(None, None, 1),
-    time_slice=slice(None, None, 3),
-)
+current = presets.current_mercator(domain, date=mirror_date, end=mirror_end, stride=1)
 
 
 #%% BUILD TOPOGRAPHY
 
-topo = Topography(
-    "topo", depth_offset=0., z_margin=0.,
-    min_lon=minimum_longitude, max_lon=maximum_longitude,
-    min_lat=minimum_latitude, max_lat=maximum_latitude,
-    exclusion_zones=exclusion_zones,
-)
-topo.load_data()
-
-topo.add_interpolator(
-    "distance_to_iso0",
-    "latitude_topography_earth2014_egm2008_lmax_2048_lmax_2048",
-    "longitude_topography_earth2014_egm2008_lmax_2048_lmax_2048",
-    var_key="z"
-)
+topo = presets.topography(domain, exclusion_zones=exclusion_zones)
 
 #%%
 
-def draw(reports, barbs=1):
-        
-    from architeuthis.toolbox.plot_utils import plot_route
-
-    # cvtim = pd.to_datetime(self.report["ctim"], unit="s")
-    # vtim = pd.to_datetime(self.report["tim"], unit="s")
-    
-    lons = [r["lon"] for r in reports]
-    lats = [r["lat"] for r in reports]
-    clons = [r["clon"] for r in reports]
-    clats = [r["clat"] for r in reports]
-    tws = [r["tws"] for r in reports]
-    twd = [r["twd"] for r in reports]
-    
-    plot_route(lons, lats, clons, clats, tws, twd, barbs)
+voyage = Voyage(name="voyage", etd=etd, eta=eta, route=route)
+if restart is not None:
+    voyage = voyage.from_position(*restart)
 
 for m in range(1,51,50):
     analysis = RoutingAnalysis(
         "analysis",
         vessel,
-        Voyage(
-            name="voyage",
-            etd = etd,
-            eta = eta,
-            departure = departure,
-            arrival = arrival,
-        ),
+        voyage,
         atmos,
         # atmos_ens,
         wave,
@@ -207,26 +153,12 @@ for m in range(1,51,50):
             },
         },
         # solve=0,
-    ) # TODO report should probably be a class of its own
+    )
         
     draw([report])
     
     ctime = pd.to_datetime(report["ctim"], unit="s")
     
-    def get_steps(report, quantity):
-        
-        tim = pd.to_datetime(report["tim"], unit="s")
-        
-        X = []
-        Y = []
-        for i in range(len(report["ctim"])):
-            X.append(tim[i])
-            X.append(tim[i+1])
-            Y.append(report[quantity][i])
-            Y.append(report[quantity][i])
-            
-        return np.asarray(X), np.asarray(Y)
-        
     # plt.clf()
     # # plt.scatter(ctime, unit="s"), report["avg_bhp"])
     # plt.plot(*get_steps(report, "avg_bhp"))

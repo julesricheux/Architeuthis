@@ -6,7 +6,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from architeuthis.route import Leg, Route, RouteLibrary, Waypoint, safe_file_name
+from architeuthis.route import (
+    ROUTE_SET_DIRECTORY,
+    Leg,
+    Route,
+    RouteLibrary,
+    RouteSet,
+    RouteSetLibrary,
+    Waypoint,
+    safe_file_name,
+)
 from architeuthis.toolbox.geo_utils import distances, poly_deviated_route
 from architeuthis.voyage import PassagePlan, PassagePlanLibrary, Schedule, Voyage
 
@@ -425,3 +434,112 @@ def test_a_route_is_called_like_a_path_function(crossing):
         crossing(s),
         poly_deviated_route(list(crossing.lats), list(crossing.lons), [0.0, -0.5, 0.0])(s),
     )
+
+
+# ------------------------------------------------------------------------------
+# Route sets
+# ------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def route_set(crossing):
+    north = Route(
+        "north",
+        [MONTOIR, Waypoint(49.0, -30.0, "North"), SAINT_PIERRE],
+        verbose=False,
+    )
+    south = Route(
+        "south",
+        [MONTOIR, Waypoint(44.0, -30.0, "South"), SAINT_PIERRE],
+        verbose=False,
+    )
+    return RouteSet("crossing", ortho=crossing, minus=north, plus=south, verbose=False)
+
+
+def test_route_set_defaults_its_sides_to_the_ortho_route(crossing):
+    routes = RouteSet("crossing", ortho=crossing, verbose=False)
+
+    assert routes.minus is crossing
+    assert routes.plus is crossing
+    assert routes.routes == {"minus": crossing, "ortho": crossing, "plus": crossing}
+
+
+def test_reversed_route_set_swaps_the_sides(route_set):
+    back = route_set.reversed()
+
+    assert back.name == "crossing_reversed"
+    assert list(back.ortho.departure) == list(route_set.ortho.arrival)
+    assert [waypoint.name for waypoint in back.minus.waypoints] == ["PMFSP", "South", "FRMTX"]
+    assert [waypoint.name for waypoint in back.plus.waypoints] == ["PMFSP", "North", "FRMTX"]
+    assert route_set.reversed("back").name == "back"
+
+
+def test_restarted_route_set_starts_at_the_position(route_set):
+    position = [46.5, -30.0]
+
+    restart = route_set.from_position(position)
+
+    assert restart.name == "crossing_restart"
+    for route in restart.routes.values():
+        assert list(route.departure) == pytest.approx(position)
+        assert list(route.arrival) == pytest.approx(list(SAINT_PIERRE))
+
+
+def test_route_set_survives_a_json_round_trip(route_set, tmp_path):
+    loaded = RouteSet.load(route_set.save(str(tmp_path / "routes.json")), verbose=False)
+
+    assert loaded.name == route_set.name
+    for key, route in route_set.routes.items():
+        assert loaded.routes[key].to_dict() == route.to_dict()
+
+
+def test_route_set_library_stores_sets_by_name(route_set, tmp_path):
+    library = RouteSetLibrary(str(tmp_path), verbose=False)
+
+    library.save(route_set)
+
+    assert library.names() == ["crossing"]
+    assert library.load("crossing").plus.to_dict() == route_set.plus.to_dict()
+    with pytest.raises(FileExistsError):
+        library.save(route_set)
+
+
+def test_route_set_library_defaults_to_the_data_folder():
+    assert RouteSetLibrary().directory == ROUTE_SET_DIRECTORY
+    assert ROUTE_SET_DIRECTORY.endswith("route_sets")
+
+
+def test_voyage_from_routes_uses_the_three_routes(route_set):
+    voyage = Voyage.from_routes(route_set, etd=0.0, eta=240.0 * HOUR, verbose=False)
+    direct = Voyage(
+        name="crossing",
+        route=route_set.ortho,
+        route_minus=route_set.minus,
+        route_ortho=route_set.ortho,
+        route_plus=route_set.plus,
+        etd=0.0,
+        eta=240.0 * HOUR,
+        verbose=False,
+    )
+
+    assert voyage.name == "crossing"
+    assert voyage.route is route_set.ortho
+    assert list(voyage.departure) == pytest.approx(list(direct.departure))
+    abscissa = np.linspace(0.0, 1.0, 20)
+    for reference in ("route_minus", "route_ortho", "route_plus"):
+        np.testing.assert_allclose(getattr(voyage, reference)(abscissa), getattr(direct, reference)(abscissa))
+
+
+def test_voyage_from_routes_can_be_named(route_set):
+    assert Voyage.from_routes(route_set, etd=0.0, eta=240.0 * HOUR, name="other", verbose=False).name == "other"
+
+
+def test_voyage_from_routes_can_restart_at_sea(route_set):
+    position = [46.5, -30.0]
+    voyage = Voyage.from_routes(route_set, etd=0.0, eta=240.0 * HOUR, verbose=False)
+
+    restart = voyage.from_position(position, 10.0 * HOUR)
+
+    assert list(restart.departure) == pytest.approx(position)
+    np.testing.assert_allclose(restart.route_minus(0.0), position, atol=1e-6)
+    np.testing.assert_allclose(restart.route_plus(1.0), list(SAINT_PIERRE), atol=1e-6)

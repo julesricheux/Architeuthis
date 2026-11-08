@@ -8,21 +8,36 @@ Created on Thu Jan 15 10:16:15 2026
 from __future__ import annotations
 
 import os
+import re
 
 import xarray as xr
 import architeuthis.numpy as np
 
-from typing import Union
+from typing import Optional, Sequence, Union
 from collections.abc import Callable
 from architeuthis.toolbox.inspect_tools import ensure_callable
 
 # from typing import Sequence
-from architeuthis.common import ArchiteuthisData
+from architeuthis.common import ArchiteuthisData, status
+
+# Variables required by RoutingAnalysis, and the axes of a polar table, in its order.
+POLAR_KEYS = ("bhp", "max_bhp", "sails_contribution")
+POLAR_DIMS = ("stw", "tws", "twa", "hs", "wa")
+
+
+def _label_from_path(filepath: str) -> str:
+    """Short label of a polar file: the `eff45` of `..._eff45.nc`, otherwise the file name."""
+    stem = os.path.splitext(os.path.basename(str(filepath)))[0]
+    match = re.search(r"eff\d+$", stem)
+    return match.group(0) if match else stem
 
 
 class Vessel(ArchiteuthisData):
     """
     Represents the vessel and its performance characteristics.
+
+    `label` is a short identifier that tags the reports of this vessel and appears in the
+    UI, `eff45` for example. By default it is taken from the polar file name.
     """
 
     def __init__(
@@ -33,10 +48,12 @@ class Vessel(ArchiteuthisData):
         max_power: Union[Callable, float, int] = 1e12, # kW
         sfc: Union[Callable, float, int] = 0., # g/kWh
         verbose: bool = True,
+        label: Optional[str] = None,
     ):
         super().__init__(name, verbose)
         
         self.path = filepath
+        self.label = label if label is not None else _label_from_path(filepath)
         
         self.hotel_load = ensure_callable(hotel_load) # TODO to define with kwargs to be more flexible
         self.sfc = ensure_callable(sfc) # TODO to define with kwargs to be more flexible
@@ -48,7 +65,7 @@ class Vessel(ArchiteuthisData):
         
     def _locate_data(self):
         assert os.path.exists(self.path), f"💔 '{self.path}' does not exist."
-        print(f"✅ {self.name} data found.")
+        status(f"✅ {self.name} data found.")
         
     def _read_data(self):
         self.data = xr.open_dataset(self.path) # TODO add columns selection to save memory
@@ -80,6 +97,16 @@ class Vessel(ArchiteuthisData):
         coord_slices = [stw_slice, tws_slice, twa_slice, hs_slice, wa_slice]
         
         super().add_interpolator(var_dim, coord_dims, coord_slices, var_key, method)
+
+    def add_interpolators(
+        self,
+        keys: Sequence[str] = POLAR_KEYS,
+        dims: Sequence[str] = POLAR_DIMS,
+        method: str = "linear",
+    ):
+        """Add an interpolator for each variable of `keys`, by default those routing requires."""
+        for key in keys:
+            self.add_interpolator(key, *dims, method=method)
 
         
 if __name__=="__main__":

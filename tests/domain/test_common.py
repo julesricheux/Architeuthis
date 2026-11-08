@@ -1,9 +1,19 @@
+import logging
+
 import casadi as ca
 import numpy as np
 import pytest
 import xarray as xr
 
-from architeuthis.common import ArchiteuthisData, ArchiteuthisObject
+from architeuthis import common
+from architeuthis.common import (
+    ArchiteuthisData,
+    ArchiteuthisObject,
+    ensure_cdsapirc,
+    set_status_sink,
+    setup_logging,
+    status,
+)
 
 
 class Table(ArchiteuthisData):
@@ -140,3 +150,152 @@ def test_interpolator_is_differentiable():
     gradient = ca.Function("gradient", [query], [ca.jacobian(table("value", query), query)])
 
     assert np.asarray(gradient([0.5, 0.5])).ravel() == pytest.approx([1.0, 10.0])
+
+
+# ------------------------------------------------------------------------------
+# Status messages
+# ------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def default_sink():
+    yield
+    set_status_sink(None)
+
+
+def test_status_is_printed_by_default(capsys, default_sink):
+    status("done")
+
+    assert capsys.readouterr().out == "done\n"
+
+
+def test_status_can_go_elsewhere(capsys, default_sink):
+    messages = []
+    set_status_sink(messages.append)
+
+    status("done")
+
+    assert messages == ["done"]
+    assert capsys.readouterr().out == ""
+
+
+def test_status_can_be_restored(capsys, default_sink):
+    set_status_sink(lambda message: None)
+    set_status_sink(None)
+
+    status("back")
+
+    assert capsys.readouterr().out == "back\n"
+
+
+def test_objects_report_through_status(default_sink):
+    messages = []
+    set_status_sink(messages.append)
+    table = Table()
+    table.add_interpolator("value", ["x", "y"], [slice(None), slice(None)], "value", "linear")
+
+    table.remove_interpolator("value")
+
+    assert any("value" in message for message in messages)
+
+
+# ------------------------------------------------------------------------------
+# Setup on first use
+# ------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def clean_logging(monkeypatch):
+    # The logging plugin of pytest adds its handlers around each phase of a test, so the tests
+    # empty the list themselves, through this function.
+    root = logging.getLogger()
+    handlers = list(root.handlers)
+    level = root.level
+    monkeypatch.setattr(common, "_credentials_reported", False)
+
+    def clean(*new_handlers):
+        root.handlers[:] = new_handlers
+        return root
+
+    yield clean
+    root.handlers[:] = handlers
+    root.setLevel(level)
+
+
+def test_setup_logging_configures_the_console(clean_logging):
+    root = clean_logging()
+
+    setup_logging()
+
+    assert len(root.handlers) == 1
+    assert root.level == logging.INFO
+
+
+def test_setup_logging_keeps_the_logging_of_the_application(clean_logging):
+    handler = logging.NullHandler()
+    root = clean_logging(handler)
+
+    setup_logging()
+
+    assert root.handlers == [handler]
+
+
+def test_setup_logging_can_force_its_configuration(clean_logging):
+    handler = logging.NullHandler()
+    root = clean_logging(handler)
+
+    setup_logging(level=logging.WARNING, force=True)
+
+    assert handler not in root.handlers
+    assert root.level == logging.WARNING
+
+
+def test_missing_credentials_are_reported_once(clean_logging, monkeypatch):
+    messages = []
+    monkeypatch.setattr(common.log, "info", messages.append)
+    clean_logging()
+
+    setup_logging()
+    setup_logging()
+
+    assert sum("CDS API key" in message for message in messages) == 1
+
+
+def test_load_data_sets_logging_up(clean_logging):
+    root = clean_logging()
+
+    Table().load_data()
+
+    assert len(root.handlers) == 1
+
+
+class TestCdsapirc:
+    @pytest.fixture
+    def path(self, monkeypatch, tmp_path):
+        path = tmp_path / ".cdsapirc"
+        monkeypatch.setattr(common, "file_path", str(path))
+        return path
+
+    def test_written_from_the_key(self, path, monkeypatch):
+        monkeypatch.setattr(common, "_CDS_API_KEY", "my-key")
+
+        ensure_cdsapirc()
+
+        assert "key: my-key" in path.read_text()
+
+    def test_existing_file_is_kept(self, path, monkeypatch):
+        monkeypatch.setattr(common, "_CDS_API_KEY", "my-key")
+        path.write_text("mine")
+
+        ensure_cdsapirc()
+
+        assert path.read_text() == "mine"
+
+    def test_never_written_without_a_key(self, path, monkeypatch, capsys):
+        # It used to be written at import with `key: None`, which then hid the real problem.
+        monkeypatch.setattr(common, "_CDS_API_KEY", None)
+
+        ensure_cdsapirc()
+
+        assert not path.exists()
+        assert "CDS_API_KEY is not set" in capsys.readouterr().out

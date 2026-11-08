@@ -15,7 +15,7 @@ import pandas as pd
 import geopandas as gpd
 from pathlib import Path
 
-from architeuthis.common import _HOME
+from architeuthis.common import _HOME, status
 
 
 # TODO concatenate into spatial data and proper methods
@@ -82,7 +82,6 @@ def get_iip_zone_from_bulletin(text):
 BULLETIN_URL = "https://www.navcen.uscg.gov/sites/default/files/iip/bulletin/IcebergBulletin.txt"
 ZIP_URL = "https://www.navcen.uscg.gov/sites/default/files/iip/shape/currentShape.zip"
 WORKDIR = Path(os.path.join(_HOME, "iip"))
-WORKDIR.mkdir(parents=True, exist_ok=True)
 BULLETIN_CACHE = WORKDIR / "IcebergBulletin.txt"
 
 # (connect, read) timeouts in seconds: fail fast when the server is unreachable.
@@ -106,21 +105,20 @@ def get_latest_iip_zone():
         resp = requests.get(BULLETIN_URL, headers=headers, timeout=TIMEOUT)
         resp.raise_for_status()
         zone = get_iip_zone_from_bulletin(resp.text)
+        WORKDIR.mkdir(parents=True, exist_ok=True)
         BULLETIN_CACHE.write_text(resp.text, encoding="utf-8")
         return zone
     except Exception as e:
         if BULLETIN_CACHE.exists():
-            print(f"⚠️ Warning: could not fetch the latest IIP iceberg bulletin ({type(e).__name__}). "
+            status(f"⚠️ Warning: could not fetch the latest IIP iceberg bulletin ({type(e).__name__}). "
                   f"Using the bulletin downloaded on {_age(BULLETIN_CACHE)}.")
             try:
                 return get_iip_zone_from_bulletin(BULLETIN_CACHE.read_text(encoding="utf-8"))
             except Exception as cache_error:
-                print(f"⚠️ Warning: the cached IIP bulletin cannot be read ({cache_error}).")
-        print(f"⚠️ Warning: could not fetch the IIP iceberg bulletin ({type(e).__name__}). "
+                status(f"⚠️ Warning: the cached IIP bulletin cannot be read ({cache_error}).")
+        status(f"⚠️ Warning: could not fetch the IIP iceberg bulletin ({type(e).__name__}). "
               "No iceberg exclusion zone: check the iceberg limit yourself.")
         return []
-
-polygon = get_latest_iip_zone()
 
 
 # ---------------------------------------------------------------------
@@ -205,18 +203,50 @@ def get_berg_geojson() -> dict:
     try:
         download_and_extract_zip(ZIP_URL, WORKDIR)
     except Exception as e:
-        print(f"⚠️ Warning: could not download the IIP iceberg shapefiles ({type(e).__name__}). "
+        status(f"⚠️ Warning: could not download the IIP iceberg shapefiles ({type(e).__name__}). "
               "Using the last downloaded ones, if any.")
 
     try:
         return load_all_shapefiles(WORKDIR).__geo_interface__
     except Exception as e:
-        print(f"⚠️ Warning: no IIP iceberg shapefiles available ({e}). The iceberg limit will not be drawn.")
+        status(f"⚠️ Warning: no IIP iceberg shapefiles available ({e}). The iceberg limit will not be drawn.")
         return {"type": "FeatureCollection", "features": []}
 
 
-berg_geojson = get_berg_geojson()
-berg_zone = polygon
+# ---------------------------------------------------------------------
+# DATA, FETCHED ON FIRST USE
+# ---------------------------------------------------------------------
+
+_cache = {}
+
+
+def iceberg_polygon() -> list:
+    """Iceberg limit polygon, downloaded once per session. See `refresh`."""
+    if "polygon" not in _cache:
+        _cache["polygon"] = get_latest_iip_zone()
+    return _cache["polygon"]
+
+
+def iceberg_geojson() -> dict:
+    """Iceberg limit lines, downloaded once per session. See `refresh`."""
+    if "geojson" not in _cache:
+        _cache["geojson"] = get_berg_geojson()
+    return _cache["geojson"]
+
+
+def refresh() -> None:
+    """Forget the downloaded data, so that the next use fetches the latest bulletin."""
+    _cache.clear()
+
+
+def __getattr__(name: str):
+    # polygon, berg_zone and berg_geojson remain module attributes, without any download
+    # when the module is imported.
+    if name in ("polygon", "berg_zone"):
+        return iceberg_polygon()
+    if name == "berg_geojson":
+        return iceberg_geojson()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 if __name__ == "__main__":
@@ -237,7 +267,7 @@ if __name__ == "__main__":
             dl.TileLayer(),
             dl.GeoJSON(
                 id="berg-limit",
-                data=berg_geojson,
+                data=iceberg_geojson(),
                 # options={
                 #     "style": {
                 #         "color": "#00ffff",

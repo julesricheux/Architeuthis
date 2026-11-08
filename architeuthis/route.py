@@ -27,7 +27,7 @@ from typing import Callable, Iterable, Optional, Sequence, Union
 
 import numpy as onp
 
-from architeuthis.common import ArchiteuthisObject, _HOME
+from architeuthis.common import ArchiteuthisObject, _HOME, status
 from architeuthis.toolbox.geo_utils import (
     deviated_gc_segment,
     distances,
@@ -36,6 +36,7 @@ from architeuthis.toolbox.geo_utils import (
 
 
 ROUTE_LIBRARY_DIRECTORY = os.path.join(_HOME, "route_library")
+ROUTE_SET_DIRECTORY = os.path.join(_HOME, "route_sets")
 
 # Samples per segment when projecting a position onto a route.
 _PROJECTION_SAMPLES = 401
@@ -319,7 +320,7 @@ class Route(ArchiteuthisObject):
             if target < len(self.waypoints) - 1 and _distance_nm(start, self.waypoints[target]) < tolerance:
                 target += 1
             if offset > 100.0:
-                print(f"⚠️ Warning: position is {offset:.0f} nm away from route {self.name}.")
+                status(f"⚠️ Warning: position is {offset:.0f} nm away from route {self.name}.")
         else:
             target = self._waypoint_index(next_waypoint)
             if target == 0:
@@ -374,7 +375,7 @@ class Route(ArchiteuthisObject):
     def save(self, path: str) -> str:
         _write_json(path, self.to_dict())
         if self.verbose:
-            print(f"✅ Route {self.name} saved to {path}.")
+            status(f"✅ Route {self.name} saved to {path}.")
         return path
 
     @classmethod
@@ -456,7 +457,7 @@ class JsonLibrary:
             raise FileExistsError(f"{item.name} is already stored in {self.directory}. Pass overwrite=True to replace it.")
         _write_json(path, item.to_dict())
         if self.verbose:
-            print(f"➕ {item.name} saved to {path}.")
+            status(f"➕ {item.name} saved to {path}.")
         return path
 
     def load(self, name: str):
@@ -468,7 +469,86 @@ class JsonLibrary:
     def remove(self, name: str):
         os.remove(self.path(name))
         if self.verbose:
-            print(f"➖ {name} removed from {self.directory}.")
+            status(f"➖ {name} removed from {self.directory}.")
+
+
+class RouteSet(ArchiteuthisObject):
+    """
+    The reference routes of a voyage, kept together: `ortho` and the `minus` and `plus` routes
+    that a deviation factor of -1 and +1 blend towards. `minus` and `plus` default to `ortho`.
+
+    A `RouteSet` is stored as a single entry of a `RouteSetLibrary` and gives a voyage with
+    `Voyage.from_routes(route_set, etd, eta)`.
+
+    Reversing keeps the sides. A route going to port of the outbound passage is to starboard
+    of the return passage, so `minus` and `plus` are swapped and each is reversed.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        ortho: Route,
+        minus: Optional[Route] = None,
+        plus: Optional[Route] = None,
+        verbose: bool = True,
+    ):
+        self.ortho = ortho
+        self.minus = minus if minus is not None else ortho
+        self.plus = plus if plus is not None else ortho
+
+        super().__init__(name, verbose)
+
+    @property
+    def routes(self) -> dict:
+        return {"minus": self.minus, "ortho": self.ortho, "plus": self.plus}
+
+    def reversed(self, name: Optional[str] = None) -> "RouteSet":
+        """The same routes for the return passage."""
+        return RouteSet(
+            name if name is not None else f"{self.name}_reversed",
+            ortho=self.ortho.reversed(),
+            minus=self.plus.reversed(),
+            plus=self.minus.reversed(),
+            verbose=self.verbose,
+        )
+
+    def from_position(
+        self,
+        position: Union[Waypoint, Sequence[float]],
+        name: Optional[str] = None,
+        next_waypoint: Union[int, str, None] = None,
+        tolerance: float = 5.0,
+    ) -> "RouteSet":
+        """The rest of these routes from a position at sea."""
+        return RouteSet(
+            name if name is not None else f"{self.name}_restart",
+            ortho=self.ortho.from_position(position, next_waypoint=next_waypoint, tolerance=tolerance),
+            minus=self.minus.from_position(position, tolerance=tolerance),
+            plus=self.plus.from_position(position, tolerance=tolerance),
+            verbose=self.verbose,
+        )
+
+    def to_dict(self) -> dict:
+        return {"name": self.name} | {key: route.to_dict() for key, route in self.routes.items()}
+
+    @classmethod
+    def from_dict(cls, data: dict, verbose: bool = True) -> "RouteSet":
+        return cls(
+            data["name"],
+            **{key: Route.from_dict(data[key], verbose=verbose) for key in ("ortho", "minus", "plus")},
+            verbose=verbose,
+        )
+
+    def save(self, path: str) -> str:
+        _write_json(path, self.to_dict())
+        return path
+
+    @classmethod
+    def load(cls, path: str, verbose: bool = True) -> "RouteSet":
+        return cls.from_dict(_read_json(path), verbose=verbose)
+
+    def __repr__(self) -> str:
+        return f"RouteSet({self.name!r}, ortho={self.ortho.name!r}, minus={self.minus.name!r}, plus={self.plus.name!r})"
 
 
 class RouteLibrary(JsonLibrary):
@@ -484,3 +564,17 @@ class RouteLibrary(JsonLibrary):
 
     item_class = Route
     default_directory = ROUTE_LIBRARY_DIRECTORY
+
+
+class RouteSetLibrary(JsonLibrary):
+    """
+    Route sets stored as JSON files, one per set, in `~/data/route_sets/` by default.
+
+    Example:
+        >>> library = RouteSetLibrary()
+        >>> library.save(RouteSet("crossing", ortho=ortho, minus=port, plus=starboard))
+        >>> Voyage.from_routes(library.load("crossing"), etd, eta)
+    """
+
+    item_class = RouteSet
+    default_directory = ROUTE_SET_DIRECTORY

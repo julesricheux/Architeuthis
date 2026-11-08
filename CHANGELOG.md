@@ -73,3 +73,25 @@ and this project follows Semantic Versioning https://semver.org
 - GitHub Actions workflow running the tests on every push.
 - `Opti` and `OptiSol` exported from the top-level package.
 - Declared missing dependencies in `pyproject.toml`, `requirements.txt` and `environment.yaml`.
+- `exclusion` module: `ExclusionZone` (polygon, label, color, displayed outline, initial visibility) and `ExclusionZoneLibrary` (`~/data/exclusion_zones/`). `Topography` accepts zones and plain lists of points. `core.exclusion_zones` is still available.
+- `ui.py` writes the label of each exclusion zone on the map and each zone can be hidden in the layers control, including those of the library. An iceberg limit without data is listed as unavailable.
+- `report` module: `RoutingReport`, the dict returned by `run` and `evaluate`, and `ReportCollection` to select, tabulate, export to GPX, save and reload reports. The JSON format is unchanged and `ui.py` reads the files as before.
+- `plot_utils.plot_report`, the A4 page of `examples/simple_routing.py`, documented in the README. Its output is pixel-identical to the former function. Also `draw`, `get_steps`, `plot_variable`, `plot_power_and_weather`, `plot_quantiles`, `plot_fuel_quantiles`, `plot_convergence`, `plot_fuel_distribution` and `plot_fuel_vs_etd`. `plot_route` takes `ax`, `save_as` and `show`.
+- `presets` module: ready-made atmosphere, wave, ensemble, current and topography sources. `common.Domain`: a longitude and latitude box for `**domain`.
+- `route.RouteSet` and `RouteSetLibrary` (`~/data/route_sets/`): the ortho, minus and plus routes of a voyage, reversed and restarted together. `Voyage.from_routes` builds a voyage from them.
+- `Vessel.label`, taken from the polar file name by default, and `Vessel.add_interpolators`.
+- `RoutingAnalysis.run` takes `tags`, entries added to the report, and `callback`, called at each iteration. Reports have `solve`, `model`, `vessel` and `member` by default.
+- `common.status` and `set_status_sink`: messages can be sent to a GUI instead of being printed.
+- Examples use these additions, with the same results on synthetic data. `examples/short_term_routing.py` is unchanged.
+
+### Changed
+- Importing Architeuthis has no side effect: no network access, logging setup or file writing. The iceberg limit is fetched on first use, logging is set up by `load_data` (`common.setup_logging`) and `~/.cdsapirc` is written before a CDS download (`common.ensure_cdsapirc`). Importing `plot_utils` no longer changes the matplotlib style: call `set_plot_style()` for your own figures.
+- The JSON codec moved to `toolbox/json_utils.py`, so that reports do not need Dash. `wrappers/json_wrapper.py` still exports it.
+
+### Fixed
+- `python ui.py` failed at import in a terminal, because `architeuthis/numpy` hid numpy. `ui.py` now removes its own folder from the path.
+- `ui.py` crashed at the first raster or contour with a GUI matplotlib backend, the default in a terminal, and its reloader then restarted it in a loop. It now uses Agg.
+- `save_gpx` read epoch seconds as nanoseconds, which dated every point in 1970.
+- `~/.cdsapirc` is no longer written with `key: None`.
+- `EnsembleHerbieForecast.add_interpolator` argument names now match their position: `var_dim, time_dim, member_dim, latitude_dim, longitude_dim`. The positional order is unchanged.
+- `RoutingAnalysis` no longer shares its default `options` dict between instances.

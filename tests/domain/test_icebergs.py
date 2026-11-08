@@ -68,3 +68,53 @@ def test_bulletin_parsing():
     exec(source[: source.index("# CONFIG")], parser.__dict__)
 
     assert parser.get_iip_zone_from_bulletin(BULLETIN)[0] == [47.0, -52.0]
+
+
+class Answer:
+    def __init__(self, text):
+        self.text = text
+
+    def raise_for_status(self):
+        pass
+
+
+def test_import_does_not_download_anything(load_icebergs, monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: calls.append(args) or Answer(BULLETIN))
+
+    load_icebergs()
+
+    assert calls == []
+    assert not (tmp_path / "iip").exists()
+
+
+def test_data_is_downloaded_once_and_refreshed_on_demand(load_icebergs, monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: calls.append(args) or Answer(BULLETIN))
+    icebergs = load_icebergs()
+
+    first = icebergs.berg_zone
+
+    assert first[:3] == [[47.0, -52.0], [45.5, -48.25], [44.0, -45.0]]
+    assert icebergs.polygon is first
+    assert icebergs.iceberg_polygon() is first
+    assert len(calls) == 1
+    assert (tmp_path / "iip" / "IcebergBulletin.txt").exists()
+
+    icebergs.refresh()
+    icebergs.berg_zone
+
+    assert len(calls) == 2
+
+
+def test_geojson_is_downloaded_on_first_use(load_icebergs):
+    icebergs = load_icebergs()
+
+    assert icebergs._cache == {}
+    assert icebergs.berg_geojson == {"type": "FeatureCollection", "features": []}
+    assert "geojson" in icebergs._cache
+
+
+def test_unknown_attributes_are_refused(load_icebergs):
+    with pytest.raises(AttributeError):
+        load_icebergs().not_an_attribute

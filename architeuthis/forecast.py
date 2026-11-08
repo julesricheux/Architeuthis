@@ -24,7 +24,7 @@ from typing import Sequence, Union
 from herbie import HerbieLatest, FastHerbie
 from scipy.ndimage import distance_transform_edt
 from architeuthis.toolbox.string_formatting import get_request_id
-from architeuthis.common import ArchiteuthisSpatialData, Datetime, _CMEMS_USER, _CMEMS_PWD, _HOME, _TOPOGRAPHY_URL
+from architeuthis.common import ArchiteuthisSpatialData, Datetime, _CMEMS_USER, _CMEMS_PWD, _HOME, _TOPOGRAPHY_URL, ensure_cdsapirc, status
 
 
 logging.getLogger("cdsapi").handlers.clear()
@@ -46,7 +46,7 @@ class Topography(ArchiteuthisSpatialData):
         max_lat: float = 90.,
         depth_offset: float = 0.,
         z_margin: float = 0.,
-        exclusion_zones: Sequence(float) = [],
+        exclusion_zones: Sequence = [], # ExclusionZone objects or lists of [lat, lon] points
         verbose: bool = True,
     ):
         super().__init__(name, min_lon, max_lon, min_lat, max_lat, verbose)
@@ -67,9 +67,9 @@ class Topography(ArchiteuthisSpatialData):
         url = _TOPOGRAPHY_URL
         
         if os.path.exists(self.path):
-            print("🗺️ Topography already downloaded.")
+            status("🗺️ Topography already downloaded.")
         else:
-            print("🗺️ Downloading topography...")
+            status("🗺️ Downloading topography...")
             try:
                 # Send a GET request with stream=True to handle large files efficiently
                 with requests.get(url, stream=True) as response:
@@ -84,7 +84,7 @@ class Topography(ArchiteuthisSpatialData):
                                 f.write(chunk)
                 
             except requests.exceptions.RequestException as e:
-                print(f"💔 Topography could not be downloaded {e}")
+                status(f"💔 Topography could not be downloaded {e}")
 
     def _read_data(self):
         self.data = xr.open_dataset(self.path)[["z",]]
@@ -133,7 +133,8 @@ class Topography(ArchiteuthisSpatialData):
             if len(polygon_coords) < 3:
                 # e.g. the iceberg zone when no IIP bulletin could be fetched
                 if self.verbose:
-                    print("⚠️ Warning: skipping an exclusion zone with fewer than 3 points.")
+                    zone_name = getattr(polygon_coords, "name", "an exclusion zone")
+                    status(f"⚠️ Warning: skipping {zone_name}, which has fewer than 3 points.")
                 continue
             poly_path = Path(polygon_coords)
             mask_total |= poly_path.contains_points(points).reshape(LATS.shape)
@@ -143,7 +144,7 @@ class Topography(ArchiteuthisSpatialData):
         topo[mask_total] = z_exclude
         
         if self.verbose and mask_total.sum():
-            print(f"⛔ Updated {mask_total.sum()} points inside exclusion zones.")
+            status(f"⛔ Updated {mask_total.sum()} points inside exclusion zones.")
             
         # =====================================================================
         # COMPUTE DISTANCE TO SHORE
@@ -294,7 +295,7 @@ class HerbieForecast(Forecast):
         super().__init__(name, date, fxx, min_lon, max_lon, min_lat, max_lat, time_unit, verbose)
         
     def _find_latest(self):
-        print(f"📅 Date is not specified. Retrieving latest {self.model.upper()} {ANSI.orange}GRIB2 files.{ANSI.reset}")
+        status(f"📅 Date is not specified. Retrieving latest {self.model.upper()} {ANSI.orange}GRIB2 files.{ANSI.reset}")
         # print(f"📅 Date is not specified. Retrieving latest {self.model.upper()} {self.product.upper()} {ANSI.orange}GRIB2 files.{ANSI.reset}")
         return HerbieLatest(model=self.model, product=self.product).valid_date
         
@@ -309,9 +310,9 @@ class HerbieForecast(Forecast):
     def _download_data(self):
         if self.__FH is None:
             self.locate_data()
-        print(f"⬇️ Downloading {self.name} data ...")
+        status(f"⬇️ Downloading {self.name} data ...")
         self.path = self.__FH.download(self.regex,)
-        print("✅ Download completed.")
+        status("✅ Download completed.")
         
     def _convert_data(self):
         self.data["longitude"] = ((self.data["longitude"] + 180.) % 360.) - 180.
@@ -412,13 +413,13 @@ class EnsembleHerbieForecast(HerbieForecast):
     def add_interpolator(
         self,
         var_dim: str,
-        member_dim: str,
         time_dim: str,
+        member_dim: str,
         latitude_dim: str,
         longitude_dim: str,
         var_key: str = None,
-        member_slice: slice = slice(None, None, None),
         time_slice: slice = slice(None, None, None),
+        member_slice: slice = slice(None, None, None),
         latitude_slice: slice = slice(None, None, None),
         longitude_slice: slice = slice(None, None, None),
         method: str = "linear",
@@ -429,11 +430,13 @@ class EnsembleHerbieForecast(HerbieForecast):
         if var_key is None:
             var_key = var_dim
         
-        coord_dims = [member_dim, time_dim, latitude_dim, longitude_dim]
-        coord_slices = [member_slice, time_slice, latitude_slice, longitude_slice]
+        # The array is positional: this order must be the one of the data, and of the
+        # queries of RoutingAnalysis, (time, member, lat, lon).
+        coord_dims = [time_dim, member_dim, latitude_dim, longitude_dim]
+        coord_slices = [time_slice, member_slice, latitude_slice, longitude_slice]
         
         if var_key in self.var_keys:
-            print(f"🟦 {var_key} already in {self.name} interpolators.")
+            status(f"🟦 {var_key} already in {self.name} interpolators.")
         else:
             x = [self.data.coords[dim].values[sel] for dim, sel in zip(coord_dims, coord_slices)]
     
@@ -453,7 +456,7 @@ class EnsembleHerbieForecast(HerbieForecast):
             )
             self.var_keys.add(var_key)
             
-            print(f"➕ Added {var_key}: {var_dim} to {self.name} interpolators.")
+            status(f"➕ Added {var_key}: {var_dim} to {self.name} interpolators.")
 
           
 class CopernicusForecast(Forecast):
@@ -493,7 +496,7 @@ class CopernicusForecast(Forecast):
         super().__init__(name, date, None, min_lon, max_lon, min_lat, max_lat, time_unit, verbose)
         
     def _find_latest(self):
-        print(f"📅 Date is not specified. Retrieving latest {self.dataset} {ANSI.orange}NetCDF4 files.{ANSI.reset}")
+        status(f"📅 Date is not specified. Retrieving latest {self.dataset} {ANSI.orange}NetCDF4 files.{ANSI.reset}")
         return pd.Timestamp.today().normalize()
         
     def _download_data(self):
@@ -585,7 +588,7 @@ class CDSForecast(Forecast):
             self.f99 = end
         
     def _find_latest(self):
-        print(f"📅 Date is not specified. Retrieving latest {self.dataset} {ANSI.orange}NetCDF4 files{ANSI.reset}.")
+        status(f"📅 Date is not specified. Retrieving latest {self.dataset} {ANSI.orange}NetCDF4 files{ANSI.reset}.")
         return (pd.Timestamp.today() - pd.Timedelta("5d")).floor("6h").normalize()
     
     def _generate_request(self):
@@ -621,16 +624,17 @@ class CDSForecast(Forecast):
 
         # Check existence locally
         if os.path.exists(path):
-            print(f"💾 {self.name} data already downloaded.")
+            status(f"💾 {self.name} data already downloaded.")
         else:
-            print(f"⬇️ Downloading {self.name} data ...")
+            status(f"⬇️ Downloading {self.name} data ...")
             # Talk to the server
             os.makedirs(directory, exist_ok=True)
             
+            ensure_cdsapirc()
             client = cdsapi.Client()
             client.retrieve(self.dataset, self.request).download(target=path)
             
-            print("✅ Download completed.")
+            status("✅ Download completed.")
             
         self.path = path
         

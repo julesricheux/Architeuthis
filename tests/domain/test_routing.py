@@ -347,3 +347,98 @@ class TestEvaluation:
         evaluation = analysis.evaluate(analysis.passage_plan, constraints=lambda ctx: [ctx["sog"] < 1.0])
 
         assert evaluation["max_constraint_violation"] == pytest.approx(np.max(evaluation["sog"]) - 1.0)
+
+
+# ------------------------------------------------------------------------------
+# What identifies a report, and following a run
+# ------------------------------------------------------------------------------
+
+
+class TestTags:
+    def test_reports_are_tagged_by_default(self, route, open_sea, vessel):
+        report = route(open_sea, solve=False)
+
+        assert report["solve"] == 0
+        assert report["model"] == "atmosphere"
+        assert report["vessel"] == vessel.label
+        assert "member" in report
+
+    def test_optimized_reports_are_tagged_as_such(self, route, open_sea):
+        assert route(open_sea, max_iter=5)["solve"] == 1
+
+    def test_tags_are_added_to_the_report_and_can_replace_defaults(self, route, open_sea):
+        report = route(open_sea, solve=False, tags={"model": "ifs", "init_fac": -1.0, "note": "first"})
+
+        assert report["model"] == "ifs"
+        assert report["init_fac"] == -1.0
+        assert report["note"] == "first"
+
+    def test_tags_are_recorded_in_the_passage_plan(self, analyse, open_sea):
+        analysis = analyse(open_sea)
+
+        analysis.run(max_iter=5, solve=False, solver_options=MUMPS, tags={"model": "ifs"})
+
+        assert analysis.passage_plan.metadata["tags"]["model"] == "ifs"
+
+    def test_model_tag_comes_from_the_forecast(self, analyse, open_sea, atmosphere, monkeypatch):
+        monkeypatch.setattr(atmosphere, "model", "gfs", raising=False)
+
+        report = analyse(open_sea).run(max_iter=5, solve=False, solver_options=MUMPS)
+
+        assert report["model"] == "gfs"
+
+    def test_evaluation_is_tagged_too(self, analyse, open_sea):
+        analysis = analyse(open_sea)
+        analysis.run(max_iter=5, solve=False, solver_options=MUMPS)
+
+        report = analysis.evaluate(analysis.passage_plan, tags={"model": "other"})
+
+        assert report["solve"] == 0
+        assert report["model"] == "other"
+        assert report["plan"] == analysis.passage_plan.name
+
+    def test_analysis_describes_the_vessel_label(self, analyse, open_sea, vessel):
+        assert analyse(open_sea).describe()["vessel"]["label"] == vessel.label
+
+
+class TestCallback:
+    def test_callback_follows_the_iterations(self, analyse, open_sea):
+        iterations = []
+
+        analyse(open_sea).run(max_iter=5, solver_options=MUMPS, callback=iterations.append)
+
+        assert iterations
+        assert iterations == sorted(iterations)
+
+    def test_no_callback_is_needed(self, analyse, open_sea):
+        assert analyse(open_sea).run(max_iter=2, solver_options=MUMPS, callback=None) is not None
+
+
+class TestWithoutVoyage:
+    def test_routing_needs_a_voyage(self, vessel, atmosphere, wave, current, open_sea):
+        analysis = RoutingAnalysis("analysis", vessel, None, atmosphere, wave, current, open_sea, verbose=False)
+
+        with pytest.raises(ValueError, match="needs a voyage"):
+            analysis.run()
+
+    def test_a_plan_can_be_evaluated_without_a_voyage(self, analyse, vessel, atmosphere, wave, current, open_sea):
+        reference = analyse(open_sea)
+        original = reference.run(max_iter=5, solve=False, solver_options=MUMPS)
+        analysis = RoutingAnalysis("analysis", vessel, None, atmosphere, wave, current, open_sea, verbose=False)
+
+        report = analysis.evaluate(reference.passage_plan)
+
+        assert report["fuel"] == pytest.approx(original["fuel"])
+
+
+def test_analysis_options_are_not_shared(analyse, open_sea):
+    first = analyse(open_sea)
+    second = analyse(open_sea)
+
+    first.options["include_gusts"] = False
+
+    assert second.options["include_gusts"] is True
+
+
+def test_analysis_describes_its_exclusion_zones(analyse, open_sea):
+    assert "exclusion_zones" in analyse(open_sea).describe()

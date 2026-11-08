@@ -6,6 +6,7 @@ Created on Tue Dec 16 16:45:27 2025
 """
 
 import json
+import numbers
 
 import architeuthis.numpy as np
 import xml.etree.ElementTree as ET
@@ -48,7 +49,9 @@ def save_gpx(
         )
         time_el = ET.SubElement(trkpt, "time")
     
-        ts = pd.to_datetime(t)  # handles datetime64, str, Timestamp, epoch float/int...
+        # Numbers are epoch seconds, like every time in Architeuthis (pandas would read them
+        # as nanoseconds, in 1970). datetime64, str and Timestamp are parsed as they are.
+        ts = pd.to_datetime(t, unit="s") if isinstance(t, numbers.Real) else pd.to_datetime(t)
         if pd.isna(ts):
             raise ValueError(f"Invalid/NaT time value encountered: {t!r}")
         time_el.text = ts.strftime("%Y-%m-%dT%H:%M:%SZ")

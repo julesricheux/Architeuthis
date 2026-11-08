@@ -6,3 +6,13 @@
     color: #fff !important;
 	margin-left: -20px !important;
 }
+
+/* Name of an exclusion zone, written on the map */
+.exclusion-zone-label {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    color: #b00000;
+    font-weight: 600;
+    text-shadow: 0 0 3px #ffffff;
+}

@@ -17,50 +17,19 @@ import matplotlib.dates as mdates
 import cartopy.feature as cfeature
 
 from itertools import product
-from architeuthis.common import _HOME, wide, tall
+from architeuthis import presets
+from architeuthis.common import _HOME, Domain, wide, tall
 from architeuthis.vessel import Vessel
 from architeuthis.toolbox.geo_utils import poly_deviated_route
-from architeuthis.wrappers.json_wrapper import CustomEncoder, custom_decoder
+from architeuthis.toolbox.plot_utils import draw, get_steps, plot_report, set_plot_style
+from architeuthis.report import ReportCollection, routes_to_table
 from architeuthis.core import RoutingAnalysis, Voyage, DEFAULT_SOLVER_OPTIONS, exclusion_zones
-from architeuthis.route import Route, RouteLibrary
+from architeuthis.route import Route, RouteLibrary, RouteSet, RouteSetLibrary
 from architeuthis.voyage import PassagePlan, PassagePlanLibrary
 from architeuthis.forecast import DeterministicHerbieForecast, EnsembleHerbieForecast, CopernicusForecast, Topography
 
 
-def draw(reports, barbs=True, sails_threshold=None):
-        
-    from architeuthis.toolbox.plot_utils import plot_route
-
-    # cvtim = pd.to_datetime(self.report["ctim"], unit="s")
-    # vtim = pd.to_datetime(self.report["tim"], unit="s")
-    
-    lons = [r["lon"] for r in reports]
-    lats = [r["lat"] for r in reports]
-    clons = [r["clon"] for r in reports]
-    clats = [r["clat"] for r in reports]
-    tws = [r["tws"] for r in reports]
-    twd = [r["twd"] for r in reports]
-    
-    sc = [r['sails_contribution'] for r in reports]
-    
-    if sails_threshold is not None:
-        plot_route(lons, lats, clons, clats, tws, twd, barbs, sails_contribution=sc, sails_threshold=sails_threshold)
-    else:
-        plot_route(lons, lats, clons, clats, tws, twd, barbs)
-    
-def get_steps(report, quantity):
-    
-    tim = pd.to_datetime(report["tim"], unit="s")
-    
-    X = []
-    Y = []
-    for i in range(len(report["ctim"])):
-        X.append(tim[i])
-        X.append(tim[i+1])
-        Y.append(report[quantity][i])
-        Y.append(report[quantity][i])
-        
-    return np.asarray(X), np.asarray(Y)
+set_plot_style() # figures drawn by hand below use the same style
         
 # minimum_longitude=-80.
 # maximum_longitude=0.
@@ -84,6 +53,11 @@ maximum_latitude=60.
 
 steps = list(range(0, 145, 3)) + list(range(150, 361, 6)) # fxx
     
+domain = Domain(
+    min_lon=minimum_longitude, max_lon=maximum_longitude,
+    min_lat=minimum_latitude, max_lat=maximum_latitude,
+)
+
 #%% BUILD VESSEL INTERPOLATORS
 
 def cubic_model(x, p):
@@ -151,10 +125,8 @@ for i, vessel_data in enumerate(vessel_files):
     # vessel = Vessel(f"vessel_{i}", filepath=vessel_data, sfc=196., hotel_load=172., max_power=maxBHP)
     vessel.load_data()
     
-    vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
-    vessel.add_interpolator("max_bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
+    vessel.add_interpolators() # bhp, max_bhp, sails_contribution
     # vessel.add_interpolator("leeway", "stw", "tws", "twa", "hs", "wa", method="linear")
-    vessel.add_interpolator("sails_contribution", "stw", "tws", "twa", "hs", "wa", method="linear")
     
     vessels.append(vessel)
 
@@ -169,44 +141,19 @@ recent = pd.Timestamp("now").floor("1d")
 
 ATMOS = {}
 
+gust_default_factor = 1.23 # (https://cimmse.wordpress.com/2013/09/20/a-wind-gust-factor-database-of-marine-observations-from-10-tropical-cyclones-2/)
+
 # IFS atmospheric data (10 m wind, MSL pressure, 10 m wind gust)
-ATMOS["ifs"] = DeterministicHerbieForecast(
-    "wind_ifs", model="ifs", product="oper",
-    regex=r":(?:10[uv]|10fg|msl):", fxx=steps,
-    min_lon=minimum_longitude, max_lon=maximum_longitude,
-    min_lat=minimum_latitude, max_lat=maximum_latitude,
-    date=recent
+ATMOS["ifs"] = presets.atmosphere(
+    "ifs", domain, date=recent, fxx=steps,
+    wind_factor=global_corr_fac, gust_factor=gust_default_factor,
 )
 
 # GFS atmospheric data (10 m wind, surface gust, surface pressure)
-ATMOS["gfs"] = DeterministicHerbieForecast(
-    "wind_gfs", model="gfs", product="pgrb2.0p25",
-    regex=r"(?:(?:U|V)GRD:10 m above ground|GUST:surface|PRES:surface)", fxx=steps,
-    min_lon=minimum_longitude, max_lon=maximum_longitude,
-    min_lat=minimum_latitude, max_lat=maximum_latitude,
-    date=recent
+ATMOS["gfs"] = presets.atmosphere(
+    "gfs", domain, date=recent, fxx=steps,
+    wind_factor=global_corr_fac, gust_factor=gust_default_factor,
 )
-
-GUST_VAR = {
-    "ifs": "fg10",
-    "gfs": "gust",
-}
-
-gust_default_factor = 1.23 # (https://cimmse.wordpress.com/2013/09/20/a-wind-gust-factor-database-of-marine-observations-from-10-tropical-cyclones-2/)
-
-for model, atmos in ATMOS.items():
-    atmos.load_data()
-    
-    # Sanity correction: gust can't be lower than the mean 10 m wind speed
-    ds = atmos.data
-    gust_var = GUST_VAR[model]
-    speed = np.hypot(atmos.data.u10, atmos.data.v10)
-    ds[gust_var] = ds[gust_var].where(atmos.data[gust_var] >= speed, speed * gust_default_factor)
-
-    atmos.add_interpolator("u10", "valid_time", "latitude", "longitude", fac=global_corr_fac)
-    atmos.add_interpolator("v10", "valid_time", "latitude", "longitude", fac=global_corr_fac)
-
-    atmos.add_interpolator(gust_var, "valid_time", "latitude", "longitude", var_key="gust", fac=global_corr_fac)
 
 # atmos = DeterministicHerbieForecast(
 #     "wind", model="ifs", product="scda", regex=r":10[u|v]:", fxx=steps,
@@ -246,28 +193,10 @@ for model, atmos in ATMOS.items():
 WAVE = {}
 
 # IFS wave data
-WAVE["ifs"] = DeterministicHerbieForecast(
-    "wave_ifs", model="ifs", product="wave", regex=r":swh:|:mwd:", fxx=steps,
-    min_lon=minimum_longitude, max_lon=maximum_longitude,
-    min_lat=minimum_latitude, max_lat=maximum_latitude,
-    date=recent
-)
-WAVE["ifs"].load_data()
-
-WAVE["ifs"].add_interpolator("swh", "valid_time", "latitude", "longitude")
-WAVE["ifs"].add_interpolator("mwd", "valid_time", "latitude", "longitude")
+WAVE["ifs"] = presets.wave("ifs", domain, date=recent, fxx=steps)
 
 # GFS wave data
-WAVE["gfs"] = DeterministicHerbieForecast(
-    "wave_gfs", model="gfs_wave", product="global.0p25", regex=r":HTSGW:|:DIRPW:", fxx=steps,
-    min_lon=minimum_longitude, max_lon=maximum_longitude,
-    min_lat=minimum_latitude, max_lat=maximum_latitude,
-    date=recent
-)
-WAVE["gfs"].load_data()
-
-WAVE["gfs"].add_interpolator("swh", "valid_time", "latitude", "longitude", var_key="swh")
-WAVE["gfs"].add_interpolator("dirpw", "valid_time", "latitude", "longitude", var_key="mwd")
+WAVE["gfs"] = presets.wave("gfs", domain, date=recent, fxx=steps)
 
 # wave_ens = EnsembleHerbieForecast(
 #     "wave_ens", model="ifs", product="waef", regex=r":swh:|:mwd:", fxx=steps,
@@ -296,26 +225,10 @@ WAVE["gfs"].add_interpolator("dirpw", "valid_time", "latitude", "longitude", var
 #%% BUILD CURRENT INTERPOLATORS
 
 # Mercator SMOC data
-current = CopernicusForecast(
-    "current", dataset="cmems_mod_glo_phy_anfc_0.083deg_PT1H-m", variables=["uo", "vo"],
-    min_lon=minimum_longitude, max_lon=maximum_longitude,
-    min_lat=minimum_latitude, max_lat=maximum_latitude,
+current = presets.current_mercator(
+    domain,
     date=recent,
     # date=mirror_date, end=mirror_end
-)
-current.load_data()
-
-current.add_interpolator(
-    "uo", "valid_time", "latitude", "longitude",
-    latitude_slice=slice(None, None, 3),
-    longitude_slice=slice(None, None, 3),
-    time_slice=slice(None, None, 3),
-)
-current.add_interpolator(
-    "vo", "valid_time", "latitude", "longitude",
-    latitude_slice=slice(None, None, 3),
-    longitude_slice=slice(None, None, 3),
-    time_slice=slice(None, None, 3),
 )
 
 
@@ -365,20 +278,7 @@ current.add_interpolator(
 #     [49.22829272317526, -65.94945285687805],
 # ]]
 
-topo0 = Topography(
-    "topo0", depth_offset=0., z_margin=0.,
-    min_lon=minimum_longitude, max_lon=maximum_longitude,
-    min_lat=minimum_latitude, max_lat=maximum_latitude,
-    exclusion_zones=exclusion_zones,
-)
-topo0.load_data()
-
-topo0.add_interpolator(
-    "distance_to_iso0",
-    "lat",
-    "lon",
-    var_key="z"
-)
+topo0 = presets.topography(domain, exclusion_zones=exclusion_zones, name="topo0")
 
 # topo = Topography(
 #     "topo", depth_offset=-10., z_margin=0.,
@@ -505,6 +405,10 @@ routes = RouteLibrary()
 for route in (routeSbd, routeO, routePrt):
     routes.save(route, overwrite=True)
 
+# The same three routes as one entry: RouteSetLibrary().load("simple") (~/data/route_sets/).
+route_set = RouteSet("simple", ortho=routeO, minus=routePrt, plus=routeSbd)
+RouteSetLibrary().save(route_set, overwrite=True)
+
 
 ax = plt.axes(projection=ccrs.PlateCarree())
 
@@ -547,12 +451,12 @@ plt.show()
 
 # Routing after the start of the leg: the voyage restarts from this position, reached at
 # this time, and keeps its ETA (Voyage.from_position). None routes the whole leg.
-rewind = None
-# rewind = ([43.612500, -11.603333], "2026-06-01T06:30") # pos 01/06/2026 06h30 UTC
+restart = None
+# restart = ([43.612500, -11.603333], "2026-06-01T06:30") # pos 01/06/2026 06h30 UTC
 
 solver_options = DEFAULT_SOLVER_OPTIONS
 
-reports = []
+reports = ReportCollection()
 plans = [] # PassagePlan of each routing (timed positions)
 
 zero_fac = 0.
@@ -592,7 +496,7 @@ for solve, tf, model, vessel, fac, m, tpg in (
                 
     etd, eta = tf
     
-    if float(vessel.path[82:-3]) > 5.0:
+    if float(vessel.label.removeprefix("eff")) > 5.0:
         def custom_constraints(ctx):
             return [
                 ctx["max_bhp"] < ctx["vessel"].max_power,
@@ -616,19 +520,9 @@ for solve, tf, model, vessel, fac, m, tpg in (
             ]
         
         
-    voyage = Voyage(
-        name="voyage",
-        etd = etd,
-        eta = eta,
-        departure = departure,
-        arrival = arrival,
-        route=routeO,
-        route_minus=routePrt,
-        route_ortho=routeO,
-        route_plus=routeSbd,
-    )
-    if rewind is not None:
-        voyage = voyage.from_position(*rewind)
+    voyage = Voyage.from_routes(route_set, etd=etd, eta=eta, name="voyage")
+    if restart is not None:
+        voyage = voyage.from_position(*restart)
 
     analysis = RoutingAnalysis(
         "analysis",
@@ -673,17 +567,13 @@ for solve, tf, model, vessel, fac, m, tpg in (
         },
         # solve=0,
         solve=solve,
-    ) # TODO report should probably be a class of its own
-    
-    report["solve"] = solve
-    report["model"] = model
-    report["vessel"] = vessel.path[79:-3]
-    report["member"] = m
+        tags={"solve": solve, "model": model, "member": m}, # the vessel label is added by default
+    )
 
     # Passage plan of this routing, stored after the loop and evaluated in a later cell.
     plan = analysis.passage_plan
-    plan.name = f"{plan.name}_{model}{vessel.path[79:-3]}_fac{fac:+.2f}_m{m}_{'solved' if solve else 'ref'}"
-    plan.metadata |= {"model": model, "member": m, "solve": solve, "vessel_tag": vessel.path[79:-3]}
+    plan.name = f"{plan.name}_{model}{vessel.label}_fac{fac:+.2f}_m{m}_{'solved' if solve else 'ref'}"
+    plan.metadata |= {"model": model, "member": m, "solve": solve, "vessel_tag": vessel.label}
     plans.append(plan)
     
     ctime = pd.to_datetime(report["ctim"], unit="s")
@@ -703,7 +593,7 @@ for solve, tf, model, vessel, fac, m, tpg in (
     # print(f"fuel = {report['fuel']:.1f} t i.e. {report['fuel']/report['transit_time']*24.:.1f} t/day")
     
     if report["status"] != 1:
-        print(f"💀 WARNING: {model} {vessel.path[79:-3]}% did not converge.")
+        print(f"💀 WARNING: {model} {vessel.label}% did not converge.")
     reports.append(report)
 
 for report in reports:
@@ -743,8 +633,7 @@ json_file = f"output_{now.strftime(r'%Y-%m-%d')}.json"
 
 
 # WRITE
-with open(os.path.join(_HOME, "routes", json_file), "w") as f:
-    json.dump(cv_reports, f, cls=CustomEncoder, indent=2)
+ReportCollection(cv_reports).save(os.path.join(_HOME, "routes", json_file))
 
 # Passage plans, reloadable with PassagePlanLibrary().load(name) (~/data/passage_plans/)
 plan_library = PassagePlanLibrary()
@@ -774,16 +663,13 @@ for plan, (model, vessel) in product(
     evaluation = RoutingAnalysis(
         "evaluation",
         vessel,
-        plan.voyage(),
+        None, # no voyage needed: the plan gives the positions and times
         ATMOS[model],
         WAVE[model],
         current,
         topos[0],
         verbose=False,
-    ).evaluate(plan)
-    evaluation["plan"] = plan.name
-    evaluation["model"] = model
-    evaluation["vessel"] = vessel.path[79:-3]
+    ).evaluate(plan, tags={"model": model}) # the plan name and vessel label are added by default
     evaluations.append(evaluation)
 
 eval_table = pd.DataFrame(evaluations).pivot_table(
@@ -1503,41 +1389,9 @@ plt.show()
 #%%    
 # json_file = "output_ensemble.json"
     
-with open(os.path.join(_HOME, "routes", json_file), "r") as f:
-    reports = json.load(f, object_hook=custom_decoder)
+reports = ReportCollection.load(os.path.join(_HOME, "routes", json_file))
     
 #%%
-
-def routes_to_table(
-    DF,
-    mask,
-    variables = ("sog", "cog", "avg_bhp", "twa")
-):
-
-    rows = DF.loc[mask]
-
-    tables = []
-
-    for I, row in rows.iterrows():
-
-        data = {
-            "timestamp": pd.to_datetime(row["tim"][:-1], unit="s")
-        }
-
-        for VAR in variables:
-            data[f"{VAR}_{I}"] = np.asarray(row[VAR])
-
-        tables.append(pd.DataFrame(data))
-
-    table = tables[0]
-
-    for t in tables[1:]:
-        table = table.merge(t, on="timestamp", how="outer")
-
-    table = table.sort_values("timestamp")
-
-    return table
-
 
 # mask = (df["status"] == 1) & (df.index.isin([len(reports)-3]))
 
@@ -1569,12 +1423,10 @@ print("Table copied to clipboard. Paste directly into Word.")
 from architeuthis.toolbox.os_utils import save_gpx
 
 for i in [4, 8]:
-    r = df.iloc[i]
+    r = reports[i]
 
-    save_gpx(
-        r["lat"],
-        r["lon"],
-        r["tim"],
+    # By default: track_<MODEL>_<vessel>_<ETD date>.gpx. save_gpx remains available.
+    r.to_gpx(
         f"track_{r['model'].upper()}_{r['vessel']}_{recent.strftime('%Y%m%d')}.gpx",
         track_name=f"track_{r['model'].upper()}"
     )
@@ -1594,78 +1446,9 @@ def slicing(r):
 # SAILS_KEY = "sails_contribution"  # sails contribution (set SAILS_SCALE=100. if stored as a 0-1 fraction)
 # SAILS_SCALE = 1.
 
-# A4 = (8.27, 11.69)  # inches, portrait
-A4 = (8.27, 10)  # inches, portrait
-A4 = (8.27, 11.69)  # inches, portrait (true A4)
-
-
-def plot_report(r, save_as=None):
-    ctim = pd.to_datetime(np.ravel(r["ctim"]), unit="s")
-    tim  = pd.to_datetime(np.ravel(r["tim"]), unit="s")
-
-    fig, axes = plt.subplots(
-        nrows=6, ncols=1, figsize=A4, dpi=300, sharex=True,
-        gridspec_kw={"height_ratios": [1, 1, 1.3, 1, 1, 1], "hspace": 0.12},
-    )
-    ax_sog, ax_sail, ax_bhp, ax_swh, ax_tws, ax_aws = axes
-    step_kw = dict(where="mid")
-
-    # 1. SOG
-    ax_sog.step(ctim, r["sog"], color="C0", **step_kw)
-    ax_sog.set_ylabel("SOG / kts")
-    # ax_sog.set_ylim(6., 13.)
-
-    # 2. Sails contribution (0-100 %)
-    ax_sail.step(ctim, np.asarray(r["sails_contribution"]), color="C2", **step_kw)
-    ax_sail.set_ylabel("Sails contribution / %")
-    ax_sail.set_ylim(0., 100.)
-
-    # 3. BHP with load fluctuations
-    avg_bhp, max_bhp = np.asarray(r["avg_bhp"]), np.asarray(r["max_bhp"])
-    osc = max_bhp - avg_bhp
-    ax_bhp.step(ctim, avg_bhp, color="C0", label="Average BHP", **step_kw)
-    ax_bhp.step(ctim, max_bhp, color="C1", ls="--", lw=0.8, label="Load fluctuations", **step_kw)
-    ax_bhp.step(ctim, avg_bhp - osc, color="C1", ls="--", lw=0.8, **step_kw)
-    ax_bhp.fill_between(ctim, avg_bhp - osc, avg_bhp + osc, step="mid", alpha=0.15, color="C1")
-    ax_bhp.set_ylabel("BHP / kW")
-    # ax_bhp.set_ylim(0., 3084)
-    ax_bhp.set_ylim(0., None)
-    ax_bhp.legend(loc="upper right", fontsize=8)
-
-    # 4. SWH
-    ax_swh.step(ctim, r["swh"], color="C3", **step_kw)
-    ax_swh.set_ylabel("SWH / m")
-    ax_swh.set_ylim(0., None)
-
-    # 5. TWS
-    ax_tws.step(ctim, r["tws"], color="C4", label="Average", **step_kw)
-    ax_tws.step(ctim, r["tws_gust"], color="C4", label="Gust", ls="--", **step_kw)
-    ax_tws.fill_between(ctim, r["tws"], r["tws_gust"], step="mid", alpha=0.15, color="C4")
-    ax_tws.set_ylabel("TWS / kts")
-    ax_tws.legend(loc="upper right", fontsize=8)
-    ax_tws.set_ylim(0., None)
-
-    # 6. AWS (light red)
-    aws_color = "#e57373"
-    ax_aws.step(ctim, r["aws"], color=aws_color, label="Average", **step_kw)
-    ax_aws.step(ctim, r["aws_gust"], color=aws_color, label="Gust", ls="--", **step_kw)
-    ax_aws.fill_between(ctim, r["aws"], r["aws_gust"], step="mid", alpha=0.2, color=aws_color)
-    ax_aws.set_ylabel("AWS / kts")
-    ax_aws.legend(loc="upper right", fontsize=8)
-    ax_aws.set_ylim(0., None)
-
-    # Shared x-axis formatting (only the bottom panel carries the time labels)
-    for ax in axes:
-        ax.grid(alpha=1.0)
-    ax_aws.set_xlim(tim[0], tim[-1])
-    ax_aws.xaxis.set_major_formatter(mdates.DateFormatter("%d %b\n%H:%M"))
-    ax_aws.set_xlabel("Time (UTC)")
-
-    fig.align_ylabels(axes)
-    fig.subplots_adjust(left=0.10, right=0.97, top=0.98, bottom=0.07, hspace=0.12)
-    if save_as:
-        fig.savefig(save_as, format="pdf")  # keeps exact A4 page siz
-    plt.show()
-    
+# A4 page of each selected report: see plot_report in toolbox/plot_utils.py and the README.
+# plot_report(r, save_as="report.pdf")  # true A4 page
+# plot_report(r, figsize=(8.27, 10))
+# plot_report(r, ylim={"sog": (6., 13.), "bhp": (0., 3084.)})
 for r in [r for r in reports if slicing(r)]:
     plot_report(r, save_as=None)

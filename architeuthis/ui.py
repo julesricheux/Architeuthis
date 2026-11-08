@@ -5,6 +5,18 @@ Created on Sun Jan 25 21:18:08 2026
 @author: jules
 """
 
+import os
+import sys
+
+# `python ui.py` puts this folder first on the path, where architeuthis/numpy would hide the
+# real numpy. Everything is imported from the folder above instead.
+if "__file__" in globals():
+    _ui_folder = os.path.dirname(os.path.abspath(__file__))
+    sys.path[:] = [
+        os.path.dirname(_ui_folder),
+        *(path for path in sys.path if os.path.abspath(path or os.getcwd()) != _ui_folder),
+    ]
+
 import io
 import json
 from io import BytesIO
@@ -14,6 +26,11 @@ import requests
 import pandas as pd
 import xarray as xr
 import seaborn as sns
+import matplotlib
+
+# The routes draw images in server threads, where a GUI backend such as Qt kills the process.
+matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from PIL import Image
@@ -35,17 +52,22 @@ from architeuthis.forecast import (
     DeterministicHerbieForecast,
     EnsembleHerbieForecast,
 )
-from architeuthis.icebergs import polygon
 from architeuthis.common import _HOME
+from architeuthis.exclusion import (
+    ExclusionZoneLibrary,
+    default_exclusion_zones,
+    merge_exclusion_zones,
+)
+from architeuthis.report import ReportCollection, latest_report_file
 
 from architeuthis.toolbox.chart_utils import density_from_zoom
 from architeuthis.toolbox.geo_utils import lonlat_to_web_mercator
 from architeuthis.wrappers.json_wrapper import (
-    custom_decoder,
     route_to_geojson,
     point_to_layer,
     style_func,
 )
+from architeuthis.wrappers.leaflet_wrapper import exclusion_zone_overlays
 
 sns.set_theme(palette="viridis")
 
@@ -358,17 +380,14 @@ marks = [
 
 ROUTES_DIR = Path(_HOME, "routes")
 
-json_files = list(ROUTES_DIR.glob("*.json"))
-
-if not json_files:
-    raise FileNotFoundError("No JSON files found in routes directory.")
-
 # Select most recently modified file
-latest_file = max(json_files, key=lambda f: f.stat().st_mtime)
+latest_file = latest_report_file(ROUTES_DIR)
 
-with open(latest_file, "r") as f:
-    reports = json.load(f, object_hook=custom_decoder)
-    
+reports = ReportCollection.load(latest_file)
+
+# Exclusion zones of the routing, and those stored in ~/data/exclusion_zones/
+exclusion_zones = merge_exclusion_zones(default_exclusion_zones(), ExclusionZoneLibrary())
+
 
 # Load the GeoJSON file
 with open("./assets/countries-coastline-1km.geo.json") as f:
@@ -663,7 +682,7 @@ def create_report_overlays(
                 name=(
                     f"{report['model']} "
                     f"{report['init_fac']} "
-                    f"{report['vessel'][3:]} "
+                    f"{str(report['vessel']).removeprefix('eff')} "
                     f"{report['fuel']:.1f} "
                     f"m{report['member']}"
                 ),
@@ -853,17 +872,16 @@ app.layout = dmc.MantineProvider(
                             name="EUMETSAT IR gif", checked=False,
                         ),
                         
-                        dl.Overlay(
-                            # dl.GeoJSON(
-                            #     id="berg-limit",
-                            #     data=berg_geojson,
-                            # ),
-                            # dl.Polyline(positions=polygon, fill=True, color="#ff0000", fillOpacity=0.2),
-                            dl.Polyline(positions=polygon[:-3], fill=False, color="#ff0000", fillOpacity=0.2),
-                            name="Iceberg limit", checked=True,
-                            
-                        ),
-                        
+                        # Iceberg limit and other exclusion zones: see exclusion_zone_overlays below.
+                        # dl.Overlay(
+                        #     dl.GeoJSON(
+                        #         id="berg-limit",
+                        #         data=berg_geojson,
+                        #     ),
+                        #     dl.Polyline(positions=polygon, fill=True, color="#ff0000", fillOpacity=0.2),
+                        #     name="Iceberg limit", checked=True,
+                        # ),
+
                         # dl.Overlay(rotated_markers, id="active-route", checked=True),
                         
                         # dl.GeoJSON(
@@ -881,7 +899,7 @@ app.layout = dmc.MantineProvider(
                             # icon=DashIconify(icon="clarity:settings-line", width=200),
                             icon=weather_icon,
                         ),
-                    ] + create_report_overlays(reports)
+                    ] + exclusion_zone_overlays(exclusion_zones) + create_report_overlays(reports)
                     )
                 ],
                 style={"position":"relative", "width":"100%","height":"100%"},

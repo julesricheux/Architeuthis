@@ -17,15 +17,20 @@ import architeuthis.numpy as np
 from abc import abstractmethod
 from typing import Callable, Optional, Union
 from architeuthis.vessel import Vessel
-from architeuthis.common import _banner
+from architeuthis.common import _banner, status
 from architeuthis.optimization import Opti
-from architeuthis.icebergs import berg_zone
 from architeuthis.forecast import Forecast, Topography
+from architeuthis.report import RoutingReport
 from architeuthis.common import ArchiteuthisObject, GUST_DEFAULT_RATIO
 # Route and voyage classes live in their own modules, which work without network
 # access; they are re-exported here for compatibility.
-from architeuthis.route import Leg, Route, RouteLibrary, Waypoint  # noqa: F401
+from architeuthis.route import Leg, Route, RouteLibrary, RouteSet, RouteSetLibrary, Waypoint  # noqa: F401
 from architeuthis.voyage import PassagePlan, PassagePlanLibrary, Schedule, Voyage  # noqa: F401
+from architeuthis.exclusion import (  # noqa: F401
+    ExclusionZone,
+    ExclusionZoneLibrary,
+    default_exclusion_zones,
+)
 from architeuthis.toolbox.geo_utils import (
     great_circle_route,
     distances,
@@ -83,97 +88,16 @@ SOLVED = {
     "Solved_To_Acceptable_Level",
 }
 
-exclusion_zones = [
-    [
-        [46.6475507, -53.0879974],
-        [47.1448975, -52.6904297],
-        [47.8057761, -52.6574707],
-        [48.7272088, -53.0310059],
-        [52.2547088, -55.5688477],
-        [57.0646303, -61.6992188],
-        [59.1759282, -64.0283203],
-        [60.5221575, -64.8193359],
-        [62.0833149, -66.2255859],
-        [63.5485522, -70.3125000],
-        [64.4348920, -73.6083984],
-        [64.8862654, -77.3876953],
-        [66.0715465, -86.4404297],
-        [64.1681069, -92.1093750],
-        [59.4450751, -96.6796875],
-        [56.2677611, -95.9765625],
-        [46.1950421, -92.7246094],
-        [41.0793511, -87.6708984],
-        [35.3532161, -75.9814453],
-        [37.7620299, -77.0141602],
-        [38.3761154, -76.9454956],
-        [38.9935721, -76.8273926],
-        [39.2577782, -76.3659668],
-        [38.3416562, -75.9594727],
-        [37.2980904, -75.9979248],
-        [37.1121458, -75.9539795],
-        [37.6164071, -75.5804443],
-        [38.0351124, -75.2563477],
-        [38.4084061, -75.0723267],
-        [38.7883454, -75.0860596],
-        [39.2705372, -74.6026611],
-        [39.7747695, -74.1137695],
-        [40.3904888, -73.9984131],
-        [41.2881262, -70.7794189],
-        [41.2365112, -69.9746704],
-        [41.2943173, -69.9362183],
-        [41.8347815, -69.9307251],
-        [42.0615286, -70.0708008],
-        [42.6440611, -70.5844116],
-        [43.4130287, -70.4553223],
-        [43.8345268, -68.8623047],
-        [44.6881828, -67.1539307],
-        [44.2412638, -66.3958740],
-        [43.3930737, -66.0305786],
-        [43.3850899, -65.6268311],
-        [43.5007524, -65.2807617],
-        [44.4631908, -63.5641479],
-        [45.2555553, -60.9851074],
-        [46.0045933, -59.6667480],
-        [47.0252060, -60.3918457],
-        [47.5394554, -59.2053223],
-        [47.2549999, -55.9616089],
-        [46.9146271, -55.9780884],
-        [46.8414071, -55.8050537],
-        [46.8733358, -55.3738403],
-        [46.8188578, -54.1873169],
-        [46.6098279, -53.5720825],
-        [46.6263348, -53.1614685],
-        [46.6484934, -53.0879974],
-        [46.6475507, -53.0879974]
-    ],
-    
-    [
-        [47.234906794905456, -2.298894594711654],
-        [47.25856998567288, -2.4325583888579034],
-        [47.29283375261824, -2.547348407391687],
-        [47.472965041672204, -3.132757632163045],
-        [47.643448179530274, -3.2076668170178877],
-        [47.700395091200015, -3.368297468536256],
-        [47.69636166917016, -3.4548323100507234],
-        [47.79791598030666, -3.8522262539473218],
-        [47.85365939763104, -3.980613066215874],
-        [47.84328834623138, -4.041571653262067],
-        [47.79730758529769, -4.187810231946969],
-        [47.7951034723181, -4.380102394509618],
-        [48.04251441805747, -4.732749036488459],
-        [48.271675251256646, -4.616214170859991],
-        [48.33235206326594, -4.766668801789211],
-        [48.51970337432375, -4.781458461018697],
-        [48.67589361128423, -4.353382869976883],
-        [48.75347516979233, -4.009457823390732],
-        [48.84141631708758, -3.5046081884123716],
-        [48.89654815888168, -3.0605321526173523],
-        [48.560105723588045, -2.671292321902763],
-        [48.685993556279584, -2.318443857961514],
-        [47.234906794905456, -2.298894594711654],
-    ],
-    berg_zone,
-]
+
+def __getattr__(name: str):
+    # `exclusion_zones` remains a list of zones, in the same order, but the iceberg limit it
+    # holds is only fetched when it is used, not when this module is imported.
+    if name == "exclusion_zones":
+        return default_exclusion_zones()
+    if name == "berg_zone":
+        from architeuthis.icebergs import berg_zone
+        return berg_zone
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 #%%
@@ -219,7 +143,7 @@ def _numeric(value):
     return array.ravel()
 
 
-def _describe(obj, attributes=("model", "product", "dataset", "f00", "path", "max_power", "members")):
+def _describe(obj, attributes=("model", "product", "dataset", "f00", "path", "label", "max_power", "members")):
     """A JSON-friendly description of a data object, for passage plan metadata."""
     if obj is None:
         return None
@@ -259,7 +183,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         atmosphere_member: float = None,
         wave_member: float = None,
         constraints: Optional[Callable[[dict], list]] = default_routing_constraints,
-        options: dict = {"include_gusts": True},
+        options: Optional[dict] = None,
         verbose: bool = True,
     ):
         self.vessel = vessel
@@ -272,7 +196,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         self.atmosphere_member = atmosphere_member
         self.wave_member = wave_member
         self.constraints = constraints
-        self.options = options
+        self.options = options if options is not None else {"include_gusts": True}
 
         self.report = None
         self.passage_plan = None
@@ -289,16 +213,16 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             f99 = forecast.data["valid_time"].values[-3]
 
             if etd < f00:
-                print(f"⚠️ Warning: ETD sooner than earliest {forecast.name.upper()} forecast valid time.")
+                status(f"⚠️ Warning: ETD sooner than earliest {forecast.name.upper()} forecast valid time.")
             if eta > f99:
-                print(f"⚠️ Warning: ETA later than furthest {forecast.name.upper()} forecast valid time.")
+                status(f"⚠️ Warning: ETA later than furthest {forecast.name.upper()} forecast valid time.")
 
     def _gust_options(self):
         include_gusts = ("include_gusts" in self.options.keys() and self.options["include_gusts"])
         interpolate_gust = include_gusts and "gust" in self.atmosphere.interpolators.keys()
 
         if include_gusts and not interpolate_gust:
-            print("🌪️ Info: gust not found in interpolators. Defaulting to the standard ratio.")
+            status("🌪️ Info: gust not found in interpolators. Defaulting to the standard ratio.")
 
         return include_gusts, interpolate_gust
 
@@ -457,17 +381,17 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         return []
 
     @staticmethod
-    def _report(values: dict, etd, eta, init_fac, reference_distance, status, include_gusts) -> dict:
+    def _report(values: dict, etd, eta, init_fac, reference_distance, status, include_gusts) -> RoutingReport:
         transit_time = (eta - etd) / 3600.
         dist = float(onp.sum(values["d"]))
 
-        report = {
+        report = RoutingReport({
             "etd": etd,
             "eta": eta,
             "transit_sog": reference_distance / transit_time,
             "transit_time": transit_time,
             "init_fac": init_fac,
-        }
+        })
         report |= {key: values[key] for key in _REPORT_QUANTITIES if key not in ("tim", "lat", "lon", "ctim", "clat", "clon", "d")}
         report |= {
             "pos": [[la, lo] for la, lo in zip(onp.ravel(values["lat"]), onp.ravel(values["lon"]))],
@@ -488,6 +412,15 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
 
         return report
 
+    def _default_tags(self, solve) -> dict:
+        """What identifies a report in tables, plots and the UI. `tags` can replace any of it."""
+        return {
+            "solve": int(bool(solve)),
+            "model": getattr(self.atmosphere, "model", self.atmosphere.name),
+            "vessel": getattr(self.vessel, "label", self.vessel.name),
+            "member": self.atmosphere_member,
+        }
+
     def describe(self) -> dict:
         """JSON-friendly description of the vessel, forecasts and options of this analysis."""
         return {
@@ -499,8 +432,50 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             "topography": _describe(self.topography, attributes=("path", "depth_offset", "z_margin")),
             "atmosphere_member": self.atmosphere_member,
             "wave_member": self.wave_member,
+            "exclusion_zones": [
+                getattr(zone, "name", "unnamed")
+                for zone in getattr(self.topography, "exclusion_zones", [])
+            ],
             "options": dict(self.options),
         }
+
+    def _time_grid(self, skip_tim: int):
+        """Segment centers (`ctim`) and nodes (`tim`) of the passage, from the atmospheric forecast."""
+        etd = self.voyage.etd
+        eta = self.voyage.eta
+
+        fxx = self.atmosphere.data.valid_time.values
+        ctim0 = fxx[(fxx > etd) * (fxx < eta)][skip_tim::1+skip_tim]
+
+        tim0 = np.concatenate((
+            [etd],
+            midpoints(ctim0),
+            [eta],
+        ))
+
+        return tim0, ctim0
+
+    def _reference_path(self, curv_abc, deviation_fac):
+        """Reference positions at curvilinear abscissae `curv_abc`, blended by `deviation_fac`."""
+        lat0minus, lon0minus = self.voyage.route_minus(curv_abc)
+        lat0ortho, lon0ortho = self.voyage.route_ortho(curv_abc)
+        lat0plus, lon0plus = self.voyage.route_plus(curv_abc)
+
+        lat0 = np.fmax(deviation_fac, 0) * lat0plus + (1-np.abs(deviation_fac)) * lat0ortho - np.fmin(deviation_fac, 0.) * lat0minus
+        lon0 = np.fmax(deviation_fac, 0) * lon0plus + (1-np.abs(deviation_fac)) * lon0ortho - np.fmin(deviation_fac, 0.) * lon0minus
+
+        return lat0, lon0
+
+    def _store_results(self, report: RoutingReport, tags: dict, run_options: dict):
+        """Keep the report and the passage plan of the last run on this analysis."""
+        self.report = report
+        self.passage_plan = PassagePlan.from_report(
+            report,
+            route=self.voyage.route,
+            name=f"{self.voyage.route.name}_{pd.Timestamp(self.voyage.etd, unit='s'):%Y%m%dT%H%M}Z",
+            metadata=self.describe() | {"run": run_options, "tags": tags},
+            verbose=self.verbose,
+        )
 
     def run(
         self,
@@ -511,7 +486,34 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         solver_options: dict = DEFAULT_SOLVER_OPTIONS,
         solve: bool = True,
         constraints: Optional[Union[Callable[[dict], list], list]] = None,
-    ):
+        tags: Optional[dict] = None,
+        callback: Optional[Callable[[int], object]] = None,
+    ) -> RoutingReport:
+        """
+        Optimize the positions of the voyage, or evaluate its reference route if `solve` is False.
+
+        Args:
+            init_fac: Deviation factor of the reference route, between the minus (-1), ortho
+                (0) and plus (+1) routes of the voyage.
+            vary_fac: Whether the deviation factor is also optimized.
+            skip_tim: Thins the time grid by keeping one forecast step out of `1 + skip_tim`.
+            max_iter: Maximum number of IPOPT iterations.
+            solver_options: Options of the solver, as in `Opti.solve`.
+            solve: False evaluates the reference route without optimizing it.
+            constraints: Constraints of this run, replacing those of the analysis: a callable
+                `ctx -> list` or a list.
+            tags: Entries added to the report, identifying it in tables, plots and the UI.
+                `solve`, `model` (of the atmospheric forecast), `vessel` (its label) and
+                `member` are set by default and can be replaced here.
+            callback: Called at each IPOPT iteration with the iteration number, for example to
+                report progress in a GUI. See `Opti.solve`.
+
+        Returns:
+            A `RoutingReport`, a dict of numeric arrays and scalars, also stored in
+            `self.report`. The timed positions are stored in `self.passage_plan`.
+        """
+        if self.voyage is None:
+            raise ValueError("RoutingAnalysis.run needs a voyage. To evaluate a passage plan without one, use evaluate.")
 
         include_gusts, interpolate_gust = self._gust_options()
 
@@ -520,14 +522,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
 
         self.check_valid_time()
 
-        fxx = self.atmosphere.data.valid_time.values
-        ctim0 = fxx[(fxx > etd) * (fxx < eta)][skip_tim::1+skip_tim]
-
-        tim0 = np.concatenate((
-            [etd],
-            midpoints(ctim0),
-            [eta],
-        ))
+        tim0, ctim0 = self._time_grid(skip_tim)
 
         npts = len(tim0)
         curv_abc = (tim0 - etd) / (eta - etd)
@@ -540,12 +535,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         else:
             deviation_fac = opti.parameter(init_fac)
 
-        lat0minus, lon0minus = self.voyage.route_minus(curv_abc)
-        lat0ortho, lon0ortho = self.voyage.route_ortho(curv_abc)
-        lat0plus, lon0plus = self.voyage.route_plus(curv_abc)
-
-        lat0 = np.fmax(deviation_fac, 0) * lat0plus + (1-np.abs(deviation_fac)) * lat0ortho - np.fmin(deviation_fac, 0.) * lat0minus
-        lon0 = np.fmax(deviation_fac, 0) * lon0plus + (1-np.abs(deviation_fac)) * lon0ortho - np.fmin(deviation_fac, 0.) * lon0minus
+        lat0, lon0 = self._reference_path(curv_abc, deviation_fac)
 
         # TODO no constraints so add an inside-bounds check at the end of the computation
         if solve:
@@ -575,20 +565,21 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             opti.minimize(passage["fuel"])
 
         # if self.verbose:
-        print(_banner)
+        status(_banner)
 
         sol = opti.solve(
             max_iter=max_iter,
+            callback=callback,
             behavior_on_failure="return_last",
             options=solver_options,
             verbose=self.verbose,
         )
 
-        status = 1 if opti.return_status() in SOLVED else 2
+        solve_status = 1 if opti.return_status() in SOLVED else 2
 
         self.opti = opti
         self.sol = sol
-        self.status = status
+        self.status = solve_status
 
         values = {key: sol(expression) for key, expression in passage.items()}
 
@@ -598,25 +589,23 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             eta=eta,
             init_fac=init_fac,
             reference_distance=self.voyage.distance,
-            status=status,
+            status=solve_status,
             include_gusts=include_gusts,
         )
 
-        self.report = output
-        self.passage_plan = PassagePlan.from_report(
+        run_tags = self._default_tags(solve) | (tags or {})
+        output |= run_tags
+
+        self._store_results(
             output,
-            route=self.voyage.route,
-            name=f"{self.voyage.route.name}_{pd.Timestamp(etd, unit='s'):%Y%m%dT%H%M}Z",
-            metadata=self.describe() | {
-                "run": {
-                    "init_fac": init_fac,
-                    "vary_fac": vary_fac,
-                    "skip_tim": skip_tim,
-                    "max_iter": max_iter,
-                    "solve": solve,
-                },
+            tags=run_tags,
+            run_options={
+                "init_fac": init_fac,
+                "vary_fac": vary_fac,
+                "skip_tim": skip_tim,
+                "max_iter": max_iter,
+                "solve": solve,
             },
-            verbose=self.verbose,
         )
 
         return output
@@ -625,20 +614,24 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         self,
         plan: Union[PassagePlan, dict],
         constraints: Optional[Union[Callable[[dict], list], list]] = None,
-    ) -> dict:
+        tags: Optional[dict] = None,
+    ) -> RoutingReport:
         """
         Open-loop evaluation of a passage plan with this analysis' vessel and forecasts.
 
         The positions and times of the plan are kept exactly: nothing is optimized and
         IPOPT is not called. This measures how the consumption of a plan, optimized
         under some conditions, changes under other ones (vessel, weather model, ensemble
-        member, options).
+        member, options). The analysis needs no voyage for this: it can be built with
+        `voyage=None`, as the plan gives the positions and times.
 
         Args:
             plan: A `PassagePlan`, or a report returned by `run`.
             constraints: Constraints to check, as in `run`. They are not enforced: their
                 largest violation is reported in `max_constraint_violation` (positive when
                 violated) and per constraint in `constraint_violations`. `ctx["opti"]` is None.
+            tags: Entries added to the report, as in `run`. `plan`, the name of the plan, is
+                also set by default when `plan` is a `PassagePlan`.
 
         Returns:
             A report with the keys of `run`, `status` 0 (not solved) and `init_fac` None.
@@ -694,5 +687,10 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         )
         report["constraint_violations"] = constraint_violations
         report["max_constraint_violation"] = max(constraint_violations, default=0.)
+
+        report |= self._default_tags(solve=False)
+        if isinstance(plan, PassagePlan):
+            report["plan"] = plan.name
+        report |= tags or {}
 
         return report

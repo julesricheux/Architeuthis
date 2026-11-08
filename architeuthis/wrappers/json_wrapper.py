@@ -5,57 +5,12 @@ Created on Sun Jan 25 21:54:43 2026
 @author: jules
 """
 
-import json
-import numpy as np
-
 import pandas as pd
 
 from dash_extensions.javascript import assign
 
-
-class CustomEncoder(json.JSONEncoder):
-    def default(self, obj):
-
-        if isinstance(obj, tuple):
-            return {
-                "__type__": "tuple",
-                "value": list(obj)
-            }
-
-        if isinstance(obj, np.ndarray):
-            return {
-                "__type__": "ndarray",
-                "dtype": str(obj.dtype),
-                "value": obj.tolist()
-            }
-
-        if isinstance(obj, np.generic):
-            return {
-                "__type__": "np_scalar",
-                "dtype": str(obj.dtype),
-                "value": obj.item()
-            }
-
-        return super().default(obj)
-
-
-def custom_decoder(obj):
-
-    if "__type__" not in obj:
-        return obj
-
-    t = obj["__type__"]
-
-    if t == "tuple":
-        return tuple(obj["value"])
-
-    if t == "ndarray":
-        return np.array(obj["value"], dtype=obj["dtype"])
-
-    if t == "np_scalar":
-        return np.dtype(obj["dtype"]).type(obj["value"])
-
-    raise TypeError(f"Unknown serialized type: {t}")
+# The JSON codec lives in toolbox.json_utils, without Dash; it stays importable from here.
+from architeuthis.toolbox.json_utils import CustomEncoder, custom_decoder  # noqa: F401
 
 
 def route_to_geojson(route: dict, valid_time: float | None = None, color: str = "#ffffff") -> dict:
@@ -79,7 +34,7 @@ def route_to_geojson(route: dict, valid_time: float | None = None, color: str = 
     
     model = route['model']
     fac= route['init_fac']
-    vessel = route['vessel'][3:]
+    vessel = str(route['vessel']).removeprefix("eff")
 
     line_feature = {
         "type": "Feature",

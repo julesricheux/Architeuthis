@@ -8,13 +8,14 @@ Created on Thu Jan 15 12:44:25 2026
 import os
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 import architeuthis.numpy as np
 from architeuthis.modeling import InterpolatedModel
 
 from casadi import interpolant
 
-from typing import Union, Sequence, Literal
+from typing import Any, Callable, Literal, Optional, Sequence, Union
 from pandas import Timestamp
 from datetime import datetime
 
@@ -24,12 +25,6 @@ def _get_env_var(key):
     else:
         return None
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    force=True,
-)
 log = logging.getLogger(__name__)
 
 Datetime = Union[datetime, Timestamp, str]
@@ -44,18 +39,12 @@ _HOME = os.path.join(
 
 _CDS_URL = "https://cds.climate.copernicus.eu/api"
 _CDS_API_KEY = _get_env_var("CDS_API_KEY")
-if _CDS_API_KEY is None:
-    log.info("CDS API key was not specified. Copernicus atmosphere data will be unavailable.")
 
 _CMEMS_USER = _get_env_var("CMEMS_USER")
 _CMEMS_PWD = _get_env_var("CMEMS_PWD")
-if (_CMEMS_USER is None) or (_CMEMS_PWD is None):
-    log.info("CMEMS credentials are incomplete. Copernicus marine service data will be unavailable.")
 
 _EUMDAC_USER = _get_env_var("EUMDAC_USER")
 _EUMDAC_PWD = _get_env_var("EUMDAC_PWD")
-if (_EUMDAC_USER is None) or (_EUMDAC_PWD is None):
-    log.info("EUMDAC credentials are incomplete. Corresponding satellite data will be unavailable.")
 
 _EUMDAC_CREDENTIALS = (_EUMDAC_USER, _EUMDAC_PWD)
 
@@ -64,16 +53,86 @@ file_path = os.path.join(
     ".cdsapirc",
 )
 
-if not os.path.exists(file_path):
+
+# ------------------------------------------------------------------------------
+# Status messages
+# ------------------------------------------------------------------------------
+
+_status_sink = None
+
+
+def status(message: str = "") -> None:
+    """
+    Report progress to the user: printed by default, or sent to the function given to
+    `set_status_sink`, for example to display it in a GUI.
+    """
+    if _status_sink is None:
+        print(message)
+    else:
+        _status_sink(message)
+
+
+def set_status_sink(sink: Optional[Callable[[str], Any]]) -> None:
+    """Send `status` messages to `sink(message)`. `None` restores printing."""
+    global _status_sink
+    _status_sink = sink
+
+
+# ------------------------------------------------------------------------------
+# Setup done on first use, not at import: a GUI or a library importing Architeuthis
+# keeps its own logging and files.
+# ------------------------------------------------------------------------------
+
+_credentials_reported = False
+
+
+def setup_logging(level: int = logging.INFO, force: bool = False) -> None:
+    """
+    Log to the console, and report the data providers that lack credentials.
+
+    `load_data` calls this. It leaves logging alone if the application has already
+    configured it, unless `force` is True.
+    """
+    global _credentials_reported
+
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s  %(levelname)-8s  %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        force=force,
+    )
+
+    if _credentials_reported:
+        return
+    _credentials_reported = True
+
+    if _CDS_API_KEY is None:
+        log.info("CDS API key was not specified. Copernicus atmosphere data will be unavailable.")
+    if (_CMEMS_USER is None) or (_CMEMS_PWD is None):
+        log.info("CMEMS credentials are incomplete. Copernicus marine service data will be unavailable.")
+    if (_EUMDAC_USER is None) or (_EUMDAC_PWD is None):
+        log.info("EUMDAC credentials are incomplete. Corresponding satellite data will be unavailable.")
+
+
+def ensure_cdsapirc() -> None:
+    """Write `~/.cdsapirc` if it is missing, from `CDS_API_KEY`. Called before a CDS download."""
+    if os.path.exists(file_path):
+        return
+
+    if _CDS_API_KEY is None:
+        status(f"⚠️ Warning: {file_path} is missing and CDS_API_KEY is not set. The CDS download may fail.")
+        return
+
     content = f"""url: {_CDS_URL}
     key: {_CDS_API_KEY}
     """
     try:
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(content)
-        print(f"Successfully created {file_path}")
+        status(f"Successfully created {file_path}")
     except OSError as e:
-        print(f"Error: Could not write to {file_path}. {e}")
+        status(f"Error: Could not write to {file_path}. {e}")
+
 
 _TOPOGRAPHY_URL = "https://www.ngdc.noaa.gov/thredds/fileServer/global/ETOPO2022/60s/60s_surface_elev_netcdf/ETOPO_2022_v1_60s_N90W180_surface.nc"
 
@@ -114,6 +173,31 @@ def to_timestamp(value: Union[Datetime, float, int]) -> float:
         timestamp = timestamp.tz_localize("UTC")
     return float(timestamp.timestamp())
 
+@dataclass(frozen=True)
+class Domain:
+    """
+    A longitude and latitude box, unpacked with `**domain` wherever `min_lon`, `max_lon`,
+    `min_lat` and `max_lat` are expected.
+
+    Example:
+        >>> north_atlantic = Domain(min_lon=-70., max_lon=5., min_lat=30., max_lat=60.)
+        >>> Topography("topo", **north_atlantic)
+    """
+
+    min_lon: float = -180.
+    max_lon: float = 180.
+    min_lat: float = -90.
+    max_lat: float = 90.
+
+    def keys(self):
+        return ("min_lon", "max_lon", "min_lat", "max_lat")
+
+    def __getitem__(self, key: str) -> float:
+        if key not in self.keys():
+            raise KeyError(key)
+        return getattr(self, key)
+
+
 class ArchiteuthisObject(ABC):
     
     @abstractmethod
@@ -142,12 +226,14 @@ class ArchiteuthisData(ArchiteuthisObject):
         self.interpolators = {}
         
     def load_data(self):
+        setup_logging()
+
         self._locate_data()
         self._download_data()
         
-        print(f"📦 Reading {self.name} data ...")
+        status(f"📦 Reading {self.name} data ...")
         self._read_data()
-        print("✅ Reading completed.")
+        status("✅ Reading completed.")
         
         self._convert_data()
         self._extend_data()
@@ -177,7 +263,7 @@ class ArchiteuthisData(ArchiteuthisObject):
         fac: float = 1.0,
     ):
         if var_key in self.var_keys:
-            print(f"🟦 {var_key} already in {self.name} interpolators.")
+            status(f"🟦 {var_key} already in {self.name} interpolators.")
         else:
             # TODO for backup
             # build interpolator x
@@ -223,7 +309,7 @@ class ArchiteuthisData(ArchiteuthisObject):
             # )
             self.var_keys.add(var_key)
             
-            print(f"➕ Added {var_key}: {var_dim} to {self.name} interpolators.")
+            status(f"➕ Added {var_key}: {var_dim} to {self.name} interpolators.")
     
     def remove_interpolator(
         self,
@@ -232,9 +318,9 @@ class ArchiteuthisData(ArchiteuthisObject):
         if var_key in self.var_keys:
             del self.interpolators[var_key]
             self.var_keys.remove(var_key)
-            print(f"➖ Removed {var_key} from {self.name} interpolators.")
+            status(f"➖ Removed {var_key} from {self.name} interpolators.")
         else:
-            print(f"💔 {var_key} not found in {self.name} interpolators.")
+            status(f"💔 {var_key} not found in {self.name} interpolators.")
             
     def __call__(
         self,
@@ -242,7 +328,7 @@ class ArchiteuthisData(ArchiteuthisObject):
         X,
     ):
         if not self.interpolators:
-            print(f"💔 {self.name} has no interpolators and thus cannot be called.")
+            status(f"💔 {self.name} has no interpolators and thus cannot be called.")
             return None
         
         # TODO test X size. Should be (q, n)

@@ -12,8 +12,10 @@ import xarray as xr
 with contextlib.redirect_stdout(io.StringIO()):
     import herbie  # noqa: F401
 
+from architeuthis.core import RoutingAnalysis
 from architeuthis.forecast import Forecast, Topography
 from architeuthis.vessel import Vessel
+from architeuthis.voyage import Voyage
 
 HOUR = 3600.0
 
@@ -130,3 +132,51 @@ def vessel():
     for key in ("bhp", "max_bhp", "sails_contribution"):
         ship.add_interpolator(key, *POLAR_DIMS)
     return ship
+
+
+@pytest.fixture(scope="session")
+def routing(vessel, atmosphere, wave, current, open_sea):
+    """Compute a real report on the synthetic data. Reports are shared: copy them to change them."""
+
+    def _routing(analysis_options=None, **run_options):
+        analysis = RoutingAnalysis(
+            "analysis",
+            vessel,
+            Voyage(
+                name="voyage",
+                etd=0.0,
+                eta=60.0 * HOUR,
+                departure=np.array([48.0, -35.0]),
+                arrival=np.array([50.0, -15.0]),
+                verbose=False,
+            ),
+            atmosphere,
+            wave,
+            current,
+            open_sea,
+            verbose=False,
+            **(analysis_options or {}),
+        )
+        return analysis.run(
+            max_iter=30,
+            solver_options={
+                "ipopt": {
+                    "acceptable_tol": 1e9,
+                    "linear_solver": "mumps",
+                    "hessian_approximation": "limited-memory",
+                },
+            },
+            **run_options,
+        )
+
+    return _routing
+
+
+@pytest.fixture(scope="session")
+def baseline_report(routing):
+    return routing(solve=False, tags={"model": "ifs", "vessel": "eff45", "member": 0, "init_fac": 0.0})
+
+
+@pytest.fixture(scope="session")
+def optimized_report(routing):
+    return routing(tags={"model": "gfs", "vessel": "eff60", "member": 0, "init_fac": 0.0})

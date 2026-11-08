@@ -15,12 +15,13 @@ from typing import Any, Callable, Optional, Sequence, Union
 
 import numpy as onp
 
-from architeuthis.common import ArchiteuthisObject, Datetime, _HOME, to_timestamp
+from architeuthis.common import ArchiteuthisObject, Datetime, _HOME, status, to_timestamp
 from architeuthis.toolbox.geo_utils import distances
 from architeuthis.route import (
     JsonLibrary,
     Leg,
     Route,
+    RouteSet,
     Waypoint,
     _read_json,
     _write_json,
@@ -121,6 +122,30 @@ class Voyage(ArchiteuthisObject):
 
         super().__init__(name, verbose)
 
+    @classmethod
+    def from_routes(
+        cls,
+        routes: RouteSet,
+        etd: Union[Datetime, float],
+        eta: Union[Datetime, float],
+        name: Optional[str] = None,
+        verbose: bool = True,
+    ) -> "Voyage":
+        """
+        A voyage on the routes of a `RouteSet`: the ortho route is the route of the voyage,
+        and the minus and plus routes are its references, restarted by `from_position`.
+        """
+        return cls(
+            name=name if name is not None else routes.name,
+            etd=etd,
+            eta=eta,
+            verbose=verbose,
+            route=routes.ortho,
+            route_minus=routes.minus,
+            route_ortho=routes.ortho,
+            route_plus=routes.plus,
+        )
+
     @staticmethod
     def _as_path(reference: RouteLike, default: Callable) -> Callable:
         if reference is None:
@@ -178,7 +203,7 @@ class Voyage(ArchiteuthisObject):
             if isinstance(reference, Route):
                 references[f"route_{key}"] = reference.from_position(position, tolerance=tolerance)
             elif reference is not None:
-                print(f"⚠️ Warning: route_{key} is a function and cannot be restarted. Using the route {key} path instead.")
+                status(f"⚠️ Warning: route_{key} is a function and cannot be restarted. Using the route {key} path instead.")
 
         return Voyage(
             name=name if name is not None else f"{self.name}_from_{route.waypoints[0].lat:.2f}_{route.waypoints[0].lon:.2f}",
@@ -340,7 +365,7 @@ class PassagePlan(ArchiteuthisObject):
     def save(self, path: str) -> str:
         _write_json(path, self.to_dict())
         if self.verbose:
-            print(f"✅ Passage plan {self.name} saved to {path}.")
+            status(f"✅ Passage plan {self.name} saved to {path}.")
         return path
 
     @classmethod

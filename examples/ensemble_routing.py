@@ -17,45 +17,19 @@ import matplotlib.dates as mdates
 import cartopy.feature as cfeature
 
 from itertools import product
-from architeuthis.common import _HOME
+from architeuthis import presets
+from architeuthis.common import _HOME, Domain
 from architeuthis.vessel import Vessel
 from architeuthis.toolbox.geo_utils import poly_deviated_route
-from architeuthis.wrappers.json_wrapper import CustomEncoder, custom_decoder
+from architeuthis.toolbox.plot_utils import draw, get_steps, plot_report, set_plot_style
+from architeuthis.report import ReportCollection
 from architeuthis.core import RoutingAnalysis, Voyage, DEFAULT_SOLVER_OPTIONS, exclusion_zones
-from architeuthis.route import Route, RouteLibrary
+from architeuthis.route import Route, RouteLibrary, RouteSet, RouteSetLibrary
 from architeuthis.voyage import PassagePlan, PassagePlanLibrary
 from architeuthis.forecast import DeterministicHerbieForecast, EnsembleHerbieForecast, CopernicusForecast, Topography
 
 
-def draw(reports, barbs=True):
-    
-    from architeuthis.toolbox.plot_utils import plot_route
-
-    # cvtim = pd.to_datetime(self.report["ctim"], unit="s")
-    # vtim = pd.to_datetime(self.report["tim"], unit="s")
-    
-    lons = [r["lon"] for r in reports]
-    lats = [r["lat"] for r in reports]
-    clons = [r["clon"] for r in reports]
-    clats = [r["clat"] for r in reports]
-    tws = [r["tws"] for r in reports]
-    twd = [r["twd"] for r in reports]
-    
-    plot_route(lons, lats, clons, clats, tws, twd, barbs)
-    
-def get_steps(report, quantity):
-    
-    tim = pd.to_datetime(report["tim"], unit="s")
-    
-    X = []
-    Y = []
-    for i in range(len(report["ctim"])):
-        X.append(tim[i])
-        X.append(tim[i+1])
-        Y.append(report[quantity][i])
-        Y.append(report[quantity][i])
-        
-    return np.asarray(X), np.asarray(Y)
+set_plot_style() # figures drawn by hand below use the same style
         
 minimum_longitude=-80.
 maximum_longitude=0.
@@ -69,6 +43,11 @@ maximum_latitude=60.
 
 steps = list(range(0, 145, 3)) + list(range(150, 361, 6))
     
+domain = Domain(
+    min_lon=minimum_longitude, max_lon=maximum_longitude,
+    min_lat=minimum_latitude, max_lat=maximum_latitude,
+)
+
 #%% BUILD VESSEL INTERPOLATORS
 
 def cubic_model(x, p):
@@ -121,10 +100,8 @@ for i, vessel_data in enumerate(vessel_files):
     # vessel = Vessel(f"vessel_{i}", filepath=vessel_data, sfc=196., hotel_load=172., max_power=maxBHP)
     vessel.load_data()
     
-    vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
-    vessel.add_interpolator("max_bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
+    vessel.add_interpolators() # bhp, max_bhp, sails_contribution
     # vessel.add_interpolator("leeway", "stw", "tws", "twa", "hs", "wa", method="linear")
-    vessel.add_interpolator("sails_contribution", "stw", "tws", "twa", "hs", "wa", method="linear")
     
     vessels.append(vessel)
 
@@ -138,26 +115,16 @@ recent = pd.Timestamp("now").floor("1d") #- pd.Timedelta("12h")
 ATMOS = {}
 
 # IFS atmospheric data
-ATMOS["ifs"] = DeterministicHerbieForecast(
-    "wind_ifs", model="ifs", product="oper", regex=r":10[u|v]:|:msl:", fxx=steps,
-    min_lon=minimum_longitude, max_lon=maximum_longitude,
-    min_lat=minimum_latitude, max_lat=maximum_latitude,
-    date=recent
+ATMOS["ifs"] = presets.atmosphere(
+    "ifs", domain, date=recent, fxx=steps, wind_factor=global_corr_fac,
+    regex=r":10[u|v]:|:msl:",
 )
 
 # GFS atmospheric data
-ATMOS["gfs"] = DeterministicHerbieForecast(
-    "wind_gfs", model="gfs", product="pgrb2.0p25", regex=r"(?:U|V)GRD:10 m", fxx=steps,
-    min_lon=minimum_longitude, max_lon=maximum_longitude,
-    min_lat=minimum_latitude, max_lat=maximum_latitude,
-    date=recent
+ATMOS["gfs"] = presets.atmosphere(
+    "gfs", domain, date=recent, fxx=steps, wind_factor=global_corr_fac,
+    regex=r"(?:U|V)GRD:10 m",
 )
-
-for model, atmos in ATMOS.items():
-    atmos.load_data()
-
-    atmos.add_interpolator("u10", "valid_time", "latitude", "longitude", fac=global_corr_fac)
-    atmos.add_interpolator("v10", "valid_time", "latitude", "longitude", fac=global_corr_fac)
 
 # atmos = DeterministicHerbieForecast(
 #     "wind", model="ifs", product="scda", regex=r":10[u|v]:", fxx=steps,
@@ -166,93 +133,24 @@ for model, atmos in ATMOS.items():
 #     # date=mirror_date
 # )
 
-atmos_ens = EnsembleHerbieForecast(
-    "wind_ens", model="ifs", product="enfo", regex=r":10[u|v]:", fxx=steps,
-    min_lon=minimum_longitude, max_lon=maximum_longitude,
-    min_lat=minimum_latitude, max_lat=maximum_latitude,
-    date=recent
-)
-atmos_ens.load_data()
-
-atmos_ens.add_interpolator(
-    "u10", "valid_time", "number", "latitude", "longitude",
-    member_slice=slice(None, None,1),
-    time_slice=slice(None, None,1),
-    latitude_slice=slice(None, None,2),
-    longitude_slice=slice(None, None,2),
-    fac=global_corr_fac
-)
-atmos_ens.add_interpolator(
-    "v10", "valid_time", "number", "latitude", "longitude",
-    member_slice=slice(None, None,1),
-    time_slice=slice(None, None,1),
-    latitude_slice=slice(None, None,2),
-    longitude_slice=slice(None, None,2),
-    fac=global_corr_fac
-)
+atmos_ens = presets.ensemble_atmosphere("ifs", domain, date=recent, fxx=steps, wind_factor=global_corr_fac)
 
 
 #%% BUILD WAVE INTERPOLATORS
 
 # IFS ocean data
-wave = DeterministicHerbieForecast(
-    "wave", model="ifs", product="wave", regex=r":swh:|:mwd:", fxx=steps,
-    min_lon=minimum_longitude, max_lon=maximum_longitude,
-    min_lat=minimum_latitude, max_lat=maximum_latitude,
-    date=recent
-)
-wave.load_data()
+wave = presets.wave("ifs", domain, date=recent, fxx=steps, name="wave")
 
-wave.add_interpolator("swh", "valid_time", "latitude", "longitude")
-wave.add_interpolator("mwd", "valid_time", "latitude", "longitude")
-
-wave_ens = EnsembleHerbieForecast(
-    "wave_ens", model="ifs", product="waef", regex=r":swh:|:mwd:", fxx=steps,
-    min_lon=minimum_longitude, max_lon=maximum_longitude,
-    min_lat=minimum_latitude, max_lat=maximum_latitude,
-    date=recent
-)
-wave_ens.load_data()
-
-wave_ens.add_interpolator(
-    "swh", "valid_time", "number", "latitude", "longitude",
-    member_slice=slice(None, None,1),
-    time_slice=slice(None, None,1),
-    latitude_slice=slice(None, None,2),
-    longitude_slice=slice(None, None,2),
-)
-wave_ens.add_interpolator(
-    "mwd", "valid_time", "number", "latitude", "longitude",
-    member_slice=slice(None, None,1),
-    time_slice=slice(None, None,1),
-    latitude_slice=slice(None, None,2),
-    longitude_slice=slice(None, None,2),
-)
+wave_ens = presets.ensemble_wave("ifs", domain, date=recent, fxx=steps)
 
 
 #%% BUILD CURRENT INTERPOLATORS
 
 # Mercator SMOC data
-current = CopernicusForecast(
-    "current", dataset="cmems_mod_glo_phy_anfc_0.083deg_PT1H-m", variables=["uo", "vo"],
-    min_lon=minimum_longitude, max_lon=maximum_longitude,
-    min_lat=minimum_latitude, max_lat=maximum_latitude,
+current = presets.current_mercator(
+    domain,
     date=recent,
     # date=mirror_date, end=mirror_end
-)
-current.load_data()
-
-current.add_interpolator(
-    "uo", "valid_time", "latitude", "longitude",
-    latitude_slice=slice(None, None, 3),
-    longitude_slice=slice(None, None, 3),
-    time_slice=slice(None, None, 3),
-)
-current.add_interpolator(
-    "vo", "valid_time", "latitude", "longitude",
-    latitude_slice=slice(None, None, 3),
-    longitude_slice=slice(None, None, 3),
-    time_slice=slice(None, None, 3),
 )
 
 
@@ -273,20 +171,7 @@ current.add_interpolator(
 #     var_key="z"
 # )
 
-topo = Topography(
-    "topo", depth_offset=0., z_margin=0.,
-    min_lon=minimum_longitude, max_lon=maximum_longitude,
-    min_lat=minimum_latitude, max_lat=maximum_latitude,
-    exclusion_zones=exclusion_zones,
-)
-topo.load_data()
-
-topo.add_interpolator(
-    "distance_to_iso0",
-    "latitude_topography_earth2014_egm2008_lmax_2048_lmax_2048",
-    "longitude_topography_earth2014_egm2008_lmax_2048_lmax_2048",
-    var_key="z"
-)
+topo = presets.topography(domain, exclusion_zones=exclusion_zones)
 
 #%%
 
@@ -384,6 +269,10 @@ routes = RouteLibrary()
 for route in (routeN, routeO, routeS):
     routes.save(route, overwrite=True)
 
+# The same three routes as one entry: RouteSetLibrary().load("ensemble") (~/data/route_sets/).
+route_set = RouteSet("ensemble", ortho=routeO, minus=routeS, plus=routeN)
+RouteSetLibrary().save(route_set, overwrite=True)
+
 
 ax = plt.axes(projection=ccrs.PlateCarree())
 
@@ -426,13 +315,13 @@ plt.show()
 
 # Routing after the start of the leg: the voyage restarts from this position, reached at
 # this time, and keeps its ETA (Voyage.from_position). None routes the whole leg.
-rewind = None
-# rewind = ([43.612500, -11.603333], "2026-06-01T06:30") # pos 01/06/2026 06h30 UTC
+restart = None
+# restart = ([43.612500, -11.603333], "2026-06-01T06:30") # pos 01/06/2026 06h30 UTC
 
 
 solver_options = DEFAULT_SOLVER_OPTIONS
 
-reports = []
+reports = ReportCollection()
 plans = [] # PassagePlan of each routing (timed positions)
 
 
@@ -470,19 +359,9 @@ for solve, tf, model, vessel, fac, m in (
                 
     etd, eta = tf
     
-    voyage = Voyage(
-        name="voyage",
-        etd = etd,
-        eta = eta,
-        departure = departure,
-        arrival = arrival,
-        route=routeO,
-        route_minus=routeS,
-        route_ortho=routeO,
-        route_plus=routeN,
-    )
-    if rewind is not None:
-        voyage = voyage.from_position(*rewind)
+    voyage = Voyage.from_routes(route_set, etd=etd, eta=eta, name="voyage")
+    if restart is not None:
+        voyage = voyage.from_position(*restart)
 
     analysis = RoutingAnalysis(
         "analysis",
@@ -520,17 +399,13 @@ for solve, tf, model, vessel, fac, m in (
         },
         # solve=0,
         solve=solve,
-    ) # TODO report should probably be a class of its own
-    
-    report["solve"] = solve
-    report["model"] = model
-    report["vessel"] = vessel.path[79:-3]
-    report["member"] = m
+        tags={"solve": solve, "model": model, "member": m}, # the vessel label is added by default
+    )
 
     # Passage plan of this routing, stored after the loop and evaluated in a later cell.
     plan = analysis.passage_plan
-    plan.name = f"{plan.name}_{model}{vessel.path[79:-3]}_fac{fac:+.2f}_m{m}_{'solved' if solve else 'ref'}"
-    plan.metadata |= {"model": model, "member": m, "solve": solve, "vessel_tag": vessel.path[79:-3]}
+    plan.name = f"{plan.name}_{model}{vessel.label}_fac{fac:+.2f}_m{m}_{'solved' if solve else 'ref'}"
+    plan.metadata |= {"model": model, "member": m, "solve": solve, "vessel_tag": vessel.label}
     plans.append(plan)
     
     ctime = pd.to_datetime(report["ctim"], unit="s")
@@ -586,8 +461,7 @@ json_file = f"output_{now.strftime(r'%Y-%m-%d')}.json"
 
 
 # WRITE
-with open(os.path.join(_HOME, "routes", json_file), "w") as f:
-    json.dump(cv_reports, f, cls=CustomEncoder, indent=2)
+ReportCollection(cv_reports).save(os.path.join(_HOME, "routes", json_file))
 
 # Passage plans, reloadable with PassagePlanLibrary().load(name) (~/data/passage_plans/)
 plan_library = PassagePlanLibrary()
@@ -600,7 +474,7 @@ for plan in plans:
 # positions and times fixed (no optimization): how the plan optimized for one member
 # fares in the others. len(plans) x len(members) evaluations, without IPOPT.
 # A stored plan can be evaluated the same way: PassagePlanLibrary().load(name).
-vessels_by_tag = {v.path[79:-3]: v for v in vessels}
+vessels_by_tag = {v.label: v for v in vessels}
 
 evaluations = []
 for plan, member in product(
@@ -610,7 +484,7 @@ for plan, member in product(
     evaluation = RoutingAnalysis(
         "evaluation",
         vessels_by_tag[plan.metadata["vessel_tag"]],
-        plan.voyage(),
+        None, # no voyage needed: the plan gives the positions and times
         atmos_ens,
         wave_ens,
         current,
@@ -618,10 +492,7 @@ for plan, member in product(
         atmosphere_member=member,
         wave_member=member,
         verbose=False,
-    ).evaluate(plan)
-    evaluation["plan"] = plan.name
-    evaluation["plan_member"] = plan.metadata["member"]
-    evaluation["member"] = member
+    ).evaluate(plan, tags={"plan_member": plan.metadata["member"], "member": member})
     evaluations.append(evaluation)
 
 eval_table = pd.DataFrame(evaluations).pivot_table(
@@ -1224,5 +1095,4 @@ plt.show()
 #%%    
 # json_file = "output_ensemble.json"
     
-with open(os.path.join(_HOME, "routes", json_file), "r") as f:
-    reports = json.load(f, object_hook=custom_decoder)
+reports = ReportCollection.load(os.path.join(_HOME, "routes", json_file))

@@ -14,7 +14,7 @@ import zipfile
 import xarray as xr
 
 from typing import Union
-from architeuthis.common import ArchiteuthisSpatialData, Datetime, _EUMDAC_CREDENTIALS, _HOME
+from architeuthis.common import ArchiteuthisSpatialData, Datetime, _EUMDAC_CREDENTIALS, _HOME, status
 
 
 class ArchiteuthisSatelliteData(ArchiteuthisSpatialData):
@@ -91,7 +91,7 @@ class EUMETSATData(ArchiteuthisSatelliteData):
         zipfiles=[]
         
         
-        print(f'🛰️ Download of {len(self.products)} product(s)...')
+        status(f'🛰️ Download of {len(self.products)} product(s)...')
         for product in tqdm.tqdm(self.products):
             with product.open() as fsrc, \
                     open(os.path.join(self.output_path, fsrc.name), mode='wb') as fdst:
@@ -102,11 +102,11 @@ class EUMETSATData(ArchiteuthisSatelliteData):
                     # print(f'Download of product {product} finished.')
                 # else:
                 #     print("Already in memory")
-        print('✅ Downloads completed.')
+        status('✅ Downloads completed.')
 
     
         # Unzip products
-        print('📦 Unzipping downloaded files...')
+        status('📦 Unzipping downloaded files...')
         nc_files = []
 
         for zip_path in zipfiles:
@@ -133,7 +133,7 @@ class EUMETSATData(ArchiteuthisSatelliteData):
             # # Delete ZIP only if extraction succeeded
             # if extracted_nc:
             #     os.remove(zip_path)
-        print('✅ Finished unzipping.')
+        status('✅ Finished unzipping.')
         
         self.path = nc_files
         

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from architeuthis.vessel import Vessel
+from architeuthis.vessel import POLAR_KEYS, Vessel
 
 POLAR_DIMS = ("stw", "tws", "twa", "hs", "wa")
 POLAR_POWER_COEFFICIENT = 1.2  # as built by the `polar` fixture
@@ -58,3 +58,40 @@ def test_interpolator_accepts_a_custom_key_and_slices(polar):
     # stw = 5 stays on the 5-knot subgrid, so the cubic law holds exactly there.
     query = np.array([[5.0, 0.0, 0.0, 0.0, 0.0]])
     assert float(vessel("power", query)) == pytest.approx(POLAR_POWER_COEFFICIENT * 5.0**3)
+
+
+@pytest.mark.parametrize(
+    "path, label",
+    [
+        ("C:/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff45.nc", "eff45"),
+        ("polars/ship_eff100.nc", "eff100"),
+        ("polars/ship.nc", "ship"),
+        ("ship_eff45_old.nc", "ship_eff45_old"),
+    ],
+)
+def test_label_comes_from_the_polar_file(path, label):
+    assert Vessel("ship", filepath=path).label == label
+
+
+def test_label_can_be_given():
+    assert Vessel("ship", filepath="polars/ship_eff45.nc", label="hybrid").label == "hybrid"
+
+
+def test_add_interpolators_adds_what_routing_requires(polar):
+    vessel = Vessel("ship", filepath="polar.nc", verbose=False)
+    vessel.data = polar
+
+    vessel.add_interpolators()
+
+    assert set(vessel.interpolators) == set(POLAR_KEYS)
+    query = np.array([[5.0, 0.0, 0.0, 0.0, 0.0]])
+    assert float(vessel("bhp", query)) == pytest.approx(POLAR_POWER_COEFFICIENT * 5.0**3)
+
+
+def test_add_interpolators_takes_its_variables(polar):
+    vessel = Vessel("ship", filepath="polar.nc", verbose=False)
+    vessel.data = polar
+
+    vessel.add_interpolators(keys=["bhp"])
+
+    assert set(vessel.interpolators) == {"bhp"}
