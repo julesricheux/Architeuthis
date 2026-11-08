@@ -116,6 +116,8 @@ reports.save()       # for the viewer
 plot_report(report)  # one A4 page: speed, sails, power, waves and wind against time
 ```
 
+Architeuthis is the tool used for the onshore weather routing support for [Neoliner Origin](https://www.neoline.eu/)
+
 ---
 
 ## 🚢 Your Vessel
@@ -247,10 +249,6 @@ print(eumdac.AccessToken((os.environ["EUMDAC_USER"], os.environ["EUMDAC_PWD"])).
 
 ---
 
-## Citation & Acknowledgment
-
-If Architeuthis played an important role in your work, please [tell me about it](https://github.com/julesricheux/Architeuthis/issues)!
-
 ### 🙏 Credits
 
 Architeuthis stands on the work of others, with our thanks:
@@ -263,11 +261,7 @@ Architeuthis stands on the work of others, with our thanks:
 
 ## Contributing
 
-We welcome contributions! Here's how you can help:
-
 Please report bugs or suggest features via [issues](https://github.com/julesricheux/Architeuthis/issues) and **star this repository!** ⭐
-
-The tests need no network access or credentials:
 
 ## ⚖️ License
 

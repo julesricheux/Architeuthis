@@ -24,7 +24,7 @@ from architeuthis.voyage import Voyage
 
 #%% SETTINGS
 
-POLAR_FILE = os.path.expanduser("~/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_6m_eff60.nc")
+POLAR_FILE = os.path.expanduser(r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_28up_28down_7buff_5m_eff1.nc")
 
 DOMAIN = Domain(min_lon=-61., max_lon=-53., min_lat=44., max_lat=48.)
 STEPS = list(range(0, 49)) # lead times, in hours
