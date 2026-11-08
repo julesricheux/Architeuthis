@@ -3,7 +3,7 @@
 
 <div align="center">
 
-# Architeuthis: Weather Routing for Motor and Hybrid Vessels 🦑
+# Architeuthis: Weather Routing for Wind-powered Hybrid Vessels 🦑
 
 **Minimize fuel on a fixed schedule, with real forecasts and your own vessel model.**
 
@@ -15,7 +15,7 @@
 [![Downloads](https://static.pepy.tech/badge/architeuthis)](https://pepy.tech/projects/architeuthis)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-## 📚 [User Guide](docs/user_guide.md) | 🖼️ [Examples](examples/README.md) | ❔ [Issues](https://github.com/julesricheux/Architeuthis/issues)
+## 📚 [User Guide](docs/user_guide.md) | ❔ [Issues](https://github.com/julesricheux/Architeuthis/issues)
 
 <!-- (Badges) -->
 
@@ -41,9 +41,9 @@ An open-source marine weather and decision-making framework for hybrid sailing s
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
-### Installation
+### ⚙️ Installation
 
 Architeuthis needs Python 3.11 or later.
 
@@ -70,7 +70,7 @@ conda env create -f environment.yaml
 
 The environment is named `py313-architeuthis`. The package then needs no installation: run everything from the repository root.
 
-### Simple Example
+### 💡 Simple Example
 
 This example routes a vessel across the North Atlantic with recent ECMWF forecasts. It needs no credentials, only a polar file for your vessel (see [Your Vessel](#your-vessel)).
 
@@ -118,7 +118,7 @@ plot_report(report)  # one A4 page: speed, sails, power, waves and wind against 
 
 ---
 
-## Your Vessel
+## 🚢 Your Vessel
 
 Architeuthis does not include a vessel model. You provide a NetCDF performance table, which can come from a velocity prediction program, sea trials or a simpler model. A motor vessel and a hybrid vessel only differ by the content of this table: for a motor vessel, `sails_contribution` is zero.
 
@@ -142,27 +142,7 @@ Each variable has the five dimensions below, in this order:
 
 ---
 
-## Supported Data Sources
-
-| Source | Data | In Architeuthis | Credentials |
-| --- | --- | --- | --- |
-| **[ECMWF IFS](https://www.ecmwf.int/en/forecasts/datasets/open-data)** | Wind, gust, waves | `presets.atmosphere("ifs")`, `presets.wave("ifs")` | None |
-| **ECMWF IFS ensemble** | Wind, waves, for each member | `presets.ensemble_atmosphere()`, `presets.ensemble_wave()` | None |
-| **[NOAA GFS](https://www.noaa.gov/information-technology/open-data-dissemination)** | Wind, gust, waves | `presets.atmosphere("gfs")`, `presets.wave("gfs")` | None |
-| **[ECCC HRDPS](https://eccc-msc.github.io/open-data/msc-data/nwp_hrdps/readme_hrdps-datamart_en/)** | High-resolution wind, Canada | `presets.hrdps_atmosphere()` ⚠️ | None |
-| **[Mercator SMOC](https://marine.copernicus.eu/)** | Currents | `presets.current_mercator()` | `CMEMS_USER`, `CMEMS_PWD` |
-| **[ETOPO 2022](https://www.ncei.noaa.gov/products/etopo-global-relief-model)** | Land and bathymetry | `presets.topography()` | None |
-| **[International Ice Patrol](https://www.navcen.uscg.gov/international-ice-patrol-overview)** | Iceberg limit | `exclusion.default_exclusion_zones()` | None |
-| **[ERA5](https://cds.climate.copernicus.eu/)** | Reanalysis | `forecast.CDSForecast` | `CDS_API_KEY` |
-| **[EUMETSAT](https://www.eumetsat.int/)** | ASCAT and Poseidon observations, to validate forecasts | `satellite.ASCATData`, `satellite.PoseidonData` | `EUMDAC_USER`, `EUMDAC_PWD` |
-
-⚠️ HRDPS wind speeds are right, but its wind direction is not reliable yet: its components are not rotated from the model's rotated grid, which is about 45° off around Saint-Pierre-et-Miquelon.
-
-Downloads are cached under `~/data/`. Another source can be added by subclassing `ArchiteuthisData`. Each provider's own terms of use apply to its data.
-
----
-
-## Credentials
+## 🔑 Credentials
 
 IFS, GFS, HRDPS, ETOPO and the iceberg limit need no account. The other providers are free but need one, and only when you use them:
 
@@ -172,7 +152,7 @@ IFS, GFS, HRDPS, ETOPO and the iceberg limit need no account. The other provider
 | Reanalysis, `forecast.CDSForecast` | [Climate Data Store](#climate-data-store-era5) | `CDS_API_KEY` |
 | Satellite observations, `satellite.ASCATData`, `satellite.PoseidonData` | [EUMETSAT](#eumetsat-satellite-observations) | `EUMDAC_USER`, `EUMDAC_PWD` |
 
-### Setting an Environment Variable
+### > Setting an Environment Variable
 
 Architeuthis reads these variables **when it is imported**, so set them first, then open a new terminal or restart Spyder. The examples below use `CMEMS_USER`: do the same for each variable.
 
@@ -256,128 +236,22 @@ print(eumdac.AccessToken((os.environ["EUMDAC_USER"], os.environ["EUMDAC_PWD"])).
 
 `eumdac set-credentials` configures the `eumdac` command only, so Architeuthis still needs the variables.
 
-### If a Download Fails
-
-| Message | Likely cause |
-| --- | --- |
-| `Missing/incomplete configuration file` | `CDS_API_KEY` is not set, or was set after the import or the start of the program. |
-| `401 Client Error: Unauthorized` from `api.eumetsat.int` | `EUMDAC_USER` and `EUMDAC_PWD` are missing, or hold your login rather than the Consumer Key and Secret. |
-| A prompt for a Copernicus Marine username, or `'NoneType' object has no attribute 'file_path'` | No Copernicus Marine credentials were found. |
-| `CouldNotConnectToAuthenticationSystem` | The Copernicus Marine username or password is wrong, or the connection to its server failed. |
-| A variable is set, but reported as missing | The terminal or Spyder was started before you set it: restart it. |
-
 ---
 
-## Core Capabilities
-
-```mermaid
-  graph TD;
-      d1[(IFS / GFS)] -.-> A
-      d2[(Ensembles)] -.-> A
-      d3[(Mercator currents)] -.-> A
-      d4[(ETOPO + exclusion zones)] -.-> A
-      d5[(Vessel polar)] -.-> A
-      A((Architeuthis))
-      A --- run[".run"]
-      A --- evaluate[".evaluate"]
-      run --> R[RoutingReport]
-      evaluate --> R
-      run --> P[PassagePlan]
-      P --> evaluate
-      R --> o1[A4 report and figures]
-      R --> o2[GPX and tables]
-      R --> o3[Interactive viewer]
-
-      style A fill:#d8c89d,stroke:#0c3576,stroke-width:4px,color:#000000
-```
-
-### The Routing Problem
+### 🗺️ The Routing Problem
 
 - **Objective:** total fuel, `sum((bhp + hotel_load) * dt * sfc) / 1e6`, in tonnes.
 - **Fixed:** departure and arrival, ETD and ETA. The schedule is a requirement and the speed is an outcome.
 - **Variables:** the positions along the route, and optionally a factor that blends the reference route towards two alternatives.
 - **Constraints:** by default, brake power below `max_power` and every position in navigable water. Your own constraints can replace them.
 
-### Python API
-
-```python
-# Optimize, or evaluate the reference route at constant speed as a baseline
-report = analysis.run()
-baseline = analysis.run(solve=False, solver_options={"ipopt": {"linear_solver": "mumps"}})
-
-# Test a plan, positions fixed, with another vessel, forecast or ensemble member
-other_model = RoutingAnalysis("gfs", vessel, voyage, gfs_atmosphere, gfs_wave, current, topography)
-evaluation = other_model.evaluate(analysis.passage_plan)
-
-# Add entries to a report, and compare several reports
-report = analysis.run(tags={"study": "winter"})
-reports.select(vessel="eff45", solve=1).summary()
-
-# Store what you want to reuse
-RouteLibrary().save(route)               # ~/data/route_library/
-PassagePlanLibrary().save(analysis.passage_plan)  # ~/data/passage_plans/
-ExclusionZoneLibrary().save(zone)        # ~/data/exclusion_zones/
-
-# Add your own constraints
-analysis.run(constraints=lambda ctx: [ctx["max_bhp"] < 3000., ctx["z"] < -5.])
-```
-
-### Interactive Viewer
-
-From a source checkout, start the Dash viewer from the `architeuthis/` folder. It displays the latest routes saved with `reports.save()`, over forecast fields and exclusion zones, on port 8052.
-
-```bash
-cd architeuthis
-```
-```bash
-python ui.py
-```
-
-### Good to Know
-
-Architeuthis is a decision-support tool: its routes do not replace the judgment of the crew, or the checks of a navigation system.
-
-- **Check the result:** failures return the last iterate, so read `report["status"]` (1 solved, 2 failed) and `max(report["z"])` (positive means land or an exclusion zone).
-- **Past the forecast horizon,** fields fade to zero and read as calm conditions, so schedules should stay within the lead times.
-- **Not modelled:** leeway. Wind and wave angles are relative to the course over ground.
-- **Not supported:** routes that cross the antimeridian.
-- **Windows:** with casadi 3.7, `run(solve=False)` with the default solver options crashes, so pass `linear_solver: mumps` as above.
-- **Iceberg limit:** offline, with no earlier download, routing runs without it and gives a warning.
-
----
-
-## Documentation & Help
-
-📘 **[User Guide](docs/user_guide.md)** - Data sources, reports, every figure and its options, exclusion zones and the viewer
-
-🖼️ **[Examples](examples/README.md)** - One script per use, with its settings at the top
-
-| To learn | Read |
-| --- | --- |
-| A first routing, in the fewest lines | [`post_leg_rewind.py`](examples/post_leg_rewind.py) |
-| Every step of a study | [`simple_routing.py`](examples/simple_routing.py) |
-| Stored routes and passage plans, restarting from a position at sea | [`passage_planning.py`](examples/passage_planning.py) |
-| Testing a plan with another model | [`ifs_route_tested_with_gfs.py`](examples/ifs_route_tested_with_gfs.py) |
-| Several starting routes, and the spread of an ensemble along a route | [`long_term_routing.py`](examples/long_term_routing.py) |
-| One optimization per ensemble member | [`ensemble_routing.py`](examples/ensemble_routing.py) |
-| High-resolution wind on a short leg | [`short_term_routing.py`](examples/short_term_routing.py) |
-| Comparing forecasts with satellite observations | [`comparison_ascat_models.py`](examples/comparison_ascat_models.py) |
-
-🗓️ **[Changelog](CHANGELOG.md)** and **[Roadmap](ROADMAP.md)** - What changed and what is planned
-
-🚑 **[Report Issues](https://github.com/julesricheux/Architeuthis/issues)** - Found a bug? Let us know
-
 ---
 
 ## Citation & Acknowledgment
 
-If Architeuthis played an important role in your work, please [tell us about it](https://github.com/julesricheux/Architeuthis/issues)!
+If Architeuthis played an important role in your work, please [tell me about it](https://github.com/julesricheux/Architeuthis/issues)!
 
-### Suggested Citation
-
-> Richeux, J. (YEAR). Architeuthis: Marine weather and decision-making framework for hybrid sailing ships (Version x.y.z) [Computer software]. https://github.com/julesricheux/Architeuthis
-
-### Credits
+### 🙏 Credits
 
 Architeuthis stands on the work of others, with our thanks:
 
@@ -387,75 +261,14 @@ Architeuthis stands on the work of others, with our thanks:
 - **[Copernicus Marine Toolbox](https://github.com/mercator-ocean/copernicus-marine-toolbox)**, **[xarray](https://github.com/pydata/xarray)**, **[Cartopy](https://github.com/SciTools/cartopy)**, **[Dash](https://github.com/plotly/dash)** and the other dependencies listed in [`pyproject.toml`](pyproject.toml).
 - The forecast, ocean, relief and ice data of the providers listed under [Supported Data Sources](#supported-data-sources).
 
----
-
-## License
-
-Architeuthis is free software, distributed under the [GNU General Public License v3](LICENSE). You may use, study, share and modify it under the terms of this license, and it comes without any warranty.
-
-Code adapted from AeroSandbox stays under its original MIT license:
-
-<details>
-<summary>AeroSandbox MIT license</summary>
-
-```text
-MIT License
-
-Copyright (c) 2019-2023 Peter Sharpe
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
-</details>
-
----
-
 ## Contributing
 
 We welcome contributions! Here's how you can help:
 
-- ⭐ Star this repository
-- 🐛 Report bugs or suggest features via [Issues](https://github.com/julesricheux/Architeuthis/issues)
-- 🧪 Try it on your own vessel and share what you find
-- 📝 Improve the documentation and the examples
-- 💻 Submit pull requests: work from `develop`, and target `main`
+Please report bugs or suggest features via [issues](https://github.com/julesricheux/Architeuthis/issues) and **star this repository!** ⭐
 
 The tests need no network access or credentials:
 
-```bash
-python -m pip install -e ".[test]"
-```
-```bash
-python -m pytest
-```
+## ⚖️ License
 
----
-
-## Alternative Tools
-
-- **[WeatherRoutingTool](https://github.com/52North/WeatherRoutingTool)** by 52°North - Another open-source Python tool for ship weather routing
-- **[OpenCPN Weather Routing plugin](https://github.com/rgleason/weather_routing_pi)** - Weather routing inside a chart plotter, popular for sailing
-
----
-
-## About the Author
-
-**Thanks for using Architeuthis, and fair winds!** 🦑
-
-Jules Richeux - [GitHub](https://github.com/julesricheux)
+[MIT](LICENSE).
