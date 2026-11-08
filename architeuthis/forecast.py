@@ -21,7 +21,7 @@ import architeuthis.numpy as np
 from herbie.misc import ANSI
 from matplotlib.path import Path
 from typing import Sequence, Union
-from herbie import HerbieLatest, FastHerbie
+from herbie import Herbie, HerbieLatest, FastHerbie
 from scipy.ndimage import distance_transform_edt
 from architeuthis.toolbox.string_formatting import get_request_id
 from architeuthis.common import ArchiteuthisSpatialData, Datetime, _CMEMS_USER, _CMEMS_PWD, _HOME, _TOPOGRAPHY_URL, ensure_cdsapirc, status
@@ -374,6 +374,159 @@ class DeterministicHerbieForecast(HerbieForecast):
         )
         
         
+def _regrid_to_lat_lon(data: xr.Dataset, crs, latitude, longitude, skip: int = 5) -> xr.Dataset:
+    """
+    A dataset on a projected `x`, `y` grid, with 2D `latitude` and `longitude` coordinates,
+    interpolated on a regular latitude and longitude grid.
+
+    Args:
+        data: The dataset, with `x` and `y` dimensions.
+        crs: Coordinate reference system of the projected grid.
+        latitude, longitude: The target coordinates.
+        skip: Keeps one point out of `skip` of the 2D coordinates to find the extent of the grid.
+    """
+    import pyproj
+
+    # Geographic lat/lon towards the projected grid
+    transformer = pyproj.Transformer.from_crs(pyproj.CRS("EPSG:4326"), crs, always_xy=True)
+
+    x_raw, y_raw = transformer.transform(
+        data.longitude[::skip, ::skip],
+        data.latitude[::skip, ::skip],
+    )
+
+    lon2d, lat2d = np.meshgrid(longitude, latitude)
+    x_target, y_target = transformer.transform(lon2d, lat2d)
+
+    # Target points in grid indices
+    x_target = (x_target - x_raw.min()) / (x_raw.max() - x_raw.min()) * data.sizes["x"]
+    y_target = (y_target - y_raw.min()) / (y_raw.max() - y_raw.min()) * data.sizes["y"]
+
+    coords = {"lat_new": latitude, "lon_new": longitude}
+    regridded = data.interp(
+        x=xr.DataArray(x_target, dims=("lat_new", "lon_new"), coords=coords),
+        y=xr.DataArray(y_target, dims=("lat_new", "lon_new"), coords=coords),
+        method="linear",
+    )
+
+    return (
+        regridded
+        .drop_vars(["latitude", "longitude"], errors="ignore")
+        .rename({"lat_new": "latitude", "lon_new": "longitude"})
+        .transpose("valid_time", "latitude", "longitude")
+    )
+
+
+class HRDPSForecast(DeterministicHerbieForecast):
+    """
+    The 10 m wind of HRDPS continental, regridded from its rotated grid on a regular latitude
+    and longitude grid, as routing requires.
+
+    The positions and the wind speed are right, but not yet the wind direction: the components
+    of the files are relative to the rotated grid (`uvRelativeToGrid` = 1) and are not rotated
+    here, about 45 deg off around Saint-Pierre-et-Miquelon.
+
+    Args:
+        name: Name of the forecast.
+        date: Forecast base time. The latest run by default.
+        fxx: Lead times, in hours.
+        min_lon, max_lon, min_lat, max_lat: Area to keep, inside the area of the model.
+        resolution: Step of the regular grid, in degrees. About 2.5 km by default.
+    """
+
+    VARIABLES = ("UGRD", "VGRD")
+    LEVEL = "AGL-10m"
+
+    def __init__(
+        self,
+        name: str = "wind_hrdps",
+        date: Union[Datetime, list[Datetime]] = None,
+        fxx: Union[int, list[int]] = tuple(range(0, 49)),
+        min_lon: float = -180.,
+        max_lon: float = 180.,
+        min_lat: float = -90.,
+        max_lat: float = 90.,
+        resolution: float = 0.0225,
+        time_unit: str = "s",
+        verbose: bool = True,
+    ):
+        self.resolution = resolution
+
+        super().__init__(
+            name,
+            model="hrdps",
+            product="continental",
+            date=date,
+            fxx=list(fxx),
+            min_lon=min_lon,
+            max_lon=max_lon,
+            min_lat=min_lat,
+            max_lat=max_lat,
+            time_unit=time_unit,
+            verbose=verbose,
+        )
+
+    def _find_latest(self):
+        # HerbieLatest only looks on AWS and NOMADS by default, and HRDPS is only on the MSC Datamart.
+        return HerbieLatest(
+            model=self.model,
+            product=self.product,
+            priority=["msc"],
+            variable="TMP",
+            level="AGL-2m",
+        ).valid_date
+
+    def _locate_data(self):
+        pass
+
+    def _download_data(self):
+        status(f"⬇️ Downloading {self.name} data ...")
+        self.path = [
+            FastHerbie(
+                [self.f00],
+                model=self.model,
+                product=self.product,
+                fxx=self.fxx,
+                variable=variable,
+                level=self.LEVEL,
+            ).download()
+            for variable in self.VARIABLES
+        ]
+        status("✅ Download completed.")
+
+    def _read_data(self):
+        data = xr.merge([
+            xr.open_mfdataset(
+                paths,
+                engine="cfgrib",
+                decode_timedelta=False,
+                decode_times=True,
+                combine="nested",
+                concat_dim=["valid_time"],
+                coords="different",
+                compat="no_conflicts",
+            )
+            for paths in self.path
+        ])
+
+        # The files of the wind do not give the projection of the grid: it is read from another field.
+        crs = Herbie(
+            self.f00,
+            model=self.model,
+            product=self.product,
+            fxx=0,
+            variable="TMP",
+            level="AGL-2m",
+        ).xarray().herbie.crs
+
+        self.data = _regrid_to_lat_lon(
+            data,
+            crs,
+            np.arange(self.min_lat, self.max_lat + self.resolution, self.resolution),
+            np.arange(self.min_lon, self.max_lon + self.resolution, self.resolution),
+        )
+
+
 class EnsembleHerbieForecast(HerbieForecast):
     def __init__(
         self,

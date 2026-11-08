@@ -276,6 +276,42 @@ def draw(reports, barbs=True, sails_threshold=None, ax=None, save_as=None, show=
     return plot_route(lons, lats, clons, clats, tws, twd, barbs, **kwargs)
 
 
+def plot_route_set(route_set, n=50, ax=None, save_as=None, show=True):
+    """
+    The reference routes of a `RouteSet` on a map, to check them before routing: ortho in solid
+    black, minus in dashed red and plus in dashed green.
+
+    Args:
+        route_set: The `RouteSet`.
+        n: Number of points drawn per route.
+        ax: Cartopy axes to draw in. By default, a new figure.
+        save_as: File to write. Its extension gives the format, PDF if it has none.
+        show: Whether to call `plt.show()`. Pass False in a GUI.
+
+    Returns:
+        The figure.
+    """
+    s = onp.linspace(0., 1., n)
+    styles = (
+        (route_set.ortho, {"color": "black"}),
+        (route_set.minus, {"color": "red", "ls": "--"}),
+        (route_set.plus, {"color": "green", "ls": "--"}),
+    )
+
+    with plot_style():
+        if ax is None:
+            ax = plt.figure().add_subplot(projection=ccrs.PlateCarree())
+
+        add_map_background(ax)
+
+        for route, style in styles:
+            lat, lon = route(s)
+            ax.plot(lon, lat, lw=1, label=route.name, transform=ccrs.PlateCarree(), **style)
+        ax.legend(loc="lower left", fontsize=8)
+
+        return _finish(ax.figure, save_as, show)
+
+
 #%% A4 PAGE OF A ROUTE
 
 # Panels of the A4 page, from top to bottom, in the order of `fig.axes`.
@@ -580,6 +616,84 @@ def plot_quantiles(reports, variable, unit="", prefix="", title=None, ylim=None,
         return _finish(fig, save_as, show)
 
 
+def _members_along_route(report, forecast, key):
+    """A field of an ensemble forecast at the segment centers of a route: (members, segments)."""
+    ctim, clat, clon = (onp.ravel(report[entry]) for entry in ("ctim", "clat", "clon"))
+    members = forecast.data["number"].values
+
+    query = onp.column_stack([
+        onp.repeat(ctim, members.size),
+        onp.tile(members, ctim.size),
+        onp.repeat(clat, members.size),
+        onp.repeat(clon, members.size),
+    ])
+
+    return onp.asarray(forecast(key, query), dtype=float).reshape((members.size, ctim.size), order="F")
+
+
+def plot_ensemble_along_route(report, atmosphere, wave, ylim=None, figsize=(10, 8), save_as=None, show=True):
+    """
+    The weather spread along one route, whatever the member it was optimized for, on three
+    stacked panels: BHP with load fluctuations, then SWH and TWS with their quantile bands over
+    the members of an ensemble.
+
+    Args:
+        report: The report of the route.
+        atmosphere: Ensemble forecast with the `u10` and `v10` interpolators, for example
+            `presets.ensemble_atmosphere`.
+        wave: Ensemble forecast with the `swh` interpolator, for example `presets.ensemble_wave`.
+        ylim: Vertical limits by panel name, `bhp`, `swh` or `tws`, for example
+            `{"bhp": (0., 2700.), "swh": (0., 7.), "tws": (0., 40.)}`. They start at 0 by default.
+        figsize: Size in inches.
+        save_as: File to write. Its extension gives the format, PDF if it has none.
+        show: Whether to call `plt.show()`. Pass False in a GUI.
+
+    Returns:
+        The figure, with the panels in `fig.axes` from top to bottom.
+    """
+    ctim = _times(report["ctim"])
+    tim = _times(report["tim"])
+
+    u10 = _members_along_route(report, atmosphere, "u10")
+    v10 = _members_along_route(report, atmosphere, "v10")
+    weather = {
+        "swh": (_members_along_route(report, wave, "swh"), "SWH / m"),
+        "tws": (onp.sqrt(u10**2. + v10**2.) * 3600. / 1852., "TWS / kts"),
+    }
+
+    avg_bhp = onp.asarray(report["avg_bhp"], dtype=float)
+    max_bhp = onp.asarray(report["max_bhp"], dtype=float)
+    osc = max_bhp - avg_bhp
+
+    with plot_style():
+        fig, axes = plt.subplots(nrows=3, ncols=1, figsize=figsize, sharex=True)
+        panels = dict(zip(("bhp", "swh", "tws"), axes))
+
+        C0, C1, C2 = (to_rgba(f"C{i}") for i in range(3))
+        panels["bhp"].plot(ctim, avg_bhp, color=C0, label="Average BHP")
+        panels["bhp"].plot(ctim, max_bhp, color=C1, ls="--", label="Load fluctuations")
+        panels["bhp"].plot(ctim, avg_bhp - osc, color=C2, ls="--")
+        panels["bhp"].fill_between(ctim, avg_bhp - osc, avg_bhp + osc, alpha=0.1, color=C0)
+        panels["bhp"].set_ylabel("BHP / kW")
+        panels["bhp"].set_xlim((tim[0], tim[-1]))
+        panels["bhp"].legend(loc="upper right")
+
+        for key, (values, label) in weather.items():
+            quantiles = {q: onp.quantile(values, q, axis=0) for q in (0.01, 0.05, 0.25, 0.50, 0.75, 0.95, 0.99)}
+            _quantile_bands(panels[key], ctim, quantiles, color=C0)
+            panels[key].set_ylabel(label)
+            panels[key].legend(loc="upper right")
+
+        for key, panel in panels.items():
+            panel.set_ylim((ylim or {}).get(key, (0., None)))
+
+        axes[-1].set_xlabel("Time (UTC)")
+        plt.setp(axes[-1].xaxis.get_majorticklabels(), rotation=45)
+
+        fig.tight_layout()
+        return _finish(fig, save_as, show)
+
+
 def plot_fuel_quantiles(reports, daily=False, converged_only=True, figsize=(8, 4), save_as=None, show=True):
     """
     Spread of the fuel over reports, against ETA: bands between the quantiles 1-99 %, 5-95 %
@@ -644,13 +758,14 @@ def plot_convergence(reports, figsize=(8, 4), save_as=None, show=True):
         return _finish(fig, save_as, show)
 
 
-def plot_fuel_distribution(groups, figsize=(8, 3), save_as=None, show=True):
+def plot_fuel_distribution(groups, horizontal=False, figsize=(8, 3), save_as=None, show=True):
     """
     Fuel distributions side by side, as violins with box plots.
 
     Args:
         groups: Reports by label, for example
             `{"Eff. 45%": reports.select(vessel="eff45"), "Eff. 60%": reports.select(vessel="eff60")}`.
+        horizontal: Whether the fuel runs along the horizontal axis.
         figsize: Size in inches.
         save_as: File to write. Its extension gives the format, PDF if it has none.
         show: Whether to call `plt.show()`. Pass False in a GUI.
@@ -662,13 +777,20 @@ def plot_fuel_distribution(groups, figsize=(8, 3), save_as=None, show=True):
 
     with plot_style():
         fig, ax = plt.subplots(figsize=figsize)
-        ax.violinplot(data, showextrema=False)
-        boxes = ax.boxplot(data, patch_artist=True)
+        orientation = {"orientation": "horizontal"} if horizontal else {}
+        ax.violinplot(data, showextrema=False, **orientation)
+        boxes = ax.boxplot(data, patch_artist=True, **orientation)
         for box in boxes["boxes"]:
             box.set(facecolor=_BAND_COLOR)
-        ax.set_xticks(list(range(1, len(data)+1)))
-        ax.set_xticklabels(list(groups.keys()))
-        ax.set_ylabel("Fuel / tons")
+        positions = list(range(1, len(data)+1))
+        if horizontal:
+            ax.set_yticks(positions)
+            ax.set_yticklabels(list(groups.keys()))
+            ax.set_xlabel("Fuel / tons")
+        else:
+            ax.set_xticks(positions)
+            ax.set_xticklabels(list(groups.keys()))
+            ax.set_ylabel("Fuel / tons")
         return _finish(fig, save_as, show)
 
 

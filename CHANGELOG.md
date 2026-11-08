@@ -82,7 +82,13 @@ and this project follows Semantic Versioning https://semver.org
 - `Vessel.label`, taken from the polar file name by default, and `Vessel.add_interpolators`.
 - `RoutingAnalysis.run` takes `tags`, entries added to the report, and `callback`, called at each iteration. Reports have `solve`, `model`, `vessel` and `member` by default.
 - `common.status` and `set_status_sink`: messages can be sent to a GUI instead of being printed.
-- Examples use these additions, with the same results on synthetic data. `examples/short_term_routing.py` is unchanged.
+- Examples rewritten around these additions, with their settings at the top and one line per figure, and `examples/README.md` as an index with a skeleton of a routing script. Compared with the former scripts on synthetic data, the results are the same except for the real gust in `passage_planning` and `ifs_route_tested_with_gfs`, and the reference distance and `model` tag of `short_term_routing`. `examples/reference_data.py` keeps what the former commented-out lines held: positions, past schedules, polars, fits and constraint variants.
+- `forecast.HRDPSForecast` and `presets.hrdps_atmosphere`: the HRDPS regridding of `examples/short_term_routing.py`, now reusable. Its wind direction is not reliable yet: the components are relative to the rotated grid and are not rotated.
+- `presets.vessel` and `presets.calm_current`.
+- `RoutingReport.summary` and `ReportCollection.summary`: the key figures of reports. A slice of a `ReportCollection` is a `ReportCollection`.
+- `plot_utils.plot_route_set` and `plot_ensemble_along_route`. `plot_fuel_distribution` takes `horizontal`.
+- Tests running every example from start to finish on synthetic data (`tests/domain/test_examples.py`).
+- New README for engineers who route motor and hybrid vessels, with credits and license. The reference of the former README moved word for word to `docs/user_guide.md`.
 
 ### Changed
 - Importing Architeuthis has no side effect: no network access, logging setup or file writing. The iceberg limit is fetched on first use, logging is set up by `load_data` (`common.setup_logging`) and `~/.cdsapirc` is written before a CDS download (`common.ensure_cdsapirc`). Importing `plot_utils` no longer changes the matplotlib style: call `set_plot_style()` for your own figures.
@@ -95,3 +101,5 @@ and this project follows Semantic Versioning https://semver.org
 - `~/.cdsapirc` is no longer written with `key: None`.
 - `EnsembleHerbieForecast.add_interpolator` argument names now match their position: `var_dim, time_dim, member_dim, latitude_dim, longitude_dim`. The positional order is unchanged.
 - `RoutingAnalysis` no longer shares its default `options` dict between instances.
+- `pyproject.toml` declared the MIT license, while the project is distributed under GPL v3 as in `LICENSE`.
+- The latest HRDPS run could not be found, because `HerbieLatest` only looks on AWS and NOMADS by default. `HRDPSForecast` looks on the MSC Datamart.

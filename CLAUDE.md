@@ -13,7 +13,8 @@ Open-source marine weather and decision-making framework for hybrid sailing ship
 - **Maritime abbreviations** are the accepted exception to descriptive names; see the glossary below.
 - **Console output:** user-facing status goes through `common.status` with the existing emoji vocabulary (📦 ✅ ⬇️ ➕ ➖ 🟦 💔 ⚠️). It prints by default, and `set_status_sink` sends it elsewhere, to a GUI for example.
 - **No side effect at import:** no network access, logging setup or file writing when a module is imported. Fetch on first use, as `icebergs` does.
-- **Project docs:** record notable changes in `CHANGELOG.md` (Keep a Changelog, SemVer) and planned work in `ROADMAP.md`.
+- **Project docs:** `README.md` is the short presentation for users, `docs/user_guide.md` the reference of the public API. Record notable changes in `CHANGELOG.md` (Keep a Changelog, SemVer) and planned work in `ROADMAP.md`.
+- **License:** the project is GPL v3 (`LICENSE`, `pyproject.toml`, README). The vendored code keeps its MIT license.
 - **Vendored code:** `numpy/`, `optimization/` and `modeling/` are adapted from [AeroSandbox](https://github.com/peterdsharpe/AeroSandbox) 4.2.9 (MIT). Keep the attribution headers and make domain changes outside these packages where possible. Docstrings there still say `asb.`.
 
 ## Environment and commands
@@ -50,7 +51,7 @@ architeuthis.modeling      Fitted/interpolated models, black_box (AeroSandbox)
 common.py      ArchiteuthisObject > ArchiteuthisData > ArchiteuthisSpatialData
         |       load_data() pipeline, add_interpolator(), __call__(), credentials
         +-- vessel.py     Vessel: polars NetCDF + hotel_load, sfc, max_power
-        +-- forecast.py   Topography; Forecast > Herbie (deterministic, ensemble),
+        +-- forecast.py   Topography; Forecast > Herbie (deterministic, HRDPS, ensemble),
         |                 Copernicus (CMEMS), CDS (ERA5)
         +-- satellite.py  EUMETSATData > ASCATData, PoseidonData (validation)
         |
@@ -66,11 +67,12 @@ presets.py     Ready-made forecasts and topography. Import the module: `from arc
         |
 ui.py          Dash/Leaflet viewer of forecast fields and saved route reports
 
-toolbox/       geo_utils (route geometry), plot_utils (figures, documented in the README),
+toolbox/       geo_utils (route geometry), plot_utils (figures, documented in docs/user_guide.md),
                json_utils (report JSON codec), inspect_tools, string_formatting...
 wrappers/      json_wrapper (GeoJSON), leaflet_wrapper (zone layers), legacy provider wrappers
 examples/      simple_routing, long_term_routing, ensemble_routing, post_leg_rewind,
-               passage_planning, ifs_route_tested_with_gfs, short_term_routing, comparison_ascat_models
+               passage_planning, ifs_route_tested_with_gfs, short_term_routing, comparison_ascat_models;
+               reference_data holds values to copy (positions, past schedules, polars) and runs nothing
 tests/         numpy, optimization, modeling (AeroSandbox), domain (Architeuthis)
 ```
 
@@ -168,7 +170,8 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 - `Route.from_position` restarts with a straight first segment. `Voyage.from_position` cannot restart `route_minus`/`route_plus` given as functions and falls back to the spread paths; pass Routes to keep them.
 - `Vessel.hotel_load` and `Vessel.sfc` are wrapped into callables, while `Vessel.max_power` stays a raw value. `sfc` defaults to 0, which makes the objective zero.
 - `EnsembleHerbieForecast.add_interpolator` takes `var_dim, time_dim, member_dim, latitude_dim, longitude_dim`, the order in which `RoutingAnalysis` queries it.
-- Report consumers (`json_wrapper.route_to_geojson`, `ui.py`) also need `init_fac`, which `run` does not produce: callers give it in `tags`. `ReportCollection.save` writes to `~/data/routes/` by default.
+- Report consumers (`json_wrapper.route_to_geojson`, `ui.py`) also need `init_fac`, which `run` records but `evaluate` does not. `ReportCollection.save` writes to `~/data/routes/` by default.
+- `HRDPSForecast` wind speeds are right but its directions are not: the files have `uvRelativeToGrid` = 1 and the components are not rotated from the rotated grid, about 45 deg off around Saint-Pierre-et-Miquelon compared with GFS. `HerbieLatest` only looks on `aws` and `nomads` by default, so a model elsewhere needs `priority`.
 - `core.exclusion_zones` and `core.berg_zone` are computed each time they are read (module `__getattr__`), so `from architeuthis.core import exclusion_zones` fetches the iceberg limit at that line.
 
 ## Testing
@@ -178,7 +181,7 @@ Tests live in `tests/`, configured in `pyproject.toml`. `.github/workflows/tests
 CI installs the latest dependencies, so it can differ from a local environment. In particular, casadi 3.7 and 3.8 do not always converge the same way, so keep test objectives reasonably well conditioned.
 
 - **`tests/numpy`, `tests/optimization`, `tests/modeling`:** vendored from AeroSandbox, including the `import architeuthis as asb` style.
-- **`tests/domain`:** Architeuthis code. `test_route.py` covers routes, voyages and passage plans offline. `test_routing.py` runs `RoutingAnalysis.run` and `evaluate` end to end, marked `integration`. `test_plots.py` draws every figure from real reports with Agg. `test_ui.py` runs the real `ui.py` without its server, with forecasts and downloads replaced. `test_import_side_effects.py` checks imports in a new interpreter with the network cut off.
+- **`tests/domain`:** Architeuthis code. `test_route.py` covers routes, voyages and passage plans offline. `test_routing.py` runs `RoutingAnalysis.run` and `evaluate` end to end, marked `integration`. `test_plots.py` draws every figure from real reports with Agg. `test_ui.py` runs the real `ui.py` without its server, with forecasts and downloads replaced. `test_examples.py` runs every example and the quick start of the README from start to finish on synthetic data, so a new example must be added to its `WINDOWS`. `test_readme.py` checks the README and its links, and `test_plots.py` checks that `docs/user_guide.md` gives the signature of each figure. `test_import_side_effects.py` checks imports in a new interpreter with the network cut off.
 - **Expected failure:** `test_black_box_nonsmooth_function` is `xfail` because IPOPT can fail on the kink of `abs()`.
 
 Rules for new tests:
@@ -193,7 +196,6 @@ Not covered: the real IIP server (`test_icebergs.py` replaces `requests.get`), `
 
 ## Known inconsistencies
 
-- `examples/short_term_routing.py` is an operational script rather than a clean example: hard-coded local polar paths, bare `from geo_utils import` and `from plot_utils import` that need `toolbox/` on the path, and legacy Earth2014 dimension names for `Topography`, which now needs `"lat"` and `"lon"`.
 - Versions disagree: `pyproject.toml` 0.1.4, `__init__.py` 0.1.3.
 - `tall` and `wide` are duplicated in `common.py` and `core.py`, and `core.py` defines an unused `sigmoid`, `transform` and `added_wave_load`. `ROADMAP.md` plans to move these helpers into `numpy`.
 - `raise(ValueError, "...")` appears in `forecast.py` and `ui.py`. In Python 3 this raises `TypeError` rather than the intended error.

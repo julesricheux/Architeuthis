@@ -14,8 +14,11 @@ from architeuthis.forecast import (
     CopernicusForecast,
     DeterministicHerbieForecast,
     EnsembleHerbieForecast,
+    HRDPSForecast,
     Topography,
 )
+
+from .conftest import uniform_forecast
 
 DATE = dt.datetime(2025, 1, 15)
 DOMAIN = Domain(min_lon=-5.0, max_lon=5.0, min_lat=40.0, max_lat=50.0)
@@ -320,3 +323,38 @@ def routing_inputs():
     with patched_load(Topography, topography_data()):
         topography = presets.topography(DOMAIN, exclusion_zones=[], verbose=False)
     return atmosphere, wave, current, topography
+
+
+def test_vessel_is_ready_for_routing(polar, tmp_path):
+    path = tmp_path / "polar_eff45.nc"
+    polar.to_netcdf(path)
+
+    vessel = presets.vessel(str(path), sfc=220.0, hotel_load=194.0, max_power=4100.0)
+
+    assert vessel.label == "eff45"
+    assert vessel.max_power == 4100.0
+    assert vessel.sfc(0.0) == 220.0
+    assert {"bhp", "max_bhp", "sails_contribution"} <= set(vessel.interpolators)
+
+
+def test_calm_current_has_no_current_on_the_grid_of_a_forecast():
+    forecast = uniform_forecast("wind", u10=5.0, v10=2.0)
+
+    current = presets.calm_current(forecast)
+
+    assert current.data["uo"].shape == forecast.data["u10"].shape
+    assert float(current("uo", np.array([[3600.0, 45.0, -20.0]]))) == 0.0
+    assert float(current("vo", np.array([[3600.0, 45.0, -20.0]]))) == 0.0
+
+
+def test_hrdps_atmosphere_has_the_interpolators_of_routing():
+    with patched_load(HRDPSForecast, uniform_forecast("wind", u10=5.0, v10=2.0).data):
+        forecast = presets.hrdps_atmosphere(
+            Domain(min_lon=-61.0, max_lon=-53.0, min_lat=44.0, max_lat=48.0),
+            date="2026-02-24",
+            wind_factor=2.0,
+        )
+
+    assert forecast.model == "hrdps"
+    assert float(forecast("u10", np.array([[3600.0, 45.0, -20.0]]))) == pytest.approx(10.0)
+    assert float(forecast("v10", np.array([[3600.0, 45.0, -20.0]]))) == pytest.approx(4.0)

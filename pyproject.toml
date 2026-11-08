@@ -8,7 +8,7 @@ version = "0.1.4"  # must match the release tag: v0.1.4
 description = "Meteorological, oceanographic, and geospatial processing library for Architeuthis."
 readme = "README.md"
 requires-python = ">=3.11"
-license = "MIT"
+license = "GPL-3.0-only"
 license-files = ["LICENSE"]
 authors = [
     { name = "Jules Richeux", email = "j.richeux@neoline.eu" }

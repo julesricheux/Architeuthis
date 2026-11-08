@@ -1,13 +1,17 @@
 import datetime as dt
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
+import pyproj
 import pytest
 import xarray as xr
 
 import architeuthis.forecast as forecast_module
 from architeuthis.forecast import (
+    HRDPSForecast,
+    _regrid_to_lat_lon,
     CDSForecast,
     CopernicusForecast,
     DeterministicHerbieForecast,
@@ -287,3 +291,105 @@ def test_cds_conversion_renames_time_without_padding():
     assert forecast.data["latitude"].values.tolist() == [0.0, 10.0]
     assert forecast.data["valid_time"].size == 2
     assert forecast.data["valid_time"].dtype == float
+
+
+def projected_wind():
+    """A wind on a Mercator grid without coordinates, as HRDPS is on its rotated grid."""
+    longitude = np.linspace(-70.0, -45.0, 60)
+    latitude = np.linspace(40.0, 52.0, 50)
+    grid_longitude, grid_latitude = np.meshgrid(longitude, latitude)
+    time = pd.date_range("2026-02-24", periods=3, freq="1h")
+    return xr.Dataset(
+        {"u10": (("valid_time", "y", "x"), np.stack([grid_longitude + 100.0 * hour for hour in range(3)]))},
+        coords={
+            "valid_time": time,
+            "latitude": (("y", "x"), grid_latitude),
+            "longitude": (("y", "x"), grid_longitude),
+        },
+    )
+
+
+def test_regridding_gives_a_regular_grid_in_the_order_of_forecasts():
+    latitude, longitude = np.arange(44.0, 48.0, 0.5), np.arange(-61.0, -53.0, 0.5)
+
+    regridded = _regrid_to_lat_lon(projected_wind(), pyproj.CRS("EPSG:3857"), latitude, longitude, skip=1)
+
+    assert regridded["u10"].dims == ("valid_time", "latitude", "longitude")
+    assert regridded["latitude"].values.tolist() == latitude.tolist()
+    assert regridded["longitude"].ndim == 1
+    # The field is the longitude: it comes back within a grid step, 25 deg / 60 points.
+    assert regridded["u10"].isel(valid_time=0).values == pytest.approx(
+        np.broadcast_to(longitude, (latitude.size, longitude.size)), abs=1.0
+    )
+    assert regridded["u10"].isel(valid_time=2).mean().item() == pytest.approx(regridded["u10"].isel(valid_time=0).mean().item() + 200.0)
+
+
+def test_hrdps_looks_for_its_latest_run_on_the_source_that_has_it():
+    # The default of HerbieLatest is AWS and NOMADS, where HRDPS never is.
+    herbie_latest = MagicMock(return_value=MagicMock(valid_date=pd.Timestamp("2026-02-24")))
+
+    with patch("architeuthis.forecast.HerbieLatest", herbie_latest):
+        forecast = HRDPSForecast("wind", fxx=[0], verbose=False)
+
+    assert forecast.f00 == pd.Timestamp("2026-02-24")
+    assert herbie_latest.call_args.kwargs["priority"] == ["msc"]
+
+
+def test_hrdps_downloads_both_wind_components_of_its_run():
+    calls = []
+
+    class FakeFastHerbie:
+        def __init__(self, dates, **kwargs):
+            calls.append((dates, kwargs))
+
+        def download(self):
+            return [f"file_{calls[-1][1]['variable']}"]
+
+    forecast = HRDPSForecast("wind", date="2026-02-24", fxx=[0, 1], verbose=False)
+
+    with patch("architeuthis.forecast.FastHerbie", FakeFastHerbie):
+        forecast._download_data()
+
+    assert [kwargs["variable"] for _, kwargs in calls] == ["UGRD", "VGRD"]
+    assert all(kwargs["level"] == "AGL-10m" and kwargs["model"] == "hrdps" and kwargs["fxx"] == [0, 1] for _, kwargs in calls)
+    assert forecast.path == [["file_UGRD"], ["file_VGRD"]]
+
+
+def test_hrdps_reads_and_regrids_with_the_projection_of_its_run():
+    wind = projected_wind()
+
+    class FakeHerbie:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def xarray(self):
+            return SimpleNamespace(herbie=SimpleNamespace(crs=pyproj.CRS("EPSG:3857")))
+
+    forecast = HRDPSForecast(
+        "wind",
+        date="2026-02-24",
+        fxx=[0],
+        min_lon=-61.0,
+        max_lon=-53.0,
+        min_lat=44.0,
+        max_lat=48.0,
+        resolution=0.5,
+        verbose=False,
+    )
+    forecast.path = [["u"], ["v"]]
+
+    with (
+        patch("architeuthis.forecast.Herbie", FakeHerbie),
+        patch("architeuthis.forecast.xr.open_mfdataset", lambda paths, **kwargs: wind if paths == ["u"] else wind.rename(u10="v10")),
+    ):
+        forecast._read_data()
+
+    forecast._convert_data()
+    forecast._extend_data()
+
+    assert {"u10", "v10"} <= set(forecast.data)
+    assert forecast.data["latitude"].values[0] == 44.0
+    assert forecast.data["longitude"].values[0] == -61.0
+    # Epoch seconds, and two steps past the horizon where the field fades to zero.
+    assert forecast.data["valid_time"].values[0] == pd.Timestamp("2026-02-24").timestamp()
+    assert forecast.data["valid_time"].size == 3 + 2

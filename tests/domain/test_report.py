@@ -358,3 +358,30 @@ def test_vessel_label_with_or_without_efficiency_prefix(json_wrapper, baseline_r
     report = dict(baseline_report) | {"vessel": label}
 
     json_wrapper.route_to_geojson(report, valid_time=0)
+
+
+def test_summary_has_one_row_per_report_with_the_key_figures(baseline_report, optimized_report):
+    summary = ReportCollection([baseline_report, optimized_report]).summary()
+
+    assert len(summary) == 2
+    assert summary["fuel"].tolist() == pytest.approx([baseline_report["fuel"], optimized_report["fuel"]])
+    assert summary["fuel_per_day"][0] == pytest.approx(baseline_report["fuel"] / baseline_report["transit_time"] * 24.0)
+    assert summary["extra_dist_%"][0] == pytest.approx((baseline_report["dist_rel"] - 1.0) * 100.0)
+    assert summary["stw"][0] == pytest.approx(np.mean(baseline_report["stw"]))
+    assert summary["max_z"][0] == pytest.approx(np.max(baseline_report["z"]))
+    assert summary["solve"].tolist() == [baseline_report["solve"], optimized_report["solve"]]
+    assert summary["etd"][0] == pd.to_datetime(baseline_report["etd"], unit="s")
+
+
+def test_summary_accepts_an_evaluation_without_init_fac(optimized_report):
+    evaluation = dict(optimized_report, init_fac=None)
+
+    assert ReportCollection([evaluation]).summary()["init_fac"].isna().all()
+
+
+def test_slice_of_a_collection_is_a_collection(baseline_report, optimized_report):
+    reports = ReportCollection([baseline_report, optimized_report])
+
+    assert isinstance(reports[1:], ReportCollection)
+    assert reports[1:][0] is reports[1]
+    assert isinstance(reports[0], RoutingReport)

@@ -15,13 +15,15 @@ Import this module with its name, as `wave` is a usual variable name in scripts:
     >>> wave = presets.wave("gfs", domain, date=recent, fxx=steps)
     >>> current = presets.current_mercator(domain, date=recent)
     >>> topography = presets.topography(domain)
+    >>> vessel = presets.vessel("polar_eff60.nc", sfc=220., hotel_load=194., max_power=4100.)
 """
 
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence, Union
 
 import numpy as onp
+import xarray as xr
 
 from architeuthis.common import Domain, GUST_DEFAULT_RATIO, status
 from architeuthis.exclusion import default_exclusion_zones
@@ -29,8 +31,11 @@ from architeuthis.forecast import (
     CopernicusForecast,
     DeterministicHerbieForecast,
     EnsembleHerbieForecast,
+    Forecast,
+    HRDPSForecast,
     Topography,
 )
+from architeuthis.vessel import Vessel
 
 
 # gust: name of the gust variable once read, renamed to the `gust` interpolator.
@@ -142,6 +147,44 @@ def atmosphere(
     forecast.add_interpolator("v10", *_TIME_LAT_LON, fac=wind_factor)
     if gust_var in forecast.data:
         forecast.add_interpolator(gust_var, *_TIME_LAT_LON, var_key="gust", fac=wind_factor)
+
+    return forecast
+
+
+def hrdps_atmosphere(
+    domain: Domain = Domain(),
+    date=None,
+    fxx: Sequence[int] = tuple(range(0, 49)),
+    wind_factor: float = 1.0,
+    resolution: float = 0.0225,
+    name: str = "wind_hrdps",
+    verbose: bool = True,
+) -> HRDPSForecast:
+    """
+    HRDPS continental wind on a regular grid, with the `u10` and `v10` interpolators. Its domain
+    must stay inside the area of the model, which covers Canada and its approaches.
+
+    Args:
+        domain: Area to keep.
+        date: Forecast base time. The latest run by default.
+        fxx: Lead times, in hours.
+        wind_factor: Correction applied to the wind.
+        resolution: Step of the regular grid, in degrees. About 2.5 km by default.
+        name: Name of the forecast.
+        verbose: Whether the forecast reports its progress.
+    """
+    forecast = HRDPSForecast(
+        name,
+        date=date,
+        fxx=list(fxx),
+        resolution=resolution,
+        verbose=verbose,
+        **domain,
+    )
+    forecast.load_data()
+
+    forecast.add_interpolator("u10", *_TIME_LAT_LON, fac=wind_factor)
+    forecast.add_interpolator("v10", *_TIME_LAT_LON, fac=wind_factor)
 
     return forecast
 
@@ -315,6 +358,66 @@ def current_mercator(
         )
 
     return forecast
+
+
+def calm_current(like: Forecast, name: str = "calm_current", verbose: bool = True) -> Forecast:
+    """
+    No current, on the grid of another forecast, with the `uo` and `vo` interpolators: to route
+    without CMEMS credentials.
+
+    Args:
+        like: A deterministic forecast, whose `u10` gives the grid.
+        name: Name of the forecast.
+        verbose: Whether the forecast reports its progress.
+    """
+    calm = xr.zeros_like(like.data["u10"])
+
+    forecast = Forecast(name, date=None, fxx=None, verbose=verbose)
+    forecast.data = xr.Dataset({"uo": calm, "vo": calm})
+
+    for variable in ("uo", "vo"):
+        forecast.add_interpolator(variable, *_TIME_LAT_LON)
+
+    return forecast
+
+
+def vessel(
+    filepath: str,
+    sfc: Union[Callable, float] = 0.,
+    hotel_load: Union[Callable, float] = 0.,
+    max_power: float = 1e12,
+    name: str = "vessel",
+    label: Optional[str] = None,
+    verbose: bool = True,
+) -> Vessel:
+    """
+    A vessel from its polar file, with the `bhp`, `max_bhp` and `sails_contribution` interpolators.
+
+    Args:
+        filepath: Polar NetCDF file.
+        sfc: Specific fuel consumption, in g/kWh, or a function of the power. It must be given
+            for a routing: the objective is zero without it.
+        hotel_load: Hotel load, in kW, or a function of the power.
+        max_power: Maximum brake power, in kW.
+        name: Name of the vessel.
+        label: Short identifier in reports and in the UI. By default, from the file name:
+            `eff45` for `..._eff45.nc`.
+        verbose: Whether the vessel reports its progress.
+    """
+    boat = Vessel(
+        name,
+        filepath=filepath,
+        sfc=sfc,
+        hotel_load=hotel_load,
+        max_power=max_power,
+        label=label,
+        verbose=verbose,
+    )
+    boat.load_data()
+
+    boat.add_interpolators()
+
+    return boat
 
 
 def topography(

@@ -87,6 +87,26 @@ class RoutingReport(dict):
     def eta_time(self) -> pd.Timestamp:
         return pd.to_datetime(self["eta"], unit="s")
 
+    def summary(self) -> dict:
+        """The key figures of this route, as a row of `ReportCollection.summary`."""
+        return {
+            "etd": self.etd_time,
+            "eta": self.eta_time,
+            "model": self.get("model"),
+            "vessel": self.get("vessel"),
+            "member": self.get("member"),
+            "init_fac": self.get("init_fac"),
+            "solve": self.get("solve"),
+            "status": self.get("status"),
+            "dist": self["dist"],
+            "extra_dist_%": (self["dist_rel"] - 1.) * 100.,
+            "stw": float(onp.mean(self["stw"])),
+            "sog": float(onp.mean(self["sog"])),
+            "fuel": self["fuel"],
+            "fuel_per_day": self["fuel"] / self["transit_time"] * 24.,
+            "max_z": float(onp.max(self["z"])),
+        }
+
     def steps(self, quantity: str):
         """Times and values of a per-segment quantity, to plot it as steps. See `plot_utils.get_steps`."""
         from architeuthis.toolbox.plot_utils import get_steps
@@ -151,6 +171,10 @@ class ReportCollection(list):
     def append(self, report: dict) -> None:
         super().append(report if isinstance(report, RoutingReport) else RoutingReport(report))
 
+    def __getitem__(self, index):
+        selected = super().__getitem__(index)
+        return ReportCollection(selected) if isinstance(index, slice) else selected
+
     def select(self, slicing: Optional[Callable[[dict], bool]] = None, **criteria) -> "ReportCollection":
         """
         The reports for which `slicing(report)` is true and whose entries equal `criteria`.
@@ -169,6 +193,14 @@ class ReportCollection(list):
     def frame(self) -> pd.DataFrame:
         """One row per report, one column per entry."""
         return pd.DataFrame(self)
+
+    def summary(self) -> pd.DataFrame:
+        """
+        One row of key figures per report: schedule, tags, `status`, distance in nm and above
+        the reference in %, mean `stw` and `sog` in kt, `fuel` in t, in t per day, and `max_z`
+        in nm, positive when the route touches land or an exclusion zone.
+        """
+        return pd.DataFrame([report.summary() for report in self])
 
     def table(self, variables: Sequence[str] = DEFAULT_TABLE_VARIABLES, mask=None) -> pd.DataFrame:
         """A table of the routes against time. See `routes_to_table`."""

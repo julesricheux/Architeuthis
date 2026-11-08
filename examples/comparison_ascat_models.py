@@ -1,26 +1,36 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Feb  2 02:10:58 2026
+Validate the wind of IFS and GFS against ASCAT satellite observations.
 
-@author: jules
+The forecasts of a past run are interpolated at the time and position of each observation, and
+the errors on speed and direction are summed up in a table. No vessel and no routing here: this
+is how to query a forecast directly, as `forecast("u10", points)`.
+
+Needs EUMETSAT credentials (EUMDAC_USER, EUMDAC_PWD). IFS and GFS need none. Run from the
+repository root.
 """
 
 import datetime
 
 import numpy as np
 import pandas as pd
-import xarray as xr
 from scipy.stats import pearsonr
 
+from architeuthis import presets
+from architeuthis.common import Domain
 from architeuthis.satellite import ASCATData
-from architeuthis.forecast import DeterministicHerbieForecast
 
-#%%
+DOMAIN = Domain(min_lon=-80., max_lon=0., min_lat=30., max_lat=60.)
+LOOK_WIDTH = 48 # hours of observations, until now
+FORECAST_PRIOR = 48 # age of the forecast at the end of the observations, in hours
+# LOOK_WIDTH = 96
+# FORECAST_PRIOR = 192 # mid future, from +4 d to +8 d
+
+MODEL_REGEX = {"ifs": r":10[u|v]:", "gfs": r"(?:U|V)GRD:10 m"}
+
 
 def circular_diff_deg(model, obs):
-    """
-    Minimal signed angular difference model - obs in degrees
-    """
+    """Minimal signed angular difference model - obs in degrees."""
     return np.degrees(
         np.arctan2(
             np.sin(np.radians(model - obs)),
@@ -50,11 +60,55 @@ def stats_direction(model, obs):
     )
 
 
-def build_validation_report(
-        ref_f00,
-        ascat_query,
-        results,
-):
+def observations(ascat, forecast):
+    """Time, position, wind speed (m/s) and direction (deg) of the valid observations in a forecast."""
+    tim, lat, lon, speed, direction = (
+        ascat.data[key].values.ravel(order="C")
+        for key in ("valid_time", "lat", "lon", "wind_speed", "wind_dir")
+    )
+    mask = (
+        ~(np.isnan(lat) | np.isnan(lon) | np.isnan(tim) | np.isnan(speed) | np.isnan(direction))
+        & (tim > forecast.data["valid_time"].values.min())
+    )
+    return np.vstack([tim[mask], lat[mask], lon[mask]]).T, speed[mask], direction[mask]
+
+
+def compare_ascat_vs_models(domain, look_width=24, forecast_prior=24):
+    """Statistics of each model against the observations of the last `look_width` hours."""
+    end_look = datetime.datetime.now()
+    start_look = end_look - datetime.timedelta(hours=look_width)
+
+    ref_f00 = pd.Timestamp(end_look - datetime.timedelta(hours=forecast_prior)).floor("d")
+    steps = list(range(forecast_prior - look_width, forecast_prior, 6))
+
+    ascat = ASCATData("ascat", start=start_look, end=end_look, **domain)
+    ascat.load_data()
+
+    results = {}
+
+    for model, regex in MODEL_REGEX.items():
+        forecast = presets.atmosphere(model, domain, date=ref_f00, fxx=steps, regex=regex, name=model)
+
+        # Wind speed from u and v, to interpolate it directly
+        forecast.data = forecast.data.herbie.with_wind()
+        forecast.add_interpolator("si10", "valid_time", "latitude", "longitude")
+
+        ascat_query, speed_obs, direction_obs = observations(ascat, forecast)
+
+        speed_model = np.array(forecast("si10", ascat_query)).ravel()
+        u_model = np.array(forecast("u10", ascat_query)).ravel()
+        v_model = np.array(forecast("v10", ascat_query)).ravel()
+        direction_model = (np.degrees(np.arctan2(u_model, v_model)) + 360.) % 360.
+
+        results[model] = dict(
+            speed=stats_linear(speed_model, speed_obs),
+            direction=stats_direction(direction_model, direction_obs),
+        )
+
+    return ref_f00, ascat_query, results
+
+
+def build_validation_report(ref_f00, ascat_query, results):
     report = f"""
 ====================================================================
              ASCAT – Atmospheric Model Wind Validation
@@ -63,7 +117,7 @@ def build_validation_report(
 • Models runtime:  {ref_f00.strftime('%Y/%m/%d %Hh%M UTC')}
 • Earliest ASCAT:  {pd.to_datetime(ascat_query[:, 0].min(), unit='s').strftime('%Y/%m/%d %Hh%M UTC')}
 • Latest ASCAT:    {pd.to_datetime(ascat_query[:, 0].max(), unit='s').strftime('%Y/%m/%d %Hh%M UTC')}
-    
+
 """
 
     header = (
@@ -112,152 +166,10 @@ Notes:
 ====================================================================
 """
 
-    # print(report)
     return report
 
 
-def compare_ascat_vs_models(
-        minimum_longitude: float,
-        maximum_longitude: float,
-        minimum_latitude: float,
-        maximum_latitude: float,
-        
-        look_width: int = 24, # hours
-        forecast_prior: int = 24, # hours
-    ):
+if __name__ == "__main__":
+    ref_f00, ascat_query, results = compare_ascat_vs_models(DOMAIN, LOOK_WIDTH, FORECAST_PRIOR)
 
-    end_look = datetime.datetime.now()
-    start_look = end_look - datetime.timedelta(hours=look_width)
-
-
-    
-    # ref_f00 = pd.Timestamp("2026-02-03 12:00:00")
-    ref_f00 = pd.Timestamp(end_look - datetime.timedelta(hours=forecast_prior)).floor("d")
-    
-    # steps = list(range(0, 24, 3))
-    steps = list(range(forecast_prior - look_width, forecast_prior, 6)) # mid future from +4d to +6d
-    
-    # =========================================================================
-    # DOWNLOAD MODELS
-    # =========================================================================
-    
-    # IFS atmospheric data
-    atmos_ifs = DeterministicHerbieForecast(
-        "ifs", model="ifs", product="oper", regex=r":10[u|v]:", fxx=steps,
-        min_lon=minimum_longitude, max_lon=maximum_longitude,
-        min_lat=minimum_latitude, max_lat=maximum_latitude,
-        date=ref_f00,
-    )
-    atmos_ifs.load_data()
-    
-    atmos_ifs.data = atmos_ifs.data.herbie.with_wind()
-    
-    # GFS atmospheric data
-    atmos_gfs = DeterministicHerbieForecast(
-        "gfs", model="gfs", regex=r"(?:U|V)GRD:10 m", fxx=steps,
-        min_lon=minimum_longitude, max_lon=maximum_longitude,
-        min_lat=minimum_latitude, max_lat=maximum_latitude,
-        date=ref_f00,
-    )
-    atmos_gfs.load_data()
-    
-    atmos_gfs.data = atmos_gfs.data.herbie.with_wind()
-    
-    # =========================================================================
-    # DOWNLOAD ASCAT DATA
-    # =========================================================================
-    
-    ascat = ASCATData(
-        "ascat", start=start_look, end=end_look,
-        min_lon=minimum_longitude, max_lon=maximum_longitude,
-        min_lat=minimum_latitude, max_lat=maximum_latitude,
-    )
-    ascat.load_data()
-    
-    results = {}
-    
-    step = 1
-    
-    fac = 1.0
-    
-    for atmos in [atmos_ifs, atmos_gfs]:
-        
-        # Prepare ASCAT dataset
-        lat = ascat.data["lat"].values.ravel(order="C")
-        lon = ascat.data["lon"].values.ravel(order="C")
-        tim = ascat.data["valid_time"].values.ravel(order="C")
-        
-        si = ascat.data["wind_speed"].values.ravel(order="C")       # m/s
-        wdir = ascat.data["wind_dir"].values.ravel(order="C")       # degrees, meteorological
-        
-        mask = (
-            (~(np.isnan(lat) | np.isnan(lon) | np.isnan(tim) | np.isnan(si) | np.isnan(wdir))) &
-            (tim > atmos.data["valid_time"].values.min()) &
-            True
-        )
-        
-        lat = lat[mask][::step]
-        lon = lon[mask][::step]
-        tim = tim[mask][::step]
-        
-        si_obs = si[mask][::step] * fac # m/s
-        wdir_obs = wdir[mask][::step]   # degrees, meteorological
-        
-        ascat_query = np.vstack([
-            tim, lat, lon,
-        ]).T
-        
-        # Build interpolators
-        atmos.add_interpolator("si10", "valid_time", "latitude", "longitude")
-        atmos.add_interpolator("u10", "valid_time", "latitude", "longitude")
-        atmos.add_interpolator("v10", "valid_time", "latitude", "longitude")
-    
-        # Interpolation
-        model_si = atmos("si10", ascat_query)
-        model_u = atmos("u10", ascat_query)
-        model_v = atmos("v10", ascat_query)
-    
-        model_wdir = (np.degrees(np.arctan2(model_u, model_v)).ravel() + 360.0) % 360.0
-    
-        # si_obs = si[valid]
-        # wdir_obs = wdir[valid]
-    
-        si_mod = np.array(model_si).ravel()
-        wdir_mod = np.array(model_wdir).ravel()
-    
-        results[atmos.name] = dict(
-            speed=stats_linear(si_mod, si_obs),
-            direction=stats_direction(wdir_mod, wdir_obs),
-        )
-    
-    # ============================================================
-    # Console summary table
-    # ============================================================
-    
-    return ref_f00, ascat_query, results
-    
-    
-if __name__=="__main__":
-    # look_width = 96 # hours
-    # forecast_prior = 192 # hours
-    look_width = 48 # hours
-    forecast_prior = 48 # hours
-    
-    minimum_longitude=-80.
-    maximum_longitude=0.
-    minimum_latitude=30.
-    maximum_latitude=60.
-    
-    ref_f00, ascat_query, results = compare_ascat_vs_models(
-        minimum_longitude,
-        maximum_longitude,
-        minimum_latitude,
-        maximum_latitude,
-        
-        look_width,
-        forecast_prior,
-    )
-    
-    report = build_validation_report(ref_f00, ascat_query, results)
-    
-    print(report)
+    print(build_validation_report(ref_f00, ascat_query, results))

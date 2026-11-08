@@ -17,9 +17,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
+import xarray as xr
 from cycler import cycler
 
 from architeuthis.report import ReportCollection, RoutingReport
+from architeuthis.route import Route, RouteSet
 from architeuthis.toolbox.plot_utils import (
     A4_PORTRAIT,
     REPORT_PANELS,
@@ -28,6 +30,7 @@ from architeuthis.toolbox.plot_utils import (
     draw,
     get_steps,
     plot_convergence,
+    plot_ensemble_along_route,
     plot_fuel_distribution,
     plot_fuel_quantiles,
     plot_fuel_vs_etd,
@@ -35,6 +38,7 @@ from architeuthis.toolbox.plot_utils import (
     plot_quantiles,
     plot_report,
     plot_route,
+    plot_route_set,
     plot_style,
     plot_variable,
     set_plot_style,
@@ -513,14 +517,14 @@ def test_fuel_distribution_labels_each_group():
 
 
 # ------------------------------------------------------------------------------
-# README
+# User guide
 # ------------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
-def readme():
+def user_guide():
     root = Path(architeuthis.__file__).parent.parent
-    return (root / "README.md").read_text(encoding="utf-8")
+    return (root / "docs" / "user_guide.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(
@@ -529,6 +533,7 @@ def readme():
         plot_report,
         draw,
         plot_route,
+        plot_route_set,
         plot_variable,
         plot_power_and_weather,
         plot_quantiles,
@@ -536,9 +541,10 @@ def readme():
         plot_convergence,
         plot_fuel_distribution,
         plot_fuel_vs_etd,
+        plot_ensemble_along_route,
     ],
 )
-def test_readme_gives_the_signature_of_each_figure(readme, function):
+def test_guide_gives_the_signature_of_each_figure(user_guide, function):
     documented = []
     for parameter in inspect.signature(function).parameters.values():
         if parameter.default is inspect.Parameter.empty:
@@ -550,11 +556,11 @@ def test_readme_gives_the_signature_of_each_figure(readme, function):
         else:
             documented.append(f"{parameter.name}={parameter.default}")
 
-    assert f"{function.__name__}({', '.join(documented)})" in readme
+    assert f"{function.__name__}({', '.join(documented)})" in user_guide
 
 
-def test_readme_gives_the_panels_of_the_page_in_their_order(readme):
-    rows = re.findall(r"^\| (\d) \| `(\w+)` \|", readme, flags=re.MULTILINE)
+def test_guide_gives_the_panels_of_the_page_in_their_order(user_guide):
+    rows = re.findall(r"^\| (\d) \| `(\w+)` \|", user_guide, flags=re.MULTILINE)
 
     assert rows == [(str(i + 1), panel) for i, panel in enumerate(REPORT_PANELS)]
 
@@ -563,8 +569,8 @@ def test_readme_gives_the_panels_of_the_page_in_their_order(readme):
     "helper",
     ["get_steps", "add_map_background", "set_plot_style", "plot_style", "A4_PORTRAIT", "REPORT_PANELS"],
 )
-def test_readme_mentions_the_helpers(readme, helper):
-    assert f"`{helper}" in readme
+def test_guide_mentions_the_helpers(user_guide, helper):
+    assert f"`{helper}" in user_guide
 
 
 @pytest.mark.parametrize(
@@ -600,3 +606,85 @@ def test_figures_are_shown_only_when_asked(plot, arguments, members):
 
         plot(members, *arguments)
         show.assert_called_once()
+
+
+# ------------------------------------------------------------------------------
+# Figures added for the examples
+# ------------------------------------------------------------------------------
+
+
+def test_route_set_map_draws_each_route_with_its_style():
+    ortho = Route("ortho", [[47.0, -3.0], [46.0, -50.0]], verbose=False)
+    minus = Route("minus", [[47.0, -3.0], [46.0, -50.0]], divergences=[0.4], verbose=False)
+    plus = Route("plus", [[47.0, -3.0], [46.0, -50.0]], divergences=[-0.4], verbose=False)
+
+    fig = plot_route_set(RouteSet("set", ortho=ortho, minus=minus, plus=plus, verbose=False), n=20, show=False)
+
+    lines = {line.get_label(): line for line in fig.axes[0].get_lines()}
+    assert set(lines) == {"ortho", "minus", "plus"}
+    assert lines["ortho"].get_color() == "black"
+    assert lines["minus"].get_linestyle() == "--"
+    assert lines["plus"].get_xdata().size == 20
+    assert lines["minus"].get_ydata()[10] != lines["plus"].get_ydata()[10]
+    plt.close(fig)
+
+
+class EnsembleStub:
+    """A forecast with two members, the second one twice as strong."""
+
+    def __init__(self, **fields):
+        self.fields = fields
+        self.data = {"number": xr.DataArray([1, 2])}
+        self.queries = []
+
+    def __call__(self, key, query):
+        self.queries.append(query)
+        return (self.fields[key] * query[:, 1])[:, None]
+
+
+def test_ensemble_along_route_reads_every_member_at_each_segment_center(baseline_report):
+    atmosphere = EnsembleStub(u10=3.0, v10=4.0)
+    wave = EnsembleStub(swh=2.0)
+
+    fig = plot_ensemble_along_route(baseline_report, atmosphere, wave, show=False)
+
+    n = baseline_report["ctim"].size
+    query = wave.queries[0]
+    assert query.shape == (2 * n, 4)
+    assert query[:2, 1].tolist() == [1, 2]
+    assert query[0, 0] == query[1, 0] == baseline_report["ctim"][0]
+    assert query[0, 2] == baseline_report["clat"][0]
+    assert query[0, 3] == baseline_report["clon"][0]
+
+    # Medians of the two members: 1.5 x the field of member 1, the wind converted to knots.
+    swh_median = fig.axes[1].get_lines()[0].get_ydata()
+    tws_median = fig.axes[2].get_lines()[0].get_ydata()
+    assert swh_median == pytest.approx(np.full(n, 3.0))
+    assert tws_median == pytest.approx(np.full(n, 7.5 * 3600.0 / 1852.0))
+    plt.close(fig)
+
+
+def test_ensemble_along_route_applies_the_limits(baseline_report):
+    fig = plot_ensemble_along_route(
+        baseline_report,
+        EnsembleStub(u10=3.0, v10=4.0),
+        EnsembleStub(swh=2.0),
+        ylim={"bhp": (0.0, 2700.0), "tws": (0.0, 40.0)},
+        show=False,
+    )
+
+    assert fig.axes[0].get_ylim() == (0.0, 2700.0)
+    assert fig.axes[1].get_ylim()[0] == 0.0
+    assert fig.axes[2].get_ylim() == (0.0, 40.0)
+    plt.close(fig)
+
+
+def test_fuel_distribution_can_be_horizontal(baseline_report, optimized_report):
+    groups = {"Reference": [baseline_report], "Optimized": [optimized_report]}
+
+    fig = plot_fuel_distribution(groups, horizontal=True, show=False)
+
+    ax = fig.axes[0]
+    assert ax.get_xlabel() == "Fuel / tons"
+    assert [label.get_text() for label in ax.get_yticklabels()] == list(groups)
+    plt.close(fig)
