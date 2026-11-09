@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """
+Route geometry: great circles, distances, headings, deviations.
+
 Created on Fri Dec 12 14:18:00 2025
 
 @author: jrich
@@ -14,6 +16,20 @@ from pyproj import Geod
 
 
 def great_circle_route(p1, p2, nPoints, include_ends=True):
+    """
+    Points along the great circle between two positions.
+
+    Numeric only: use it to build reference routes before optimization.
+
+    Args:
+        p1: First position `[lat, lon]`.
+        p2: Second position `[lat, lon]`.
+        nPoints: Number of points, ends included.
+        include_ends: Whether to return the two ends.
+
+    Returns:
+        The latitudes, the longitudes and the distance in nm.
+    """
     # use great circle formula for a perfect sphere.
     a = 6378.137 / 1.852  # semi-major axis (equatorial radius) in nmi
     b = 6356.752 / 1.852  # semi-minor axis (polar radius) in nmi
@@ -43,15 +59,17 @@ def great_circle_route(p1, p2, nPoints, include_ends=True):
 
 def distances(lats, lons):
     """
-    Calculate the great-circle distances between consecutive points
-    on the Earth using the Haversine formula.
-    
-    Parameters:
-    lats: Array of latitudes in decimal degrees
-    lons: Array of longitudes in decimal degrees
-    
+    Calculate the great-circle distances between consecutive points.
+
+    The points are on the Earth, and the Haversine formula is used.
+
+    Args:
+        lats: Array of latitudes in decimal degrees.
+        lons: Array of longitudes in decimal degrees.
+
     Returns:
-    Array of distances between each consecutive pair of points in nautical miles
+        Array of distances between each consecutive pair of points in
+        nautical miles.
     """
     
     # Convert latitude and longitude from degrees to radians
@@ -79,29 +97,23 @@ def headings(lats, lons):
     """
     Compute headings (0–360°) between successive geographic points.
 
-    Parameters
-    ----------
-    lats : array_like
-        Latitudes of the points in degrees. Must have shape (N+1,).
-    lons : array_like
-        Longitudes of the points in degrees. Must have shape (N+1,).
+    Args:
+        lats: Latitudes of the points in degrees, of shape (N+1,).
+        lons: Longitudes of the points in degrees, of shape (N+1,).
 
-    Returns
-    -------
-    headings : ndarray
+    Returns:
         Array of shape (N,) containing the heading from each point i
         to point i+1, expressed in degrees clockwise from true North,
         normalized to the [0, 360) interval.
 
-    Notes
-    -----
-    • Uses a simple local Cartesian approximation:
-        dx = Δlon * cos(lat)
-        dy = Δlat
-    • For small step-to-step distances this is sufficiently accurate.
-    • If a great-circle heading is required, say so and I will provide
-      a fully geodesic version.
+    Notes:
+        Uses a simple local Cartesian approximation:
 
+            dx = Δlon * cos(lat)
+            dy = Δlat
+
+        For small step-to-step distances this is sufficiently accurate.
+        It is not a great-circle heading.
     """
 
     dlat = np.diff(lats)
@@ -117,11 +129,27 @@ def headings(lats, lons):
 
 
 def midpoints(pts):
+    """
+    The means of consecutive values of `pts`. Works symbolically.
+    """
     
     return (pts[:-1] + pts[1:]) / 2
 
 
 def resample_coordinates(lat, lon, n):
+    """
+    Add evenly spaced points on each segment. Works symbolically.
+
+    The positions are interpolated linearly in latitude and longitude.
+
+    Args:
+        lat: Latitudes, as a column vector.
+        lon: Longitudes, as a column vector.
+        n: Points added per segment. If not positive, nothing changes.
+
+    Returns:
+        The new latitudes and longitudes.
+    """
     
     if n <= 0:
         return lat, lon
@@ -156,8 +184,8 @@ def great_circle_path_points(
     """
     Computes intermediate points along the great circle.
 
-    abscissas : array-like in [0,1], meaning 0=first point, 1=second point.
-    Returns arrays (lat_deg, lon_deg) of the same shape.
+    abscissas : array-like in [0,1], meaning 0=first point, 1=second
+    point. Returns arrays (lat_deg, lon_deg) of the same shape.
     """
     
     lat1_deg, lon1_deg = p1
@@ -223,7 +251,11 @@ _deg2rad = np.pi / 180.0
 _rad2deg = 180.0 / np.pi
 
 def _ensure_column(x):
-    """Return CasADi column vector (DM or MX) for input x (np array, list, DM, MX)."""
+    """
+    Return a CasADi column vector (DM or MX) for input x.
+
+    x may be an np array, a list, a DM or an MX.
+    """
     # numpy / list -> DM
     if isinstance(x, (list, tuple, np.ndarray)):
         xd = ca.DM(np.asarray(x).ravel())
@@ -242,16 +274,17 @@ def _ensure_column(x):
 
 def distances_casadi(lats, lons):
     """
-    CasADi-compatible great-circle distances (Haversine) between successive points.
+    CasADi-compatible great-circle distances (Haversine).
 
-    Inputs
-    ------
-    lats, lons : array-like or CasADi vector
-        Latitude and longitude arrays in degrees. Shape (N,) or (N,1).
-    Returns
-    -------
-    d : CasADi column vector of length N-1
-        Distances between consecutive points in nautical miles.
+    They are between successive points.
+
+    Args:
+        lats, lons: Latitude and longitude arrays in degrees, as
+            array-likes or CasADi vectors of shape (N,) or (N,1).
+
+    Returns:
+        CasADi column vector of length N-1: distances between
+        consecutive points in nautical miles.
     """
     φ = _ensure_column(lats) * (_deg2rad)   # radians (N,1)
     λ = _ensure_column(lons) * (_deg2rad)
@@ -278,16 +311,17 @@ def distances_casadi(lats, lons):
 
 def headings_casadi(lats, lons):
     """
-    CasADi-compatible great-circle initial bearings between successive points.
+    CasADi-compatible great-circle initial bearings.
 
-    Inputs
-    ------
-    lats, lons : array-like or CasADi vector
-        Latitudes and longitudes in degrees. Shape (N,) or (N,1).
-    Returns
-    -------
-    bearings : CasADi column vector of length N-1
-        Initial bearing from point i to i+1 in degrees, in [0, 360).
+    They are between successive points.
+
+    Args:
+        lats, lons: Latitudes and longitudes in degrees, as array-likes
+            or CasADi vectors of shape (N,) or (N,1).
+
+    Returns:
+        CasADi column vector of length N-1: initial bearing from point
+        i to i+1 in degrees, in [0, 360).
     """
     φ = _ensure_column(lats) * (_deg2rad)   # radians (N,1)
     λ = _ensure_column(lons) * (_deg2rad)
@@ -312,12 +346,31 @@ def headings_casadi(lats, lons):
 
 # midpoints function: implement using CasADi so result is symbolic MX
 def midpoints_casadi(x):
+    """
+    The means of consecutive values of a CasADi column vector.
+
+    Args:
+        x: Column vector with npts entries.
+
+    Returns:
+        A column vector with npts-1 entries.
+    """
     # x is a column vector (npts,)
     # returns column vector with npts-1 entries
     return 0.5*(x[1:] + x[:-1])
 
 
 def sph_to_cart(lat, lon):
+    """
+    Convert a position to a unit vector.
+
+    Args:
+        lat: Latitude in degrees.
+        lon: Longitude in degrees.
+
+    Returns:
+        The array of the x, y and z components.
+    """
     lat = np.radians(lat)
     lon = np.radians(lon)
     return np.array([
@@ -329,8 +382,13 @@ def sph_to_cart(lat, lon):
 
 def cart_to_sph(v):
     """
-    v: array of shape (3, N)
-    returns lat, lon arrays of length N
+    Convert Cartesian vectors to latitudes and longitudes.
+
+    Args:
+        v: Array of shape (3, N).
+
+    Returns:
+        lat, lon arrays of length N.
     """
     v = v / np.linalg.norm(v, axis=0, keepdims=True)
     lat = np.degrees(np.arcsin(v[2, :]))
@@ -340,6 +398,22 @@ def cart_to_sph(v):
 
 
 def deviated_gc_segment(lat0, lon0, lat1, lon1, divergence):
+    """
+    A great-circle segment bent sideways by a sinusoidal offset.
+
+    Numeric only: use it to build reference routes before optimization.
+
+    Args:
+        lat0: Latitude of the start, in degrees.
+        lon0: Longitude of the start, in degrees.
+        lat1: Latitude of the end, in degrees.
+        lon1: Longitude of the end, in degrees.
+        divergence: Size of the offset. The maximum is `divergence / 2`
+            times the angular length of the segment, at its middle.
+
+    Returns:
+        A function `s -> (lat, lon)` of an array `s` in [0, 1].
+    """
 
     p0 = sph_to_cart(lat0, lon0)
     p1 = sph_to_cart(lat1, lon1)
@@ -421,6 +495,21 @@ def deviated_gc_segment(lat0, lon0, lat1, lon1, divergence):
 
 
 def poly_deviated_route(lats, lons, divergences=None):
+    """
+    A route through waypoints, with deviated segments.
+
+    Numeric only: use it to build reference routes before optimization.
+
+    Args:
+        lats: Latitudes of the waypoints, in degrees.
+        lons: Longitudes of the waypoints, in degrees.
+        divergences: One value per segment, as in `deviated_gc_segment`.
+            By default 0.
+
+    Returns:
+        A function `s -> (lat, lon)` of an array `s` in [0, 1], the
+            abscissa normalized by the angular length of the route.
+    """
     
     if divergences is None:
         divergences = np.zeros(len(lats) - 1)
@@ -483,7 +572,9 @@ def poly_deviated_route(lats, lons, divergences=None):
 
 
 def lonlat_to_web_mercator(lon, lat):
-    """Convert lon/lat in degrees to Web Mercator (EPSG:3857)."""
+    """
+    Convert lon/lat in degrees to Web Mercator (EPSG:3857).
+    """
     R = 6378137.0  # Earth radius in meters
     x = np.radians(lon) * R
     y = np.log(np.tan(np.pi/4 + np.radians(lat)/2)) * R
@@ -496,14 +587,15 @@ def calculate_geographic_bounding_box(
 ) -> tuple[float, float, float, float]:
     """
     Computes the standard geographic (EPSG:4326) bounding box.
-    
+
     Args:
         latitudes: A sequence of latitude values in decimal degrees.
         longitudes: A sequence of longitude values in decimal degrees.
-        
+
     Returns:
         A tuple containing the bounding box in decimal degrees:
-        (minimum_longitude, minimum_latitude, maximum_longitude, maximum_latitude).
+        (minimum_longitude, minimum_latitude, maximum_longitude,
+        maximum_latitude).
     """
     if latitudes is None or longitudes is None:
         raise ValueError("Latitude and longitude sequences cannot be empty.")

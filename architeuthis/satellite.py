@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """
+Satellite observations, to validate forecasts against them.
+
 Created on Thu Jan 29 16:15:59 2026
 
 @author: jrich
@@ -14,10 +16,23 @@ import zipfile
 import xarray as xr
 
 from typing import Union
-from architeuthis.common import ArchiteuthisSpatialData, Datetime, _EUMDAC_CREDENTIALS, _HOME
+from architeuthis.common import ArchiteuthisSpatialData, Datetime, _EUMDAC_CREDENTIALS, _HOME, status
 
 
 class ArchiteuthisSatelliteData(ArchiteuthisSpatialData):
+    """
+    Base class of the satellite data, over a period and a domain.
+
+    Args:
+        name: Name of this object, used in status messages.
+        start: Start of the period.
+        end: End of the period.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+        verbose: Whether to report progress.
+    """
     
     def __init__(
         self,
@@ -37,6 +52,23 @@ class ArchiteuthisSatelliteData(ArchiteuthisSpatialData):
         
 
 class EUMETSATData(ArchiteuthisSatelliteData):
+    """
+    Satellite data downloaded from the EUMETSAT Data Store.
+
+    Credentials come from `EUMDAC_USER` and `EUMDAC_PWD`, which hold the
+    Consumer Key and Secret.
+
+    Args:
+        name: Name of this object, used in status messages.
+        dataset: Identifier of the EUMETSAT collection.
+        start: Start of the period.
+        end: End of the period.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+        verbose: Whether to report progress.
+    """
     
     def __init__(
         self,
@@ -91,7 +123,7 @@ class EUMETSATData(ArchiteuthisSatelliteData):
         zipfiles=[]
         
         
-        print(f'🛰️ Download of {len(self.products)} product(s)...')
+        status(f'🛰️ Download of {len(self.products)} product(s)...')
         for product in tqdm.tqdm(self.products):
             with product.open() as fsrc, \
                     open(os.path.join(self.output_path, fsrc.name), mode='wb') as fdst:
@@ -102,11 +134,11 @@ class EUMETSATData(ArchiteuthisSatelliteData):
                     # print(f'Download of product {product} finished.')
                 # else:
                 #     print("Already in memory")
-        print('✅ Downloads completed.')
+        status('✅ Downloads completed.')
 
     
         # Unzip products
-        print('📦 Unzipping downloaded files...')
+        status('📦 Unzipping downloaded files...')
         nc_files = []
 
         for zip_path in zipfiles:
@@ -133,12 +165,25 @@ class EUMETSATData(ArchiteuthisSatelliteData):
             # # Delete ZIP only if extraction succeeded
             # if extracted_nc:
             #     os.remove(zip_path)
-        print('✅ Finished unzipping.')
+        status('✅ Finished unzipping.')
         
         self.path = nc_files
         
         
 class ASCATData(EUMETSATData):
+    """
+    ASCAT scatterometer winds, collection `EO:EUM:DAT:METOP:OSI-104`.
+
+    Args:
+        name: Name of this object, used in status messages.
+        start: Start of the period.
+        end: End of the period.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+        verbose: Whether to report progress.
+    """
     
     def __init__(
         self,
@@ -183,6 +228,19 @@ class ASCATData(EUMETSATData):
         
 # TODO find a better class name?
 class PoseidonData(EUMETSATData):
+    """
+    Poseidon-4 Level 2P wind and wave data, `EO:EUM:DAT:0142`.
+
+    Args:
+        name: Name of this object, used in status messages.
+        start: Start of the period.
+        end: End of the period.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+        verbose: Whether to report progress.
+    """
     
     def __init__(
         self,

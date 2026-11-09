@@ -81,7 +81,6 @@ def test_racecar_adaptive_ode(plot=False):
 
         if i % 5 == 0:
             import matplotlib.pyplot as plt
-            import architeuthis.tools.pretty_plots as p
 
             fig, ax = plt.subplots()
             ax.plot(soli(t), soli(v), label="speed")
@@ -92,7 +91,8 @@ def test_racecar_adaptive_ode(plot=False):
             t_plot = np.linspace(0, soli(t_final), 1000)
             ax.plot(t_plot, soli(u(t_plot)), "k", label="throttle")
             plt.ylim(-0.1, 1.6)
-            p.show_plot(f"i = {i}")
+            plt.title(f"i = {i}")
+            plt.show()
 
     sol = opti.solve(
         # callback=callback,
@@ -104,7 +104,6 @@ def test_racecar_adaptive_ode(plot=False):
 
     if plot:
         import matplotlib.pyplot as plt
-        import architeuthis.tools.pretty_plots as p
 
         fig, ax = plt.subplots()
         ax.plot(sol(t), sol(v), label="speed")
@@ -114,4 +113,4 @@ def test_racecar_adaptive_ode(plot=False):
         ax.plot(t_plot, sol(u(t_plot)), "k", label="throttle")
         plt.xlabel("Time [s]")
         plt.ylabel("Position [m] / Speed [m/s] / Throttle [-]")
-        p.show_plot(rotate_axis_labels=False)
+        plt.show()

@@ -1,3 +1,7 @@
+"""
+String helpers: engineering notation, text wrapping and hashing.
+"""
+
 import json
 import hashlib
 import architeuthis.numpy as np
@@ -11,21 +15,22 @@ def eng_string(
     add_space_after_number: bool = None,
 ) -> str:
     """
-    Taken from: https://stackoverflow.com/questions/17973278/python-decimal-engineering-notation-for-mili-10e-3-and-micro-10e-6/40691220
+    Format a number in engineering notation.
 
-    Returns float/int value <x> formatted in a simplified engineering format -
-    using an exponent that is a multiple of 3.
+    Taken from:
+    https://stackoverflow.com/questions/17973278/python-decimal-engineering-notation-for-mili-10e-3-and-micro-10e-6/40691220
+
+    Returns float/int value <x> formatted in a simplified engineering
+    format - using an exponent that is a multiple of 3.
 
     Args:
-
         x: The value to be formatted. Float or int.
-
-        unit: A unit of the quantity to be expressed, given as a string. Example: Newtons -> "N"
-
-        format: A printf-style string used to format the value before the exponent.
-
-        si: if true, use SI suffix for exponent. (k instead of e3, n instead of
-            e-9, etc.)
+        unit: A unit of the quantity to be expressed, given as a string.
+            Example: Newtons -> "N"
+        format: A printf-style string used to format the value before
+            the exponent.
+        si: if true, use SI suffix for exponent. (k instead of e3, n
+            instead of e-9, etc.)
 
     Examples:
 
@@ -90,7 +95,9 @@ def latex_sci_notation_string(
     format="%.2e",
 ) -> str:
     """
-    Converts a floating-point number to a LaTeX-style formatted string. Does not include the `$$` wrapping to put you in math mode.
+    Converts a floating-point number to a LaTeX-style formatted string.
+
+    Does not include the `$$` wrapping to put you in math mode.
 
     Does not use scientific notation if the base would be zero.
 
@@ -109,9 +116,12 @@ def latex_sci_notation_string(
 
 def hash_string(string: str) -> int:
     """
-    Hashes a string into a quasi-random 32-bit integer! (Based on an MD5 checksum algorithm.)
+    Hashes a string into a quasi-random 32-bit integer!
 
-    Usual warnings apply: it's MD5, don't use this for anything intended to be cryptographically secure.
+    (Based on an MD5 checksum algorithm.)
+
+    Usual warnings apply: it's MD5, don't use this for anything intended
+    to be cryptographically secure.
     """
     md5 = hashlib.md5(string.encode("utf-8"))
     hash_hex = md5.hexdigest()
@@ -122,16 +132,18 @@ def hash_string(string: str) -> int:
 
 def trim_string(string: str, length: int = 80) -> str:
     """
-    Trims a string to be less than a given length. If the string would exceed the length, makes it end in ellipses ("…").
+    Trims a string to be less than a given length.
+
+    If the string would exceed the length, makes it end in ellipses
+    ("…").
 
     Args:
-
         string: The string to be trimmed.
+        length: The length to trim the string to, including any ellipses
+            that may be added.
 
-        length: The length to trim the string to, including any ellipses that may be added.
-
-    Returns: The trimmed string, including ellipses if needed.
-
+    Returns:
+        The trimmed string, including ellipses if needed.
     """
     if len(string) > length:
         return string[: length - 1] + "…"
@@ -150,15 +162,14 @@ def has_balanced_parentheses(string: str, left="(", right=")") -> bool:
         >>> has_balanced_parentheses("3 * (x + (2 ** 5)") -> False
 
     Args:
-
         string: The string to be evaluated.
+        left: The left parentheses. Can be modified if, for example, you
+            need to check square brackets.
+        right: The right parentheses. Can be modified if, for example,
+            you need to check square brackets.
 
-        left: The left parentheses. Can be modified if, for example, you need to check square brackets.
-
-        right: The right parentheses. Can be modified if, for example, you need to check square brackets.
-
-    Returns: A boolean of whether or not the string has balanced parentheses.
-
+    Returns:
+        A boolean of whether or not the string has balanced parentheses.
     """
     parenthesis_level = 0
 
@@ -176,26 +187,30 @@ def wrap_text_ignoring_mathtext(
     width: int = 70,
 ) -> str:
     r"""
+    Wrap a single paragraph to lines of at most 'width' columns.
+
     Reformat the single paragraph in 'text' to fit in lines of no more
     than 'width' columns, and return a new string containing the entire
-    wrapped paragraph.  Tabs are expanded and other
-    whitespace characters converted to space.
+    wrapped paragraph.  Tabs are expanded and other whitespace
+    characters converted to space.
 
-    Similar to `textwrap.fill`, but keeps any mathtext blocks contiguous and unaltered. Mathtext blocks are segments of `text` that are between $ markers, to indicate LaTeX-like formatting. Dollar-sign literals (\$) do not trigger Mathtext, and that is respected here as well.
+    Similar to `textwrap.fill`, but keeps any mathtext blocks contiguous
+    and unaltered. Mathtext blocks are segments of `text` that are
+    between $ markers, to indicate LaTeX-like formatting. Dollar-sign
+    literals (\$) do not trigger Mathtext, and that is respected here as
+    well.
 
     For example:
         >>> wrap_text_ignoring_mathtext()
 
     Args:
-
         text: The text to be wrapped.
-
-        width: The maximum width of wrapped lines (unless break_long_words is false)
+        width: The maximum width of wrapped lines (unless
+            break_long_words is false)
 
     Returns:
-
-        A string containing the entire paragraph with line breaks as newline ("\n") characters.
-
+        A string containing the entire paragraph with line breaks as
+        newline ("\n") characters.
     """
     import textwrap
     import re
@@ -261,8 +276,10 @@ from decimal import Decimal
 
 def _canonicalize(obj):
     """
-    Recursively convert obj into a structure that serializes
-    identically regardless of dict/set iteration order or object identity.
+    Recursively convert obj into a canonical structure.
+
+    The structure serializes identically regardless of dict/set
+    iteration order or object identity.
     """
     if isinstance(obj, dict):
         # sort_keys=True in json.dumps handles dict key order,
@@ -302,7 +319,9 @@ def _canonicalize(obj):
 def get_request_id(request_dict: dict) -> str:
     """
     Generates a unique, repeatable ID for a given request.
-    Deterministic regardless of set/dict iteration order or object identity.
+
+    Deterministic regardless of set/dict iteration order or object
+    identity.
     """
     canonical = _canonicalize(request_dict)
     request_string = json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")

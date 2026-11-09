@@ -2,8 +2,12 @@ from architeuthis import Opti
 import pytest
 import architeuthis.numpy as np
 
-### Cause all NumPy warnings to raise exceptions, to make this bulletproof
-np.seterr(all="raise")
+### Cause all NumPy warnings to raise exceptions, to make this bulletproof.
+### Scoped to this module: a module-level np.seterr would leak into every other test.
+@pytest.fixture(autouse=True)
+def raise_on_numpy_warnings():
+    with np.errstate(all="raise"):
+        yield
 
 
 @pytest.fixture

@@ -41,7 +41,6 @@ def test_racecar(N=100, plot=False):
 
     if plot:
         import matplotlib.pyplot as plt
-        import architeuthis.tools.pretty_plots as p
 
         fig, ax = plt.subplots()
         ax.plot(sol(t), sol(v), label="speed")
@@ -49,7 +48,7 @@ def test_racecar(N=100, plot=False):
         ax.plot(sol(t), 1 - np.sin(2 * np.pi * sol(x)) / 2, "r--", label="speed limit")
         ax.plot(sol(t), sol(u), "k", label="throttle")
         plt.ylim(0, 1.6)
-        p.show_plot()
+        plt.show()
 
 
 if __name__ == "__main__":
@@ -90,7 +89,6 @@ if __name__ == "__main__":
     print(f"error: {np.abs(1.9065661561917042 - sol(t_final))}")
 
     import matplotlib.pyplot as plt
-    import architeuthis.tools.pretty_plots as p
 
     fig, ax = plt.subplots()
     ax.plot(sol(t), sol(v), label="speed")
@@ -98,4 +96,4 @@ if __name__ == "__main__":
     ax.plot(sol(t), 1 - np.sin(2 * np.pi * sol(x)) / 2, "r--", label="speed limit")
     ax.plot(sol(t), sol(u), ".-k", label="throttle")
     plt.ylim(0, 1.6)
-    p.show_plot()
+    plt.show()

@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """
+Legacy wrapper to download weather data with Herbie.
+
 Created on Mon Dec  8 22:11:15 2025
 
 @author: jules
@@ -19,6 +21,26 @@ def retrieve_weather_data(
         minimum_latitude: float =-90.,
         maximum_latitude: float =90.,
     ):
+    """
+    Download and read forecast data with Herbie.
+
+    The `enfo` and `waef` products are read as perturbed members.
+
+    Args:
+        model: Herbie model.
+        valid_time: Base time of the forecast, by default the latest
+            one.
+        fxx: Lead times of the forecast, in hours.
+        product: Herbie product of this model.
+        variables: Search string that selects the GRIB2 variables.
+        minimum_longitude: Western bound, in degrees.
+        maximum_longitude: Eastern bound, in degrees.
+        minimum_latitude: Southern bound, in degrees.
+        maximum_latitude: Northern bound, in degrees.
+
+    Returns:
+        An xarray Dataset, sorted by time and latitude.
+    """
     
     if not valid_time:
         HL = HerbieLatest(model=model, product=product)

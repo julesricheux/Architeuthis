@@ -31,3 +31,11 @@ dependencies:
       - geopandas
       - eumdac
       - h5py
+      - cdsapi
+      - cfgrib
+      - dash-extensions
+      - pyproj
+      - sortedcontainers
+      - tqdm
+      - pytest
+      - pytest-cov

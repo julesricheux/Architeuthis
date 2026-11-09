@@ -4,16 +4,39 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "architeuthis"
-version = "0.1.4"  # must match the release tag: v0.1.4
-description = "Meteorological, oceanographic, and geospatial processing library for Architeuthis."
+version = "0.2.0"  # must match the release tag
+description = "An open-source, mesh-free and differntiable ocean weather routing and decision-making framework for hybrid sailing ships"
 readme = "README.md"
 requires-python = ">=3.11"
-license = "MIT"
+license = "GPL-3.0-only"
 license-files = ["LICENSE"]
 authors = [
     { name = "Jules Richeux", email = "j.richeux@neoline.eu" }
 ]
-keywords = ["meteorology", "oceanography", "geospatial", "weather routing", "xarray"]
+keywords = [
+	"meteorology",
+	"oceanography",
+	"weather routing",
+	"ocean routing",
+	"ship routing",
+	"marine navigation",
+	"maritime transport",
+	"voyage optimization",
+	"route optimization",
+	"decision support",
+	"ship performance",
+	"sailing ships",
+	"wind propulsion",
+	"hybrid propulsion",
+	"sustainable shipping",
+	"ensemble forecasting",
+	"geospatial analysis",
+	"mesh-free methods",
+	"differentiable programming",
+	"automatic differentiation",
+	"scientific computing",
+	"numerical optimization",
+]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -41,15 +64,26 @@ dependencies = [
     "geopandas",
     "eumdac",
     "h5py",
+    "cdsapi",
+    "cfgrib",
+    "pyproj",
+    "sortedcontainers",
+    "tqdm",
 ]
 
 [project.optional-dependencies]
 app = [
     "flask",
     "dash>=3.2,<4",
+    "dash-extensions",
     "dash-leaflet",
     "dash-mantine-components",
     "dash-iconify",
+]
+test = [
+    "architeuthis[app]",
+    "pytest>=8",
+    "pytest-cov",
 ]
 
 [project.urls]
@@ -60,3 +94,26 @@ Issues = "https://github.com/julesricheux/Architeuthis/issues"
 [tool.setuptools.packages.find]
 include = ["architeuthis*"]
 exclude = ["*tests*"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+# tests/modeling holds the dataset_temperature helper imported by its tests.
+pythonpath = [".", "tests/modeling"]
+# --tb=native: pytest's own formatters parse each source file in a traceback, and
+# casadi.py is so large that this raises MemoryError and aborts the whole session.
+addopts = [
+    "--tb=native",
+    "--import-mode=importlib",
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+]
+markers = [
+    "integration: solves a full routing problem end to end on synthetic data",
+]
+
+[tool.coverage.run]
+source = ["architeuthis"]
+branch = true
+omit = ["*/integrate_discrete_derivations/*", "*/derivative_discrete_derivations/*"]

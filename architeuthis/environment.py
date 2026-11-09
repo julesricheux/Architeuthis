@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """
+A set of data layers queried together. Not functional yet.
+
 Created on Thu Jan 15 11:13:35 2026
 
 @author: jrich
@@ -20,6 +22,14 @@ from common import ArchiteuthisObject
 # from herbie_loading import retrieve_weather_data #TODO rename herbie_wrapper
 
 class Environment(ArchiteuthisObject):
+    """
+    A set of data layers queried together. Not functional yet.
+
+    Args:
+        name: Name of this object, used in status messages.
+        verbose: Whether to report progress.
+    """
+
     def __init__(
         self,
         name: str,
@@ -32,6 +42,12 @@ class Environment(ArchiteuthisObject):
         self,
         layer,
     ):
+        """
+        Add a data layer, if it is not already there.
+
+        Args:
+            layer: The data object to add.
+        """
         if layer in self.data:
             print(f"🟦 {layer.name} already in {self.name}.")
         else:
@@ -42,6 +58,12 @@ class Environment(ArchiteuthisObject):
         self,
         layer,
     ):
+        """
+        Remove a data layer, if it is there.
+
+        Args:
+            layer: The data object to remove.
+        """
         if layer in self.data:
             self.data.remove(layer)
             print(f"➖ {layer.name} removed from {self.name}.")
@@ -52,6 +74,15 @@ class Environment(ArchiteuthisObject):
         self,
         X,
     ):
+        """
+        Query every variable of every data layer.
+
+        Args:
+            X: Query points, of shape (n_queries, n_dims).
+
+        Returns:
+            A dict of the values by variable key.
+        """
         res = {}
         for d in self.data: # for all layers in environment
             for v in d.var_keys: # for all available keys in layer

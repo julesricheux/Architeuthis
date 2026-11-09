@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 """
+File helpers: GPX tracks and polygons of GeoJSON files.
+
 Created on Tue Dec 16 16:45:27 2025
 
 @author: jrich
 """
 
 import json
+import numbers
 
 import architeuthis.numpy as np
 import xml.etree.ElementTree as ET
@@ -23,6 +26,20 @@ def save_gpx(
     filename,
     track_name="Track"
 ):
+    """
+    Write a track to a GPX 1.1 file.
+
+    Args:
+        lat: Latitudes in degrees.
+        lon: Longitudes in degrees.
+        valid_time: Times: numbers are epoch seconds, and datetime64,
+            str and Timestamp values are parsed as they are.
+        filename: Path of the file.
+        track_name: Name of the track.
+
+    Raises:
+        ValueError: If the lengths differ or a time is invalid.
+    """
     if not (len(lat) == len(lon) == len(valid_time)):
         raise ValueError("lat, lon and valid_time must have the same length")
 
@@ -48,7 +65,9 @@ def save_gpx(
         )
         time_el = ET.SubElement(trkpt, "time")
     
-        ts = pd.to_datetime(t)  # handles datetime64, str, Timestamp, epoch float/int...
+        # Numbers are epoch seconds, like every time in Architeuthis (pandas would read them
+        # as nanoseconds, in 1970). datetime64, str and Timestamp are parsed as they are.
+        ts = pd.to_datetime(t, unit="s") if isinstance(t, numbers.Real) else pd.to_datetime(t)
         if pd.isna(ts):
             raise ValueError(f"Invalid/NaT time value encountered: {t!r}")
         time_el.text = ts.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -60,10 +79,14 @@ def save_gpx(
 def extract_polygons_from_geojson(geojson_path, target_ids):
     """
     Extracts coordinates as [[lat, lon], ...] grouped per specified ID.
-    
-    :param geojson_path: Path to the .geojson file
-    :param target_ids: List of feature IDs to look for
-    :return: List of lists, where each sublist belongs to one matching feature ID
+
+    Args:
+        geojson_path: Path to the .geojson file.
+        target_ids: List of feature IDs to look for.
+
+    Returns:
+        List of lists, where each sublist belongs to one matching
+        feature ID.
     """
     with open(geojson_path, 'r', encoding='utf-8') as f:
         data = json.load(f)

@@ -1,9 +1,27 @@
 # -*- coding: utf-8 -*-
 """
+Dash and Leaflet viewer of forecast fields and saved route reports.
+
+This is a script, not a library: importing it downloads forecasts and
+needs a report in `~/data/routes/`. Run it from inside `architeuthis/`.
+It serves on port 8052.
+
 Created on Sun Jan 25 21:18:08 2026
 
 @author: jules
 """
+
+import os
+import sys
+
+# `python ui.py` puts this folder first on the path, where architeuthis/numpy would hide the
+# real numpy. Everything is imported from the folder above instead.
+if "__file__" in globals():
+    _ui_folder = os.path.dirname(os.path.abspath(__file__))
+    sys.path[:] = [
+        os.path.dirname(_ui_folder),
+        *(path for path in sys.path if os.path.abspath(path or os.getcwd()) != _ui_folder),
+    ]
 
 import io
 import json
@@ -14,6 +32,11 @@ import requests
 import pandas as pd
 import xarray as xr
 import seaborn as sns
+import matplotlib
+
+# The routes draw images in server threads, where a GUI backend such as Qt kills the process.
+matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from PIL import Image
@@ -35,17 +58,22 @@ from architeuthis.forecast import (
     DeterministicHerbieForecast,
     EnsembleHerbieForecast,
 )
-from architeuthis.icebergs import polygon
 from architeuthis.common import _HOME
+from architeuthis.exclusion import (
+    ExclusionZoneLibrary,
+    iceberg_zone,
+    merge_exclusion_zones,
+)
+from architeuthis.report import ReportCollection, latest_report_file
 
 from architeuthis.toolbox.chart_utils import density_from_zoom
 from architeuthis.toolbox.geo_utils import lonlat_to_web_mercator
 from architeuthis.wrappers.json_wrapper import (
-    custom_decoder,
     route_to_geojson,
     point_to_layer,
     style_func,
 )
+from architeuthis.wrappers.leaflet_wrapper import exclusion_zone_overlays
 
 sns.set_theme(palette="viridis")
 
@@ -131,6 +159,15 @@ def remove_white_pixels(
     output_path: Path,
     threshold: int = 240,
 ):
+    """
+    Download an image and make its white pixels transparent.
+
+    Args:
+        image_url: Address of the image.
+        output_path: Path of the file to write.
+        threshold: Value of the three channels above which a pixel
+            counts as white.
+    """
     response = requests.get(image_url, timeout=30)
     response.raise_for_status()
 
@@ -200,6 +237,7 @@ steps_00_12 = list(range(0, 145, 3)) + list(range(150, 361, 6))
 # mirror_end = pd.Timestamp('2026-01-31 23:00:00')
 
 recent = pd.Timestamp("now").floor("1d")
+# recent = pd.Timestamp('2026-11-08 00:00:00')
 
 ATMOS = {}
 
@@ -253,6 +291,7 @@ if PRODUCT == "oper":
 
 
 recent = pd.Timestamp("now").floor("1d")
+# recent = pd.Timestamp('2026-11-08 00:00:00')
 
 WAVE = {}
 
@@ -358,17 +397,14 @@ marks = [
 
 ROUTES_DIR = Path(_HOME, "routes")
 
-json_files = list(ROUTES_DIR.glob("*.json"))
-
-if not json_files:
-    raise FileNotFoundError("No JSON files found in routes directory.")
-
 # Select most recently modified file
-latest_file = max(json_files, key=lambda f: f.stat().st_mtime)
+latest_file = latest_report_file(ROUTES_DIR)
 
-with open(latest_file, "r") as f:
-    reports = json.load(f, object_hook=custom_decoder)
-    
+reports = ReportCollection.load(latest_file)
+
+# The latest iceberg limit, and the zones you stored in ~/data/exclusion_zones/
+exclusion_zones = merge_exclusion_zones([iceberg_zone()], ExclusionZoneLibrary())
+
 
 # Load the GeoJSON file
 with open("./assets/countries-coastline-1km.geo.json") as f:
@@ -403,9 +439,11 @@ server = app.server
 @server.route("/wind_arrows.geojson")
 def wind_arrows():
     """
+    Serve arrows representing wind vectors, as GeoJSON.
+
     Returns a GeoJSON FeatureCollection containing arrows representing
-    wind vectors for a given time index. Arrow length and thickness scale
-    with wind speed.
+    wind vectors for a given time index. Arrow length and thickness
+    scale with wind speed.
     """
     time_index = int(request.args.get("time", "0"))
     qvar = request.args.get("qvar", DEFAULT_QUIVER_VAR)
@@ -515,6 +553,12 @@ def wind_arrows():
 
 @server.route("/contour_field.geojson")
 def contour_field():
+    """
+    Serve the contours of a field as GeoJSON.
+
+    The query gives `var`, `time`, `member` and `model`. Values are
+    divided by 100 and the levels are 2 apart.
+    """
     var = request.args.get("var", DEFAULT_VECTOR_VAR)
     t   = int(request.args.get("time", 0))
     m   = int(request.args.get("member", DEFAULT_MEMBER))
@@ -577,6 +621,12 @@ def contour_field():
 
 @server.route("/raster.png")
 def raster_png():
+    """
+    Serve a field as a PNG image in the Mercator projection.
+
+    The query gives `var`, `time`, `member` and `model`. `swh` uses the
+    wave colormap and other variables the wind one.
+    """
     var = request.args.get("var", DEFAULT_RASTER_VAR)
     t   = int(request.args.get("time", 0))
     m   = int(request.args.get("member", DEFAULT_MEMBER))
@@ -631,7 +681,9 @@ def discrete_cmap_hex(
     n: int,
 ):
     """
-    Return n discrete colors sampled from a matplotlib colormap as hex strings.
+    Return n discrete colors sampled from a matplotlib colormap.
+
+    The colors are hex strings.
     """
     cmap = plt.get_cmap(cmap_name, n)
     return [mcolors.to_hex(cmap(i)) for i in range(n)]
@@ -643,6 +695,16 @@ def create_report_overlays(
     reports,
     valid_time=0,
 ):
+    """
+    One map overlay per report, checked if the report was optimized.
+
+    Args:
+        reports: The reports, one color of `COLORS` each.
+        valid_time: Time at which each route shows its position.
+
+    Returns:
+        A list of `dl.Overlay`.
+    """
     overlays = []
 
     for i, (report, color) in enumerate(zip(reports, COLORS)):
@@ -663,7 +725,7 @@ def create_report_overlays(
                 name=(
                     f"{report['model']} "
                     f"{report['init_fac']} "
-                    f"{report['vessel'][3:]} "
+                    f"{str(report['vessel']).removeprefix('eff')} "
                     f"{report['fuel']:.1f} "
                     f"m{report['member']}"
                 ),
@@ -853,17 +915,16 @@ app.layout = dmc.MantineProvider(
                             name="EUMETSAT IR gif", checked=False,
                         ),
                         
-                        dl.Overlay(
-                            # dl.GeoJSON(
-                            #     id="berg-limit",
-                            #     data=berg_geojson,
-                            # ),
-                            # dl.Polyline(positions=polygon, fill=True, color="#ff0000", fillOpacity=0.2),
-                            dl.Polyline(positions=polygon[:-3], fill=False, color="#ff0000", fillOpacity=0.2),
-                            name="Iceberg limit", checked=True,
-                            
-                        ),
-                        
+                        # Iceberg limit and other exclusion zones: see exclusion_zone_overlays below.
+                        # dl.Overlay(
+                        #     dl.GeoJSON(
+                        #         id="berg-limit",
+                        #         data=berg_geojson,
+                        #     ),
+                        #     dl.Polyline(positions=polygon, fill=True, color="#ff0000", fillOpacity=0.2),
+                        #     name="Iceberg limit", checked=True,
+                        # ),
+
                         # dl.Overlay(rotated_markers, id="active-route", checked=True),
                         
                         # dl.GeoJSON(
@@ -881,7 +942,7 @@ app.layout = dmc.MantineProvider(
                             # icon=DashIconify(icon="clarity:settings-line", width=200),
                             icon=weather_icon,
                         ),
-                    ] + create_report_overlays(reports)
+                    ] + exclusion_zone_overlays(exclusion_zones) + create_report_overlays(reports)
                     )
                 ],
                 style={"position":"relative", "width":"100%","height":"100%"},
@@ -902,6 +963,19 @@ app.layout = dmc.MantineProvider(
     State("sensor", "position"),
 )
 def display_data(m, click_data, time_index, model, pos):
+    """
+    Tooltip of the weather at the position clicked on the map.
+
+    Args:
+        m: Selected member.
+        click_data: Data of the click, or None before any click.
+        time_index: Selected index of the time slider.
+        model: Selected model.
+        pos: Position of the sensor marker.
+
+    Returns:
+        The content of the tooltip, or None without any click.
+    """
     
     if click_data is not None:
         # print(click_data["latlng"])
@@ -965,6 +1039,17 @@ def display_data(m, click_data, time_index, model, pos):
     Input("model-select", "value"),
 )
 def update_time_index(time_index, model):
+    """
+    Update the routes when the time or the model changes.
+
+    Args:
+        time_index: Selected index of the time slider.
+        model: Selected model.
+
+    Returns:
+        The GeoJSON of the route if there is one report, otherwise one
+            per report.
+    """
     valid_time = DS[model].valid_time.data[time_index]
     updates = tuple(route_to_geojson(report, valid_time=valid_time, color=color) for report, color in zip(reports, COLORS))
     if len(reports) == 1:
@@ -998,6 +1083,15 @@ def update_time_index(time_index, model):
     Input("model-select", "value"),
 )
 def update_raster(m, var, time_index, model):
+    """
+    The address of the raster image for the current selection.
+
+    Args:
+        m: Selected member.
+        var: Selected variable.
+        time_index: Selected index of the time slider.
+        model: Selected model.
+    """
     return f"/raster.png?var={var}&time={time_index}&member={m}&model={model}"
 
 
@@ -1008,6 +1102,14 @@ def update_raster(m, var, time_index, model):
     Input("model-select", "value"),
 )
 def update_contour(m, time_index, model):
+    """
+    The contours of the field for the current selection.
+
+    Args:
+        m: Selected member.
+        time_index: Selected index of the time slider.
+        model: Selected model.
+    """
     url = f"/contour_field.geojson?var={DEFAULT_VECTOR_VAR}&time={time_index}&member={m}&model={model}"
     
     with server.test_request_context(url):
@@ -1021,6 +1123,13 @@ def update_contour(m, time_index, model):
     Input("model-select", "value"),
 )
 def update_valid_time(time_index, model):
+    """
+    The text showing the valid time of the current selection.
+
+    Args:
+        time_index: Selected index of the time slider.
+        model: Selected model.
+    """
     vt = pd.to_datetime(DS[model].valid_time.data[time_index], unit="s").strftime("%Y-%m-%dT%H:%M")
     return f"Valid time: {vt}"
 
@@ -1034,6 +1143,16 @@ def update_valid_time(time_index, model):
     Input("map", "zoom"),
 )
 def update_arrows(m, qvar, time_index, model, zoom):
+    """
+    The arrows for the current selection, thinned by the zoom.
+
+    Args:
+        m: Selected member.
+        qvar: Selected variable.
+        time_index: Selected index of the time slider.
+        model: Selected model.
+        zoom: Zoom level of the map.
+    """
     
     density=density_from_zoom(zoom)
     

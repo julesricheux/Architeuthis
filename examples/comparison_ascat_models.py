@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
 """
+Compare the 10 m wind of IFS and GFS with ASCAT observations.
+
+Needs EUMETSAT credentials (EUMDAC_USER, EUMDAC_PWD). IFS and GFS need none. Run from the repository
+root, as a script.
+
 Created on Mon Feb  2 02:10:58 2026
 
 @author: jules

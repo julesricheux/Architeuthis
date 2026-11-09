@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """
+Helpers for the files of the EUMETSAT Data Store.
+
 Created on Thu Jan 29 17:28:10 2026
 
 @author: jrich
@@ -7,12 +9,12 @@ Created on Thu Jan 29 17:28:10 2026
 
 def find_lat_lon(ds):
     """
-    Find latitude and longitude variables in an xarray Dataset
-    using CF conventions (standard_name / units).
+    Find latitude and longitude variables in an xarray Dataset.
 
-    Returns
-    -------
-    lat_name, lon_name : str
+    It uses CF conventions (standard_name / units).
+
+    Returns:
+        The names `lat_name` and `lon_name`.
     """
 
     lat_name = None
