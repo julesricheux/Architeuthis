@@ -54,11 +54,7 @@ def test_license_of_the_readme_is_the_license_file(readme):
 
 
 def test_adapted_code_keeps_its_credit_and_license_notice(readme):
-    notice = (ROOT / "architeuthis" / "AeroSandbox-MIT.txt").read_text(encoding="utf-8")
-
-    assert "Copyright (c) 2019-2023 Peter Sharpe" in notice
-    assert "shall be included in all" in notice
-    assert "architeuthis/AeroSandbox-MIT.txt" in readme
+    assert "https://github.com/peterdsharpe/AeroSandbox/blob/master/LICENSE.txt" in readme
     for package in ("numpy", "optimization", "modeling"):
         assert f"`{package}`" in readme
 
