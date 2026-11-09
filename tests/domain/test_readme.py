@@ -54,8 +54,11 @@ def test_license_of_the_readme_is_the_license_file(readme):
 
 
 def test_adapted_code_keeps_its_credit_and_license_notice(readme):
-    assert "Copyright (c) 2019-2023 Peter Sharpe" in readme
-    assert "shall be included in all" in readme
+    notice = (ROOT / "architeuthis" / "AeroSandbox-MIT.txt").read_text(encoding="utf-8")
+
+    assert "Copyright (c) 2019-2023 Peter Sharpe" in notice
+    assert "shall be included in all" in notice
+    assert "architeuthis/AeroSandbox-MIT.txt" in readme
     for package in ("numpy", "optimization", "modeling"):
         assert f"`{package}`" in readme
 
@@ -77,7 +80,7 @@ def test_tutorials_cover_every_credential_that_is_read():
     names = re.findall(r'_get_env_var\("(\w+)"\)', common)
 
     assert set(names) == {"CDS_API_KEY", "CMEMS_USER", "CMEMS_PWD", "EUMDAC_USER", "EUMDAC_PWD"}
-    section = readme[readme.index("## Credentials"):readme.index("## Core Capabilities")]
+    section = readme[readme.index("## 🔑 Credentials"):readme.index("The Routing Problem")]
     for name in names:
         assert f"`{name}`" in section
 

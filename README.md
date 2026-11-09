@@ -5,7 +5,7 @@
 
 # Architeuthis: Weather Routing for Wind-powered Hybrid Vessels 🦑
 
-**Minimize fuel on a fixed schedule, with real forecasts and your own vessel model.**
+**Minimize fuel on a fixed schedule, with real forecasts, constraints and custom vessel model.**
 
 <!-- Badges -->
 
@@ -37,7 +37,9 @@ An open-source marine weather and decision-making framework for hybrid sailing s
 - 🎲 **Forecast uncertainty** - Optimize each ensemble member, and test a plan against other models, members or vessels
 - 📊 **Ready-to-use outputs** - A4 reports, maps, tables, GPX tracks and an interactive viewer
 
-**Keywords:** weather routing, voyage optimization, fuel saving, wind-assisted ship propulsion, hybrid vessel, passage planning, nonlinear programming, CasADi, IPOPT, GRIB2, xarray, python
+**Keywords:** weather routing, voyage optimization, fuel saving, wind-assisted ship propulsion, hybrid vessel, passage planning, nonlinear optimization, CasADi, IPOPT, GRIB2, xarray, python
+
+**Architeuthis** is the tool used for the **onshore weather routing support** for [Neoliner Origin](https://www.neoline.eu/) 🌬️⛵⚓
 
 ---
 
@@ -72,7 +74,7 @@ The environment is named `py313-architeuthis`. The package then needs no install
 
 ### 💡 Simple Example
 
-This example routes a vessel across the North Atlantic with recent ECMWF forecasts. It needs no credentials, only a polar file for your vessel (see [Your Vessel](#your-vessel)).
+This example routes a vessel across the North Atlantic with recent ECMWF forecasts. It needs no credentials, only a polar file for your vessel (see [Your Vessel](#-your-vessel)).
 
 ```python
 import pandas as pd
@@ -135,8 +137,6 @@ reports.to_gpx()     # a track for your navigation system
 reports.save()       # for the viewer
 plot_report(report)  # one A4 page: speed, sails, power, waves and wind against time
 ```
-
-Architeuthis is the tool used for the onshore weather routing support for [Neoliner Origin](https://www.neoline.eu/)
 
 ---
 
@@ -273,11 +273,11 @@ print(eumdac.AccessToken((os.environ["EUMDAC_USER"], os.environ["EUMDAC_PWD"])).
 
 Architeuthis stands on the work of others, with our thanks:
 
-- **[AeroSandbox](https://github.com/peterdsharpe/AeroSandbox)** by Peter D. Sharpe (MIT). The `numpy`, `optimization` and `modeling` packages are adapted from version 4.2.9.
+- **[AeroSandbox](https://github.com/peterdsharpe/AeroSandbox)** by Peter D. Sharpe (MIT). The `numpy`, `optimization` and `modeling` packages are adapted from version 4.2.9 ([license](licenses/AeroSandbox-MIT.txt)).
 - **[Herbie](https://github.com/blaylockbk/Herbie)** by Brian K. Blaylock (MIT) downloads the forecasts, and its README inspired the structure of this one.
 - **[CasADi](https://github.com/casadi/casadi)** (LGPL) and **[IPOPT](https://github.com/coin-or/Ipopt)** (EPL) differentiate and solve the routing problem.
 - **[Copernicus Marine Toolbox](https://github.com/mercator-ocean/copernicus-marine-toolbox)**, **[xarray](https://github.com/pydata/xarray)**, **[Cartopy](https://github.com/SciTools/cartopy)**, **[Dash](https://github.com/plotly/dash)** and the other dependencies listed in [`pyproject.toml`](pyproject.toml).
-- The forecast, ocean, relief and ice data of the providers listed under [Supported Data Sources](#supported-data-sources).
+- The forecast, ocean, relief and ice data of their providers.
 
 ## Contributing
 

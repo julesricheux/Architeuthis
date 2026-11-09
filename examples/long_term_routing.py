@@ -736,7 +736,7 @@ plot_convergence(reports)
 
 #%% FIGURES: A FEW ROUTES
 
-compared = ReportCollection(reports[index] for index in (4, 9))
+compared = reports[4:10:5]
 
 plot_variable(compared, "sog", unit="kts", figsize=(8, 4), dpi=100)
 
