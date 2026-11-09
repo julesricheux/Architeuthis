@@ -10,16 +10,11 @@ import xarray as xr
 
 import architeuthis.core as core
 from architeuthis.exclusion import (
-    BRITTANY_POLYGON,
     DEFAULT_ZONE_COLOR,
-    NORTH_AMERICA_POLYGON,
     ExclusionZone,
     ExclusionZoneLibrary,
-    brittany_zone,
-    default_exclusion_zones,
     iceberg_zone,
     merge_exclusion_zones,
-    north_america_zone,
 )
 from architeuthis.forecast import Topography
 from architeuthis.icebergs import berg_zone
@@ -191,24 +186,16 @@ def test_missing_geojson_feature_is_reported(tmp_path):
 
 
 # ------------------------------------------------------------------------------
-# Zones used by default
+# Zones come from the user, or from a data source for the iceberg limit
 # ------------------------------------------------------------------------------
 
 
-def test_default_zones_are_in_the_former_order():
-    zones = default_exclusion_zones(verbose=False)
+def test_package_holds_no_geographic_zone():
+    import architeuthis.exclusion as exclusion
 
-    assert [zone.name for zone in zones] == ["north_america", "brittany", "iceberg_limit"]
-    assert [zone.label for zone in zones] == ["North America", "Brittany", "Iceberg limit"]
-
-
-def test_default_polygons_are_unchanged():
-    assert north_america_zone().polygon == NORTH_AMERICA_POLYGON
-    assert brittany_zone().polygon == BRITTANY_POLYGON
-    assert len(NORTH_AMERICA_POLYGON) == 60
-    assert len(BRITTANY_POLYGON) == 23
-    assert NORTH_AMERICA_POLYGON[0] == [46.6475507, -53.0879974]
-    assert BRITTANY_POLYGON[0] == [47.234906794905456, -2.298894594711654]
+    for name in ("default_exclusion_zones", "north_america_zone", "brittany_zone", "NORTH_AMERICA_POLYGON", "BRITTANY_POLYGON"):
+        assert not hasattr(exclusion, name)
+    assert not hasattr(core, "exclusion_zones")
 
 
 def test_iceberg_zone_comes_from_the_bulletin():
@@ -219,12 +206,7 @@ def test_iceberg_zone_comes_from_the_bulletin():
     assert zone.outline == berg_zone[:-3]
 
 
-def test_scripts_keep_reading_the_zones_from_core():
-    zones = core.exclusion_zones
-
-    assert len(zones) == 3
-    # The scripts leave out the iceberg limit with exclusion_zones[:-1].
-    assert [zone.name for zone in zones[:-1]] == ["north_america", "brittany"]
+def test_core_gives_the_iceberg_limit():
     assert core.berg_zone == berg_zone
 
 
@@ -365,7 +347,9 @@ def test_iceberg_limit_without_a_bulletin_is_listed_as_unavailable(monkeypatch):
 
 
 def test_one_overlay_per_zone():
-    overlays = exclusion_zone_overlays(default_exclusion_zones(verbose=False))
+    zones = [ExclusionZone("first", SQUARE, label="First"), ExclusionZone("second", SQUARE), iceberg_zone(verbose=False)]
 
-    assert [overlay.name for overlay in overlays] == ["North America", "Brittany", "Iceberg limit"]
+    overlays = exclusion_zone_overlays(zones)
+
+    assert [overlay.name for overlay in overlays] == ["First", "second", "Iceberg limit"]
     assert all(overlay.checked for overlay in overlays)

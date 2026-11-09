@@ -2,36 +2,62 @@
 
 The reference of Architeuthis: data sources, reports, figures, exclusion zones and the viewer. For installation and a first routing, see the [README](../README.md).
 
-- [Data sources: `presets`](#data-sources-presets)
+- [Data sources](#data-sources)
 - [Keeping and reusing results](#keeping-and-reusing-results)
 - [Plotting](#plotting)
 - [Exclusion zones](#exclusion-zones)
 - [Displaying routes: `ui.py`](#displaying-routes-uipy)
 
-## Data sources: `presets`
+## Data sources
 
 [`examples/`](../examples/README.md) has one script per use, each with its settings at the top, and a skeleton of a routing script. Start with `examples/simple_routing.py`.
 
-The data sources of these scripts come from `architeuthis.presets`:
+Each source is built explicitly with its class, then downloaded with `load_data`, and each variable that the routing queries is registered with `add_interpolator`. Dimensions must be given in the order of the array.
 
 ```python
-from architeuthis import presets
-from architeuthis.common import Domain
+from architeuthis.forecast import CopernicusForecast, DeterministicHerbieForecast, Topography
+from architeuthis.vessel import Vessel
 
-domain = Domain(min_lon=-70., max_lon=5., min_lat=30., max_lat=60.)
+domain = dict(min_lon=-70., max_lon=5., min_lat=30., max_lat=60.)
 
-atmosphere = presets.atmosphere("ifs", domain, date=date, fxx=steps, wind_factor=1.2)
-wave = presets.wave("ifs", domain, date=date, fxx=steps)
-current = presets.current_mercator(domain, date=date)
-topography = presets.topography(domain, exclusion_zones=zones)
-boat = presets.vessel("polar_eff45.nc", sfc=220., hotel_load=194., max_power=4100.)
+atmosphere = DeterministicHerbieForecast("wind", model="ifs", product="oper", regex=r":10[u|v]:", fxx=steps, date=date, **domain)
+atmosphere.load_data()
+atmosphere.data["u10"] = atmosphere.data["u10"] * 1.2  # a correction of the wind speed, if you want one
+atmosphere.data["v10"] = atmosphere.data["v10"] * 1.2
+atmosphere.add_interpolator("u10", "valid_time", "latitude", "longitude")
+atmosphere.add_interpolator("v10", "valid_time", "latitude", "longitude")
+
+wave = DeterministicHerbieForecast("wave", model="ifs", product="wave", regex=r":swh:|:mwd:", fxx=steps, date=date, **domain)
+wave.load_data()
+wave.add_interpolator("swh", "valid_time", "latitude", "longitude")
+wave.add_interpolator("mwd", "valid_time", "latitude", "longitude")
+
+current = CopernicusForecast("current", dataset="cmems_mod_glo_phy_anfc_0.083deg_PT1H-m", variables=["uo", "vo"], date=date, **domain)
+current.load_data()
+current.add_interpolator("uo", "valid_time", "latitude", "longitude")
+current.add_interpolator("vo", "valid_time", "latitude", "longitude")
+
+topography = Topography("topography", exclusion_zones=zones, **domain)
+topography.load_data()
+topography.add_interpolator("distance_to_iso0", "lat", "lon", var_key="z")
+
+vessel = Vessel("vessel", filepath="polar_eff45.nc", sfc=220., hotel_load=194., max_power=4100.)
+vessel.load_data()
+for key in ("bhp", "max_bhp", "sails_contribution"):
+    vessel.add_interpolator(key, "stw", "tws", "twa", "hs", "wa", method="linear")
 ```
 
-| Function | Gives |
+| Class | Gives |
 | --- | --- |
-| `presets.vessel(filepath, sfc=0., hotel_load=0., max_power=1e12, name="vessel", label=None, verbose=True)` | A vessel with its interpolators. `sfc` must be given for a routing, because the objective is zero without it. `label` comes from the file name by default: `eff45` for `..._eff45.nc`. |
-| `presets.calm_current(like, name="calm_current", verbose=True)` | No current at all, on the grid of the forecast `like`, to route without a current provider. |
-| `presets.hrdps_atmosphere(domain=Domain(), date=None, fxx=tuple(range(0, 49)), wind_factor=1.0, resolution=0.0225, name="wind_hrdps", verbose=True)` | The 10 m wind of HRDPS continental, regridded on a regular grid. The latest run by default. Its wind direction is not reliable yet: the components are relative to the rotated grid of the model and are not rotated, about 45° off around Saint-Pierre-et-Miquelon. |
+| `forecast.DeterministicHerbieForecast` | A deterministic forecast through Herbie: IFS, GFS and their wave models, chosen with `model`, `product` and `regex`. No account. |
+| `forecast.EnsembleHerbieForecast` | The members of an ensemble, IFS for example. `add_interpolator` takes `var_dim, time_dim, member_dim, latitude_dim, longitude_dim`. No account. |
+| `forecast.HRDPSForecast` | The 10 m wind of HRDPS continental, regridded on a regular grid, the latest run by default. Its wind direction is not reliable yet: the components are relative to the rotated grid of the model and are not rotated, about 45° off around Saint-Pierre-et-Miquelon. |
+| `forecast.CopernicusForecast` | Currents and other products of Copernicus Marine. Needs an account. |
+| `forecast.CDSForecast` | ERA5 reanalysis. Needs an account. |
+| `forecast.Topography` | The signed distance to land and to your exclusion zones. It needs only its box, and `exclusion_zones` if you have some. |
+| `vessel.Vessel` | A vessel, from its polar file. `sfc` must be given for a routing, because the objective is zero without it. `label` comes from the file name by default: `eff45` for `..._eff45.nc`. |
+
+To route without a current provider, fill a `Forecast` with zeros on the grid of the wind, as `examples/passage_planning.py` does.
 
 ## Keeping and reusing results
 
@@ -199,7 +225,7 @@ plot_fuel_distribution({"Eff. 45%": reports.select(vessel="eff45"), "Eff. 60%": 
 An `ExclusionZone` is a named `[lat, lon]` polygon that routes stay out of, with what the UI needs to show it. It reads like its list of points, and plain lists are still accepted wherever a zone is.
 
 ```python
-from architeuthis.exclusion import ExclusionZone, ExclusionZoneLibrary, default_exclusion_zones
+from architeuthis.exclusion import ExclusionZone, ExclusionZoneLibrary, iceberg_zone
 from architeuthis.forecast import Topography
 
 zone = ExclusionZone(
@@ -215,10 +241,10 @@ library.save(zone)
 library.load("safety")
 list(library)                            # every stored zone
 
-topography = Topography("topo", exclusion_zones=default_exclusion_zones() + [zone], **domain)
+topography = Topography("topo", exclusion_zones=[zone, iceberg_zone()], **domain)
 ```
 
-`default_exclusion_zones()` gives North America, Brittany and the latest IIP iceberg limit, in this order. The bulletin is downloaded when it is first needed in a session, not at import, and `architeuthis.icebergs.refresh()` fetches it again. If the server cannot be reached, the last downloaded bulletin is used. If there is none, the zone is empty and the routing runs without the iceberg limit, with a warning.
+The zones of a routing are yours: the package holds no geographic zone, and `examples/simple_routing.py` shows some written as plain lists. `iceberg_zone()` gives the latest IIP iceberg limit. The bulletin is downloaded when it is first needed in a session, not at import, and `architeuthis.icebergs.refresh()` fetches it again. If the server cannot be reached, the last downloaded bulletin is used. If there is none, the zone is empty and the routing runs without the iceberg limit, with a warning.
 
 `ExclusionZone.from_geojson(path, feature_id)` reads a polygon from a GeoJSON file. `visible` only concerns the display: a hidden zone still applies to the routing.
 
@@ -231,4 +257,4 @@ python ui.py
 
 `ui.py` serves on port 8052 and must be started from the `architeuthis/` folder. It displays the most recently modified file of `~/data/routes/`, so `reports.save()` is all it takes for the latest routes to appear at its next start. Each report needs the entries `model`, `vessel`, `member`, `init_fac`, `solve` and `fuel`, and optimized routes (`solve` 1) are shown when the page opens.
 
-The default exclusion zones and those of `~/data/exclusion_zones/` are drawn with their label on the map, whether or not a routing used them. Each one can be hidden in the layers control at the top right of the map. The iceberg limit is listed as `Iceberg limit (unavailable)` when no bulletin could be obtained, so that it is not taken for a limit far from the route.
+The iceberg limit and the zones of `~/data/exclusion_zones/` are drawn with their label on the map, whether or not a routing used them. Each one can be hidden in the layers control at the top right of the map. The iceberg limit is listed as `Iceberg limit (unavailable)` when no bulletin could be obtained, so that it is not taken for a limit far from the route.

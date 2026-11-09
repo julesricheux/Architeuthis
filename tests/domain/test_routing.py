@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from architeuthis.common import GUST_DEFAULT_RATIO
-from architeuthis.core import Leg, RoutingAnalysis, Schedule, Voyage, exclusion_zones
+from architeuthis.core import Leg, RoutingAnalysis, Schedule, Voyage
 from architeuthis.toolbox.geo_utils import distances, poly_deviated_route
 
 HOUR = 3600.0
@@ -92,11 +92,6 @@ def test_voyage_derives_time_and_speed():
     assert voyage.eta == ETA
     assert voyage.departure == pytest.approx(DEPARTURE)
     assert voyage.arrival == pytest.approx(ARRIVAL)
-
-
-def test_exclusion_zones_are_lat_lon_polygons():
-    assert len(exclusion_zones) == 3
-    assert all(np.asarray(zone).ndim == 2 and np.asarray(zone).shape[1] == 2 for zone in exclusion_zones)
 
 
 # ------------------------------------------------------------------------------

@@ -215,9 +215,8 @@ def test_routes_are_drawn_where_the_report_says(overlays, tagged_reports):
     assert line["geometry"]["coordinates"][0] == pytest.approx([optimized["lon"][0], optimized["lat"][0]])
 
 
-@pytest.mark.parametrize("label", ["North America", "Brittany", "Iceberg limit"])
-def test_default_zones_can_be_hidden_under_their_label(overlays, label):
-    assert overlays[label]["checked"] is True
+def test_iceberg_limit_can_be_hidden_under_its_label(overlays):
+    assert overlays["Iceberg limit"]["checked"] is True
 
 
 def test_zones_of_the_library_are_on_the_page(overlays):
@@ -231,14 +230,14 @@ def test_zone_labels_are_written_on_the_map(layout):
         if component["type"] == "Tooltip" and component["props"].get("className") == "exclusion-zone-label"
     }
 
-    assert labels == {"North America", "Brittany", "Iceberg limit", "Safety margin"}
+    assert labels == {"Iceberg limit", "Safety margin"}
 
 
 def test_zone_lines_follow_their_outline(ui, layout):
     lines = {component["props"]["id"]: component["props"] for component in walk(layout) if component["type"] == "Polyline"}
 
-    assert lines["exclusion-zone-brittany"]["positions"] == next(
-        zone.outline for zone in ui["exclusion_zones"] if zone.name == "brittany"
+    assert lines["exclusion-zone-safety"]["positions"] == next(
+        zone.outline for zone in ui["exclusion_zones"] if zone.name == "safety"
     )
     assert lines["exclusion-zone-safety"]["color"] == "#00ff00"
 
@@ -247,7 +246,7 @@ def test_every_layer_is_in_the_layers_control(layout):
     control = next(component for component in walk(layout) if component["type"] == "LayersControl")
     names = {child["props"].get("name") for child in control["props"]["children"]}
 
-    assert {"North America", "Brittany", "Iceberg limit", "Safety margin"} <= names
+    assert {"Iceberg limit", "Safety margin"} <= names
 
 
 def test_page_and_callbacks_are_served(client, ui):

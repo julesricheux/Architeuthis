@@ -73,25 +73,29 @@ and this project follows Semantic Versioning https://semver.org
 - GitHub Actions workflow running the tests on every push.
 - `Opti` and `OptiSol` exported from the top-level package.
 - Declared missing dependencies in `pyproject.toml`, `requirements.txt` and `environment.yaml`.
-- `exclusion` module: `ExclusionZone` (polygon, label, color, displayed outline, initial visibility) and `ExclusionZoneLibrary` (`~/data/exclusion_zones/`). `Topography` accepts zones and plain lists of points. `core.exclusion_zones` is still available.
+- `exclusion` module: `ExclusionZone` (polygon, label, color, displayed outline, initial visibility) and `ExclusionZoneLibrary` (`~/data/exclusion_zones/`). `Topography` accepts zones and plain lists of points.
 - `ui.py` writes the label of each exclusion zone on the map and each zone can be hidden in the layers control, including those of the library. An iceberg limit without data is listed as unavailable.
 - `report` module: `RoutingReport`, the dict returned by `run` and `evaluate`, and `ReportCollection` to select, tabulate, export to GPX, save and reload reports. The JSON format is unchanged and `ui.py` reads the files as before.
 - `plot_utils.plot_report`, the A4 page of `examples/simple_routing.py`, documented in the README. Its output is pixel-identical to the former function. Also `draw`, `get_steps`, `plot_variable`, `plot_power_and_weather`, `plot_quantiles`, `plot_fuel_quantiles`, `plot_convergence`, `plot_fuel_distribution` and `plot_fuel_vs_etd`. `plot_route` takes `ax`, `save_as` and `show`.
-- `presets` module: ready-made atmosphere, wave, ensemble, current and topography sources. `common.Domain`: a longitude and latitude box for `**domain`.
 - `route.RouteSet` and `RouteSetLibrary` (`~/data/route_sets/`): the ortho, minus and plus routes of a voyage, reversed and restarted together. `Voyage.from_routes` builds a voyage from them.
 - `Vessel.label`, taken from the polar file name by default, and `Vessel.add_interpolators`.
 - `RoutingAnalysis.run` takes `tags`, entries added to the report, and `callback`, called at each iteration. Reports have `solve`, `model`, `vessel` and `member` by default.
 - `common.status` and `set_status_sink`: messages can be sent to a GUI instead of being printed.
-- Examples rewritten around these additions, with their settings at the top and one line per figure, and `examples/README.md` as an index with a skeleton of a routing script. Compared with the former scripts on synthetic data, the results are the same except for the real gust in `passage_planning` and `ifs_route_tested_with_gfs`, and the reference distance and `model` tag of `short_term_routing`. `examples/reference_data.py` keeps what the former commented-out lines held: positions, past schedules, polars, fits and constraint variants.
-- `forecast.HRDPSForecast` and `presets.hrdps_atmosphere`: the HRDPS regridding of `examples/short_term_routing.py`, now reusable. Its wind direction is not reliable yet: the components are relative to the rotated grid and are not rotated.
-- `presets.vessel` and `presets.calm_current`.
+- Examples use the plot helpers and `ReportCollection` for their results, and `examples/README.md` is an index with a skeleton of a routing script.
+- `forecast.HRDPSForecast`: the HRDPS regridding of `examples/short_term_routing.py`, now reusable. Its wind direction is not reliable yet: the components are relative to the rotated grid and are not rotated.
 - `RoutingReport.summary` and `ReportCollection.summary`: the key figures of reports. A slice of a `ReportCollection` is a `ReportCollection`.
 - `plot_utils.plot_route_set` and `plot_ensemble_along_route`. `plot_fuel_distribution` takes `horizontal`.
 - Tests running every example from start to finish on synthetic data (`tests/domain/test_examples.py`).
 - README tutorials to set the credentials of Copernicus Marine, the Climate Data Store and EUMETSAT.
 - New README for engineers who route motor and hybrid vessels, with credits and license. The reference of the former README moved word for word to `docs/user_guide.md`.
 
+### Removed
+- No `presets` module and no `common.Domain`: each data source is built explicitly with its class (`DeterministicHerbieForecast`, `EnsembleHerbieForecast`, `HRDPSForecast`, `CopernicusForecast`, `Topography`) and its interpolators are registered in the script.
+- No geographic zone in the package: `default_exclusion_zones`, `north_america_zone`, `brittany_zone`, their polygons and `core.exclusion_zones` are gone. Zones, waypoints and legs are defined by the user, as in the examples. `exclusion.iceberg_zone` remains, because it comes from the IIP bulletin, and `ui.py` draws it with the zones of `~/data/exclusion_zones/`.
+- `examples/reference_data.py`: its content is back in the examples, as the commented lines they originally held.
+
 ### Changed
+- Examples restored from their versions before the refactoring: vessel files, domains, positions, schedules, constraints and solver options, active or commented, are where they were. The settings of the former figures are kept in a cell of each script. Their schedules now follow the latest forecasts, the dates of past studies staying as comments.
 - Docstrings of the package, outside the vendored `numpy`, `modeling` and `optimization`, follow one layout: `"""` alone on its first and last lines, a one-line summary, Google-style sections, 72 columns. Every public module, class, function and method now has a docstring.
 - Importing Architeuthis has no side effect: no network access, logging setup or file writing. The iceberg limit is fetched on first use, logging is set up by `load_data` (`common.setup_logging`) and `~/.cdsapirc` is written before a CDS download (`common.ensure_cdsapirc`). Importing `plot_utils` no longer changes the matplotlib style: call `set_plot_style()` for your own figures.
 - The JSON codec moved to `toolbox/json_utils.py`, so that reports do not need Dash. `wrappers/json_wrapper.py` still exports it.

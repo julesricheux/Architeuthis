@@ -3,7 +3,7 @@
 Base classes of the domain and data objects, and shared helpers.
 
 It defines `ArchiteuthisObject`, `ArchiteuthisData` with its `load_data`
-pipeline and its lookup tables, `ArchiteuthisSpatialData` and `Domain`.
+pipeline and its lookup tables, and `ArchiteuthisSpatialData`.
 It reads the credentials from the environment and holds the `status`
 output.
 
@@ -15,7 +15,6 @@ Created on Thu Jan 15 12:44:25 2026
 import os
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 
 import architeuthis.numpy as np
 from architeuthis.modeling import InterpolatedModel
@@ -196,43 +195,6 @@ def to_timestamp(value: Union[Datetime, float, int]) -> float:
     if timestamp.tzinfo is None:
         timestamp = timestamp.tz_localize("UTC")
     return float(timestamp.timestamp())
-
-@dataclass(frozen=True)
-class Domain:
-    """
-    A longitude and latitude box.
-
-    It is unpacked with `**domain` wherever `min_lon`, `max_lon`,
-    `min_lat` and `max_lat` are expected.
-
-    Example:
-        >>> north_atlantic = Domain(
-        ...     min_lon=-70., max_lon=5., min_lat=30., max_lat=60.
-        ... )
-        >>> Topography("topo", **north_atlantic)
-    """
-
-    min_lon: float = -180.
-    max_lon: float = 180.
-    min_lat: float = -90.
-    max_lat: float = 90.
-
-    def keys(self):
-        """
-        The keys that `**domain` unpacks.
-        """
-        return ("min_lon", "max_lon", "min_lat", "max_lat")
-
-    def __getitem__(self, key: str) -> float:
-        """
-        Read a bound by its name, for `**domain`.
-
-        Raises:
-            KeyError: If `key` is not one of `keys()`.
-        """
-        if key not in self.keys():
-            raise KeyError(key)
-        return getattr(self, key)
 
 
 class ArchiteuthisObject(ABC):

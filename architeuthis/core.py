@@ -33,7 +33,6 @@ from architeuthis.voyage import PassagePlan, PassagePlanLibrary, Schedule, Voyag
 from architeuthis.exclusion import (  # noqa: F401
     ExclusionZone,
     ExclusionZoneLibrary,
-    default_exclusion_zones,
 )
 from architeuthis.toolbox.geo_utils import (
     great_circle_route,
@@ -112,15 +111,11 @@ SOLVED = {
 
 def __getattr__(name: str):
     """
-    Compute `exclusion_zones` and `berg_zone` when they are read.
+    Compute `berg_zone` when it is read.
 
     The iceberg limit is thus fetched when it is used, not when this
     module is imported.
     """
-    # `exclusion_zones` remains a list of zones, in the same order, but the iceberg limit it
-    # holds is only fetched when it is used, not when this module is imported.
-    if name == "exclusion_zones":
-        return default_exclusion_zones()
     if name == "berg_zone":
         from architeuthis.icebergs import berg_zone
         return berg_zone

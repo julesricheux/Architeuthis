@@ -61,7 +61,7 @@ from architeuthis.forecast import (
 from architeuthis.common import _HOME
 from architeuthis.exclusion import (
     ExclusionZoneLibrary,
-    default_exclusion_zones,
+    iceberg_zone,
     merge_exclusion_zones,
 )
 from architeuthis.report import ReportCollection, latest_report_file
@@ -237,6 +237,7 @@ steps_00_12 = list(range(0, 145, 3)) + list(range(150, 361, 6))
 # mirror_end = pd.Timestamp('2026-01-31 23:00:00')
 
 recent = pd.Timestamp("now").floor("1d")
+# recent = pd.Timestamp('2026-11-08 00:00:00')
 
 ATMOS = {}
 
@@ -290,6 +291,7 @@ if PRODUCT == "oper":
 
 
 recent = pd.Timestamp("now").floor("1d")
+# recent = pd.Timestamp('2026-11-08 00:00:00')
 
 WAVE = {}
 
@@ -400,8 +402,8 @@ latest_file = latest_report_file(ROUTES_DIR)
 
 reports = ReportCollection.load(latest_file)
 
-# Exclusion zones of the routing, and those stored in ~/data/exclusion_zones/
-exclusion_zones = merge_exclusion_zones(default_exclusion_zones(), ExclusionZoneLibrary())
+# The latest iceberg limit, and the zones you stored in ~/data/exclusion_zones/
+exclusion_zones = merge_exclusion_zones([iceberg_zone()], ExclusionZoneLibrary())
 
 
 # Load the GeoJSON file

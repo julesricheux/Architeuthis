@@ -76,29 +76,49 @@ This example routes a vessel across the North Atlantic with recent ECMWF forecas
 
 ```python
 import pandas as pd
+import xarray as xr
 
-from architeuthis import presets
-from architeuthis.common import Domain
 from architeuthis.core import RoutingAnalysis
+from architeuthis.forecast import DeterministicHerbieForecast, Forecast, Topography
 from architeuthis.report import ReportCollection
 from architeuthis.route import Route, Waypoint
 from architeuthis.toolbox.plot_utils import plot_report
+from architeuthis.vessel import Vessel
 from architeuthis.voyage import Voyage
 
-domain = Domain(min_lon=-60., max_lon=0., min_lat=38., max_lat=56.)
+domain = dict(min_lon=-60., max_lon=0., min_lat=38., max_lat=56.)
 
 # Yesterday's 00 UTC forecast, with its lead times in hours
 today = pd.Timestamp("now").floor("1d")
 date = today - pd.Timedelta(days=1)
 steps = list(range(0, 145, 3)) + list(range(150, 241, 6))
 
-atmosphere = presets.atmosphere("ifs", domain, date=date, fxx=steps)
-wave = presets.wave("ifs", domain, date=date, fxx=steps)
-current = presets.calm_current(atmosphere)  # presets.current_mercator needs a Copernicus Marine account
-topography = presets.topography(domain)
+atmosphere = DeterministicHerbieForecast("wind", model="ifs", product="oper", regex=r":10[u|v]:", fxx=steps, date=date, **domain)
+atmosphere.load_data()
+atmosphere.add_interpolator("u10", "valid_time", "latitude", "longitude")
+atmosphere.add_interpolator("v10", "valid_time", "latitude", "longitude")
+
+wave = DeterministicHerbieForecast("wave", model="ifs", product="wave", regex=r":swh:|:mwd:", fxx=steps, date=date, **domain)
+wave.load_data()
+wave.add_interpolator("swh", "valid_time", "latitude", "longitude")
+wave.add_interpolator("mwd", "valid_time", "latitude", "longitude")
+
+# Calm water on the grid of the wind. For real currents, see CopernicusForecast in examples/post_leg_rewind.py
+calm = xr.zeros_like(atmosphere.data["u10"])
+current = Forecast("calm_current", date=None, fxx=None, **domain)
+current.data = xr.Dataset({"uo": calm, "vo": calm})
+current.add_interpolator("uo", "valid_time", "latitude", "longitude")
+current.add_interpolator("vo", "valid_time", "latitude", "longitude")
+
+topography = Topography("topography", **domain)
+topography.load_data()
+topography.add_interpolator("distance_to_iso0", "lat", "lon", var_key="z")
 
 # Specific fuel consumption in g/kWh, loads and power in kW
-vessel = presets.vessel("my_vessel_polar.nc", sfc=220., hotel_load=194., max_power=4100.)
+vessel = Vessel("vessel", filepath="my_vessel_polar.nc", sfc=220., hotel_load=194., max_power=4100.)
+vessel.load_data()
+for key in ("bhp", "max_bhp", "sails_contribution"):
+    vessel.add_interpolator(key, "stw", "tws", "twa", "hs", "wa", method="linear")
 
 # The reference route and the schedule, in UTC
 route = Route("crossing", [Waypoint(47.725, -4.380, "Penmarch"), Waypoint(46.551, -53.321, "Cape Race")])
@@ -140,7 +160,7 @@ Each variable has the five dimensions below, in this order:
 | `hs` | Significant wave height | m |
 | `wa` | Wave angle, 0 to 180 | deg |
 
-`sfc` and `hotel_load` are given to `presets.vessel` as constants or as functions of the power, and `sfc` must be set because the objective is zero without it. A polar named `..._eff45.nc` gets the label `eff45` in reports, or you can give any `label`.
+`sfc` and `hotel_load` are given to `Vessel` as constants or as functions of the power, and `sfc` must be set because the objective is zero without it. A polar named `..._eff45.nc` gets the label `eff45` in reports, or you can give any `label`.
 
 ---
 
@@ -150,7 +170,7 @@ IFS, GFS, HRDPS, ETOPO and the iceberg limit need no account. The other provider
 
 | You want | Provider | Environment variables |
 | --- | --- | --- |
-| Currents, `presets.current_mercator()` | [Copernicus Marine](#copernicus-marine-currents) | `CMEMS_USER`, `CMEMS_PWD` |
+| Currents, `forecast.CopernicusForecast` | [Copernicus Marine](#copernicus-marine-currents) | `CMEMS_USER`, `CMEMS_PWD` |
 | Reanalysis, `forecast.CDSForecast` | [Climate Data Store](#climate-data-store-era5) | `CDS_API_KEY` |
 | Satellite observations, `satellite.ASCATData`, `satellite.PoseidonData` | [EUMETSAT](#eumetsat-satellite-observations) | `EUMDAC_USER`, `EUMDAC_PWD` |
 
@@ -181,7 +201,7 @@ from getpass import getpass
 os.environ["CMEMS_USER"] = "your-username"
 os.environ["CMEMS_PWD"] = getpass("Copernicus Marine password: ")
 
-from architeuthis import presets
+from architeuthis.forecast import CopernicusForecast
 ```
 
 To check which variables Python can see, without showing their values:
@@ -265,4 +285,4 @@ Please report bugs or suggest features via [issues](https://github.com/julesrich
 
 ## ⚖️ License
 
-[MIT](LICENSE).
+[GNU General Public License v3.0](LICENSE).

@@ -713,9 +713,9 @@ def plot_ensemble_along_route(report, atmosphere, wave, ylim=None, figsize=(10, 
     Args:
         report: The report of the route.
         atmosphere: Ensemble forecast with the `u10` and `v10`
-            interpolators, for example `presets.ensemble_atmosphere`.
+            interpolators, for example an `EnsembleHerbieForecast`.
         wave: Ensemble forecast with the `swh` interpolator, for example
-            `presets.ensemble_wave`.
+            an `EnsembleHerbieForecast`.
         ylim: Vertical limits by panel name, `bhp`, `swh` or `tws`, for
             example `{"bhp": (0., 2700.), "swh": (0., 7.), "tws": (0.,
             40.)}`. They start at 0 by default.

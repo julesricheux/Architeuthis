@@ -99,7 +99,13 @@ def test_cds_tutorial_gives_the_url_that_is_written(readme):
 
 
 def test_data_sources_of_the_readme_exist():
-    from architeuthis import presets
+    import architeuthis.forecast as forecast
 
-    for name in ("atmosphere", "wave", "ensemble_atmosphere", "ensemble_wave", "hrdps_atmosphere", "current_mercator", "topography"):
-        assert callable(getattr(presets, name))
+    for name in ("DeterministicHerbieForecast", "EnsembleHerbieForecast", "HRDPSForecast", "CopernicusForecast", "CDSForecast", "Topography"):
+        assert callable(getattr(forecast, name))
+
+
+def test_package_has_no_presets():
+    import importlib.util
+
+    assert importlib.util.find_spec("architeuthis.presets") is None

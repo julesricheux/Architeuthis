@@ -6,7 +6,6 @@ Data sources are replaced where they load their data, and each run stops after a
 this checks that the scripts run and what they produce, not the quality of their routes.
 """
 
-import ast
 import os
 import re
 import runpy
@@ -23,7 +22,7 @@ import xarray as xr
 import architeuthis
 from architeuthis.common import _HOME
 from architeuthis.core import RoutingAnalysis
-from architeuthis.exclusion import ExclusionZone, ExclusionZoneLibrary
+from architeuthis.exclusion import ExclusionZoneLibrary
 from architeuthis.forecast import (
     CopernicusForecast,
     DeterministicHerbieForecast,
@@ -32,7 +31,7 @@ from architeuthis.forecast import (
     Topography,
 )
 from architeuthis.report import ReportCollection
-from architeuthis.route import RouteLibrary, RouteSetLibrary
+from architeuthis.route import RouteLibrary
 from architeuthis.satellite import ASCATData
 from architeuthis.vessel import Vessel
 from architeuthis.voyage import PassagePlanLibrary
@@ -48,11 +47,11 @@ SOON = (TODAY - pd.Timedelta(days=2), TODAY + pd.Timedelta(days=16))
 
 # First and last time of the forecasts, around the schedule of each script.
 WINDOWS = {
-    "simple_routing.py": ("2026-11-05", "2026-11-17"),
-    "long_term_routing.py": ("2026-09-03", "2026-09-16"),
-    "ensemble_routing.py": ("2026-05-28", "2026-06-12"),
+    "simple_routing.py": SOON,
+    "long_term_routing.py": SOON,
+    "ensemble_routing.py": SOON,
     "post_leg_rewind.py": ("2025-12-16", "2025-12-24"),
-    "short_term_routing.py": ("2026-02-23", "2026-02-28"),
+    "short_term_routing.py": SOON,
     "passage_planning.py": SOON,
     "ifs_route_tested_with_gfs.py": SOON,
     "comparison_ascat_models.py": (TODAY - pd.Timedelta(days=4), TODAY + pd.Timedelta(days=2)),
@@ -166,7 +165,7 @@ def run_script(script, folder):
     if script == QUICK_START:
         source = quick_start_of_readme()
     else:
-        source = (EXAMPLES / script).read_text(encoding="utf-8").replace("MEMBERS = list(range(1, 51))", "MEMBERS = [1, 2]")
+        source = (EXAMPLES / script).read_text(encoding="utf-8").replace("members = list(range(1,51,1))", "members = [1, 2]")
     run_file = folder / script
     run_file.write_text(source, encoding="utf-8")
 
@@ -206,11 +205,6 @@ def example(tmp_path_factory):
     def get(script):
         if script not in runs:
             folder = tmp_path_factory.mktemp(script.removesuffix(".py"))
-            if script == "simple_routing.py":
-                ExclusionZoneLibrary().save(
-                    ExclusionZone("stored", [[45.0, -30.0], [45.0, -25.0], [40.0, -25.0]]),
-                    overwrite=True,
-                )
             variables = run_script(script, folder)
             latest = ReportCollection.latest() if script == "simple_routing.py" else None
             runs[script] = SimpleNamespace(variables=variables, folder=folder, latest=latest)
@@ -238,7 +232,7 @@ def test_quick_start_of_readme_runs_and_gives_its_results(example):
 def test_every_example_is_run_by_these_tests():
     scripts = {path.name for path in EXAMPLES.glob("*.py")}
 
-    assert scripts - {"reference_data.py"} == set(WINDOWS)
+    assert scripts == set(WINDOWS)
 
 
 def test_simple_routing_gives_what_ui_displays(example):
@@ -257,14 +251,13 @@ def test_simple_routing_gives_what_ui_displays(example):
 def test_simple_routing_stores_its_routes_and_plans(example):
     variables = example("simple_routing.py").variables
 
-    assert RouteSetLibrary().load("simple").name == "simple"
-    assert RouteLibrary().load("simple_port").name == "simple_port"
+    for route in (variables["routeSbd"], variables["routeO"], variables["routePrt"]):
+        assert RouteLibrary().load(route.name).name == route.name
     for plan in variables["plans"]:
         assert PassagePlanLibrary().load(plan.name).name == plan.name
 
     # Every optimized plan is tested with each model and vessel.
-    assert len(variables["solved_plans"]) == 4
-    assert all(plan.metadata["tags"]["solve"] for plan in variables["solved_plans"])
+    assert sum(1 for plan in variables["plans"] if plan.metadata["solve"]) == 4
     assert len(variables["evaluations"]) == 4 * 2 * 3
 
 
@@ -272,10 +265,17 @@ def test_simple_routing_writes_gpx_tracks(example):
     assert len(list(example("simple_routing.py").folder.glob("track_*.gpx"))) == 4
 
 
-def test_simple_routing_uses_the_zones_of_the_library(example):
-    zones = example("simple_routing.py").variables["exclusion_zones"]
+def test_simple_routing_stores_its_zones_for_the_ui(example):
+    example("simple_routing.py")
 
-    assert "stored" in [getattr(zone, "name", None) for zone in zones]
+    assert {"north_america", "brittany"} <= {zone.name for zone in ExclusionZoneLibrary()}
+
+
+def test_examples_define_their_own_zones_and_their_own_sources():
+    for script in WINDOWS:
+        source = (EXAMPLES / script).read_text(encoding="utf-8")
+        assert "presets" not in source
+        assert "reference_data" not in source
 
 
 def test_ensemble_routing_evaluates_each_plan_in_each_member(example):
@@ -284,27 +284,3 @@ def test_ensemble_routing_evaluates_each_plan_in_each_member(example):
     assert len(evaluations) == 2 * 2
     assert {report["plan_member"] for report in evaluations} == {1, 2}
     assert {report["member"] for report in evaluations} == {1, 2}
-
-
-def test_reference_data_runs_nothing_and_no_example_needs_it():
-    source = (EXAMPLES / "reference_data.py").read_text(encoding="utf-8")
-
-    assert not any(isinstance(statement, (ast.Import, ast.ImportFrom)) for statement in ast.parse(source).body)
-    for script in WINDOWS:
-        assert "import reference_data" not in (EXAMPLES / script).read_text(encoding="utf-8")
-        assert "from reference_data" not in (EXAMPLES / script).read_text(encoding="utf-8")
-
-
-def test_reference_data_keeps_valid_positions():
-    data = runpy.run_path(str(EXAMPLES / "reference_data.py"))
-
-    positions = [
-        *data["PLACES"].values(),
-        *data["CARIBBEAN_LEG"],
-        *data["SAFETY_MARGIN"],
-        *(position for _, position in data["POSITION_REPORTS"]),
-        *(position for _, position in data["IIP_WAYPOINTS"]),
-    ]
-    assert len(positions) > 50
-    for lat, lon in positions:
-        assert -90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0

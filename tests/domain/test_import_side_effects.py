@@ -155,9 +155,10 @@ def get(url, **kwargs):
 
 requests.get = get
 before = len(calls)
-zones = architeuthis.core.exclusion_zones
-again = architeuthis.core.exclusion_zones
-print(json.dumps({"before": before, "after": len(calls), "points": len(zones[-1]), "name": zones[-1].name}))
+from architeuthis.exclusion import iceberg_zone
+zone = iceberg_zone()
+again = iceberg_zone()
+print(json.dumps({"before": before, "after": len(calls), "points": len(zone), "name": zone.name}))
 """,
         tmp_path,
     )

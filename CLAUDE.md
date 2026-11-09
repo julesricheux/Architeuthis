@@ -60,11 +60,10 @@ icebergs.py    IIP iceberg limit, fetched on first use: berg_zone polygon, berg_
         |
 route.py       Waypoint, Leg, Route (waypoints + divergences + spread), RouteSet, RouteLibrary
 voyage.py      Schedule, Voyage (Route + Schedule), PassagePlan, PassagePlanLibrary
-exclusion.py   ExclusionZone, ExclusionZoneLibrary, default_exclusion_zones
+exclusion.py   ExclusionZone, ExclusionZoneLibrary, iceberg_zone (the zones themselves belong to the user)
 report.py      RoutingReport (dict), ReportCollection (list): tables, GPX, JSON storage
         |       all offline: they do not import core
-core.py        RoutingAnalysis (run, evaluate), exclusion_zones; re-exports the above
-presets.py     Ready-made forecasts and topography. Import the module: `from architeuthis import presets`
+core.py        RoutingAnalysis (run, evaluate); re-exports the above
         |
 ui.py          Dash/Leaflet viewer of forecast fields and saved route reports
 
@@ -73,7 +72,7 @@ toolbox/       geo_utils (route geometry), plot_utils (figures, documented in do
 wrappers/      json_wrapper (GeoJSON), leaflet_wrapper (zone layers), legacy provider wrappers
 examples/      simple_routing, long_term_routing, ensemble_routing, post_leg_rewind,
                passage_planning, ifs_route_tested_with_gfs, short_term_routing, comparison_ascat_models;
-               reference_data holds values to copy (positions, past schedules, polars) and runs nothing
+               they define their own sources and zones, and keep past settings as commented lines
 tests/         numpy, optimization, modeling (AeroSandbox), domain (Architeuthis)
 ```
 
@@ -94,7 +93,7 @@ Stubs that are not functional yet: `environment.Environment` (also has a broken 
 - Herbie and Copernicus forecasts append two fake time steps (+1e6 s, +1e7 s) filled with 0, so fields fade to zero past the horizon rather than failing. `RoutingAnalysis.check_valid_time` assumes this by treating `valid_time[-3]` as the last real step; `CDSForecast` does not pad, so the check is off by two steps there.
 - Calling `obj(var_key, X)` takes `X` with shape `(n_queries, n_dims)` and returns a column vector.
 
-`Topography` computes `distance_to_iso0`, normally registered with `var_key="z"`: a signed distance to the navigable boundary in **nautical miles**, positive on land or inside exclusion zones and negative at sea. `depth_offset` treats shallow water as land and `z_margin` adds clearance. Its coordinates are `lat` and `lon` (ETOPO 2022), unlike the `latitude` and `longitude` of forecasts. Exclusion zones are `ExclusionZone` objects or plain `[lat, lon]` lists, rasterized into this field; the caller must pass them to `Topography`, typically `default_exclusion_zones()`.
+`Topography` computes `distance_to_iso0`, normally registered with `var_key="z"`: a signed distance to the navigable boundary in **nautical miles**, positive on land or inside exclusion zones and negative at sea. `depth_offset` treats shallow water as land and `z_margin` adds clearance. Its coordinates are `lat` and `lon` (ETOPO 2022), unlike the `latitude` and `longitude` of forecasts. Exclusion zones are `ExclusionZone` objects or plain `[lat, lon]` lists, rasterized into this field; the caller defines them and passes them to `Topography`. The package holds no zone or waypoint of its own: only `iceberg_zone()`, which comes from the IIP bulletin.
 
 ### Routing problem (`RoutingAnalysis.run`)
 
@@ -141,7 +140,7 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 **Import side effects**
 
 - Importing the package has none, and `tests/domain/test_import_side_effects.py` checks it. `load_data` calls `common.setup_logging`, which leaves logging alone if the application has configured it, and `ensure_cdsapirc` runs before a CDS download and never writes `key: None`.
-- `architeuthis.icebergs` fetches the IIP bulletin and shapefiles on first use of `berg_zone`, `polygon` or `berg_geojson` (module `__getattr__`, connect timeout 10 s), once per session unless `refresh()` is called. Reading `core.exclusion_zones` or calling `default_exclusion_zones()` counts as a use, so these can take time. Offline, it falls back to the last downloads in `~/data/iip/` (`IcebergBulletin.txt`, shapefiles), else to an empty `berg_zone` and GeoJSON, with a warning. `Topography` skips exclusion zones with fewer than 3 points, so routing then runs **without the iceberg limit**.
+- `architeuthis.icebergs` fetches the IIP bulletin and shapefiles on first use of `berg_zone`, `polygon` or `berg_geojson` (module `__getattr__`, connect timeout 10 s), once per session unless `refresh()` is called. Calling `exclusion.iceberg_zone()` or reading `core.berg_zone` counts as a use, so these can take time. Offline, it falls back to the last downloads in `~/data/iip/` (`IcebergBulletin.txt`, shapefiles), else to an empty `berg_zone` and GeoJSON, with a warning. `Topography` skips exclusion zones with fewer than 3 points, so routing then runs **without the iceberg limit**.
 - `architeuthis/ui.py` is a script, not a library: importing it downloads forecasts and needs a report JSON in `~/data/routes/`. Run it from inside `architeuthis/` because of `./assets/` relative paths; it serves on port 8052. Its first lines remove `architeuthis/` from `sys.path`, where `architeuthis/numpy` would hide numpy, and it selects the Agg backend, because a GUI backend kills the process at the first raster or contour. So when checking the UI, do not set `MPLBACKEND`, which is not what a user has. In debug mode its reloader runs the script twice, and any restart downloads the forecasts again. Layers that do not depend on its data belong in `wrappers/leaflet_wrapper.py`, where they can be tested.
 - `ui.py` overwrites the tracked `assets/noaa_overlay.png` at every start, so that file often shows as modified. Do not include it in unrelated commits.
 
@@ -174,7 +173,7 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 - Report consumers (`json_wrapper.route_to_geojson`, `ui.py`) also need `init_fac`, which `run` records but `evaluate` does not. `ReportCollection.save` writes to `~/data/routes/` by default.
 - `HRDPSForecast` wind speeds are right but its directions are not: the files have `uvRelativeToGrid` = 1 and the components are not rotated from the rotated grid, about 45 deg off around Saint-Pierre-et-Miquelon compared with GFS. `HerbieLatest` only looks on `aws` and `nomads` by default, so a model elsewhere needs `priority`.
 - `common` reads credentials once, at its import, so a variable set later is ignored. `EUMDAC_USER` and `EUMDAC_PWD` hold the EUMETSAT Consumer Key and Secret, not a login. Once `~/.cdsapirc` exists, `CDS_API_KEY` no longer has any effect. Without `CMEMS_USER`, the Copernicus Marine toolbox looks at its own variables and files, then prompts, and without a terminal `subset` returns `None`.
-- `core.exclusion_zones` and `core.berg_zone` are computed each time they are read (module `__getattr__`), so `from architeuthis.core import exclusion_zones` fetches the iceberg limit at that line.
+- `core.berg_zone` and `icebergs.berg_zone` are computed when they are read (module `__getattr__`), so `from architeuthis.icebergs import berg_zone` fetches the iceberg limit at that line.
 
 ## Testing
 
@@ -188,7 +187,7 @@ CI installs the latest dependencies, so it can differ from a local environment. 
 
 Rules for new tests:
 
-- **Stay offline.** `tests/conftest.py` points `HOME` at a temporary folder, removes credentials and replaces `architeuthis.icebergs` with a stub. Mock providers with `patch("architeuthis.forecast.<name>")`, or `load_data` as `test_presets.py` does.
+- **Stay offline.** `tests/conftest.py` points `HOME` at a temporary folder, removes credentials and replaces `architeuthis.icebergs` with a stub. Mock providers with `patch("architeuthis.forecast.<name>")`, or `load_data` as `test_examples.py` does.
 - **Use synthetic data.** The fixtures in `tests/domain/conftest.py` provide forecasts, topographies, a vessel and real reports (`baseline_report`, `optimized_report`, `routing`): assign a dataset to `.data`, skip `load_data()`, then call `add_interpolator`. The reports are shared, so copy them to change them.
 - **Pass `linear_solver: mumps`** in routing tests, because of the `spral` crash described under Pitfalls.
 - **Keep the checkout clean.** Importing `wrappers/json_wrapper.py` or `ui.py` writes `assets/dashExtensions_default.js` to the working directory, so import them from a temporary folder, as `tests/domain/test_toolbox.py` does.
@@ -198,6 +197,5 @@ Not covered: the real IIP server (`test_icebergs.py` replaces `requests.get`), `
 
 ## Known inconsistencies
 
-- Versions disagree: `pyproject.toml` 0.1.4, `__init__.py` 0.1.3.
 - `tall` and `wide` are duplicated in `common.py` and `core.py`, and `core.py` defines an unused `sigmoid`, `transform` and `added_wave_load`. `ROADMAP.md` plans to move these helpers into `numpy`.
 - `raise(ValueError, "...")` appears in `forecast.py` and `ui.py`. In Python 3 this raises `TypeError` rather than the intended error.
