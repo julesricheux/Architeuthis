@@ -24,3 +24,5 @@ __version__ = "0.2.0"
 
 __meet_Architeuthis__ = "https://en.wikipedia.org/wiki/Giant_squid"
 __documentation__ = None # TODO
+
+from architeuthis.optimization import Opti, OptiSol
