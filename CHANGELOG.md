@@ -108,4 +108,9 @@ and this project follows Semantic Versioning https://semver.org
 ## [Unreleased]
 
 ### Added
-- `modeling.HybridInterpolator`, a SurrogateModel called like InterpolatedModel whose NumPy and CasADi evaluators are built once from the same data and give the same values.
+- `modeling.HybridInterpolatedModel`, a SurrogateModel called like InterpolatedModel whose NumPy and CasADi evaluators are built once from the same data and give the same values.
+- `input_names(var_key)` on data objects, and the `coord_keys` argument of `add_interpolator`.
+
+### Changed
+- `add_interpolator` builds a HybridInterpolatedModel instead of a CasADi interpolant: B-spline tables are built hundreds of times faster, with the same values, and numeric queries are computed with NumPy.
+- Data objects are queried with dicts keyed by standard names (`valid_time`, `member`, `latitude`, `longitude`; `stw`, `tws`, `twa`, `hs`, `wa`), whatever the names in the data. Arrays of shape (n_queries, n_dims) are still accepted.

@@ -59,6 +59,16 @@ for key in ("bhp", "max_bhp", "sails_contribution"):
 
 To route without a current provider, fill a `Forecast` with zeros on the grid of the wind, as `examples/passage_planning.py` does.
 
+Once registered, a variable is read by calling its source with a dict. The keys are standard names, whatever the names of the coordinates in the data: `valid_time`, `latitude` and `longitude` for forecasts, plus `member` for an ensemble, `latitude` and `longitude` for the topography, and `stw`, `tws`, `twa`, `hs` and `wa` for a vessel. `input_names(var_key)` gives them. Values are floats or arrays, NumPy or CasADi, broadcast against each other, and the result is a column.
+
+```python
+u10 = atmosphere("u10", {"valid_time": t, "latitude": lats, "longitude": lons})
+z = topography("z", {"latitude": lats, "longitude": lons})
+bhp = vessel("bhp", {"stw": 10., "tws": 15., "twa": 60., "hs": 2., "wa": 30.})
+```
+
+`add_interpolator` takes `method="linear"` (the default), `"bspline"`, smooth and suited to optimization, or `"nearest"`.
+
 ## Keeping and reusing results
 
 `RoutingAnalysis.run` and `evaluate` return a `RoutingReport`, a dict with the same entries as before plus a few helpers. A `ReportCollection` is a list of reports that can be selected, tabulated, saved and reloaded.

@@ -28,7 +28,7 @@ from typing import Sequence, Union
 from herbie import Herbie, HerbieLatest, FastHerbie
 from scipy.ndimage import distance_transform_edt
 from architeuthis.toolbox.string_formatting import get_request_id
-from architeuthis.common import ArchiteuthisSpatialData, Datetime, _CMEMS_USER, _CMEMS_PWD, _HOME, _TOPOGRAPHY_URL, ensure_cdsapirc, status
+from architeuthis.common import ArchiteuthisData, ArchiteuthisSpatialData, Datetime, ENSEMBLE_KEYS, FORECAST_KEYS, TOPOGRAPHY_KEYS, _CMEMS_USER, _CMEMS_PWD, _HOME, _TOPOGRAPHY_URL, ensure_cdsapirc, status
 
 
 logging.getLogger("cdsapi").handlers.clear()
@@ -230,6 +230,9 @@ class Topography(ArchiteuthisSpatialData):
         """
         Build the lookup table of a variable of the topography.
 
+        It is queried with a dict keyed by `latitude` and `longitude`,
+        whatever the names of the coordinates.
+
         Args:
             var_dim: Name of the variable, normally `distance_to_iso0`.
             latitude_dim: Name of the latitude coordinate.
@@ -237,8 +240,8 @@ class Topography(ArchiteuthisSpatialData):
             var_key: Key of the lookup table, by default `var_dim`.
             latitude_slice: Slice of the latitudes.
             longitude_slice: Slice of the longitudes.
-            method: CasADi interpolation method, such as "linear" or
-                "bspline".
+            method: Interpolation method, "linear", "bspline" or
+                "nearest".
         """
         if var_key is None:
             var_key = var_dim
@@ -246,7 +249,14 @@ class Topography(ArchiteuthisSpatialData):
         coord_dims = [latitude_dim, longitude_dim]
         coord_slices = [latitude_slice, longitude_slice]
         
-        super().add_interpolator(var_dim, coord_dims, coord_slices, var_key, method)
+        super().add_interpolator(
+            var_dim,
+            coord_dims,
+            coord_slices,
+            var_key,
+            method,
+            coord_keys=TOPOGRAPHY_KEYS,
+        )
 
 
 class Forecast(ArchiteuthisSpatialData):
@@ -323,6 +333,9 @@ class Forecast(ArchiteuthisSpatialData):
         """
         Build the lookup table of a variable of the forecast.
 
+        It is queried with a dict keyed by `valid_time`, `latitude` and
+        `longitude`, whatever the names of the coordinates.
+
         Args:
             var_dim: Name of the variable in the data.
             time_dim: Name of the time coordinate.
@@ -332,8 +345,8 @@ class Forecast(ArchiteuthisSpatialData):
             time_slice: Slice of the times.
             latitude_slice: Slice of the latitudes.
             longitude_slice: Slice of the longitudes.
-            method: CasADi interpolation method, such as "linear" or
-                "bspline".
+            method: Interpolation method, "linear", "bspline" or
+                "nearest".
             fac: Factor applied to the values, to correct or convert
                 them.
         """
@@ -343,7 +356,15 @@ class Forecast(ArchiteuthisSpatialData):
         coord_dims = [time_dim, latitude_dim, longitude_dim]
         coord_slices = [time_slice, latitude_slice, longitude_slice]
         
-        super().add_interpolator(var_dim, coord_dims, coord_slices, var_key, method, fac)
+        super().add_interpolator(
+            var_dim,
+            coord_dims,
+            coord_slices,
+            var_key,
+            method,
+            fac,
+            coord_keys=FORECAST_KEYS,
+        )
     
     
 class HerbieForecast(Forecast):
@@ -705,7 +726,6 @@ class EnsembleHerbieForecast(HerbieForecast):
             filter_by_keys={"dataType": "pf"},
         )
     
-    # TODO rewrite to inherit this method correctly
     def add_interpolator(
         self,
         var_dim: str,
@@ -725,7 +745,9 @@ class EnsembleHerbieForecast(HerbieForecast):
         Build the lookup table of a variable of the ensemble.
 
         The array is positional: its order must be (time, member, lat,
-        lon), the one of the queries of `RoutingAnalysis`.
+        lon). It is queried with a dict keyed by `valid_time`, `member`,
+        `latitude` and `longitude`, whatever the names of the
+        coordinates.
 
         Args:
             var_dim: Name of the variable in the data.
@@ -738,43 +760,29 @@ class EnsembleHerbieForecast(HerbieForecast):
             member_slice: Slice of the members.
             latitude_slice: Slice of the latitudes.
             longitude_slice: Slice of the longitudes.
-            method: CasADi interpolation method, such as "linear" or
-                "bspline".
+            method: Interpolation method, "linear", "bspline" or
+                "nearest".
             fac: Factor applied to the values, to correct or convert
                 them.
         """
-        from casadi import interpolant
-        
         if var_key is None:
             var_key = var_dim
-        
-        # The array is positional: this order must be the one of the data, and of the
-        # queries of RoutingAnalysis, (time, member, lat, lon).
+
+        # The array is positional: this order must be the one of the data,
+        # (time, member, lat, lon).
         coord_dims = [time_dim, member_dim, latitude_dim, longitude_dim]
         coord_slices = [time_slice, member_slice, latitude_slice, longitude_slice]
-        
-        if var_key in self.var_keys:
-            status(f"🟦 {var_key} already in {self.name} interpolators.")
-        else:
-            x = [self.data.coords[dim].values[sel] for dim, sel in zip(coord_dims, coord_slices)]
-    
-            # build interpolator f
-            f = np.nan_to_num(
-                self.data[var_dim].to_numpy().squeeze()[*coord_slices].ravel(order='F'),
-                nan=0.
-            ) * fac
-            
-            # build interpolator
-            self.interpolators[var_key] = interpolant(
-                f"LUT_{var_dim}",
-                method,
-                x,
-                f,
-                # jit=True,
-            )
-            self.var_keys.add(var_key)
-            
-            status(f"➕ Added {var_key}: {var_dim} to {self.name} interpolators.")
+
+        ArchiteuthisData.add_interpolator(
+            self,
+            var_dim,
+            coord_dims,
+            coord_slices,
+            var_key,
+            method,
+            fac,
+            coord_keys=ENSEMBLE_KEYS,
+        )
 
           
 class CopernicusForecast(Forecast):

@@ -76,6 +76,20 @@ def test_add_interpolator_defaults_key_to_variable_name():
     assert float(forecast("wind", np.array([[0.5, 0.5, 0.5]]))) == pytest.approx(3.0)
 
 
+def test_forecast_is_queried_by_standard_names():
+    forecast = Forecast("test", date=BASE_DATE, fxx=[0])
+    forecast.data = xr.Dataset(
+        {"u10": (("time", "lat", "lon"), np.arange(8.0).reshape(2, 2, 2))},
+        coords={"time": [0.0, 1.0], "lat": [0.0, 1.0], "lon": [0.0, 1.0]},
+    )
+
+    forecast.add_interpolator("u10", "time", "lat", "lon")
+    query = {"valid_time": 1.0, "latitude": np.array([0.0, 1.0]), "longitude": 1.0}
+
+    assert forecast.input_names("u10") == ["valid_time", "latitude", "longitude"]
+    assert np.asarray(forecast("u10", query)).ravel() == pytest.approx([5.0, 7.0])
+
+
 # ------------------------------------------------------------------------------
 # Herbie
 # ------------------------------------------------------------------------------
@@ -175,6 +189,23 @@ def test_ensemble_interpolator_has_four_dimensions():
     forecast.add_interpolator("u10", "number", "valid_time", "latitude", "longitude")
 
     assert float(forecast("u10", np.array([[2.0, 0.5, 0.5, 0.5]]))) == pytest.approx(2.0)
+
+
+def test_ensemble_is_queried_with_a_member():
+    forecast = EnsembleHerbieForecast("ensemble", model="ifs", product="enfo", date=BASE_DATE)
+    member = [1.0, 2.0]
+    axis = [0.0, 1.0]
+    values = np.broadcast_to(np.array(member)[None, :, None, None], (2, 2, 2, 2))
+    forecast.data = xr.Dataset(
+        {"u10": (("valid_time", "number", "latitude", "longitude"), values)},
+        coords={"valid_time": axis, "number": member, "latitude": axis, "longitude": axis},
+    )
+
+    forecast.add_interpolator("u10", "valid_time", "number", "latitude", "longitude")
+    query = {"valid_time": np.array([0.2, 0.8]), "member": 2.0, "latitude": 0.5, "longitude": 0.5}
+
+    assert forecast.input_names("u10") == ["valid_time", "member", "latitude", "longitude"]
+    assert np.asarray(forecast("u10", query)).ravel() == pytest.approx([2.0, 2.0])
 
 
 # ------------------------------------------------------------------------------

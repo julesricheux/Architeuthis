@@ -12,7 +12,7 @@ All credit for the underlying methods and implementations belongs to the origina
 """
 from architeuthis.modeling.fitting import FittedModel
 from architeuthis.modeling.interpolation import InterpolatedModel
-from architeuthis.modeling.hybrid_interpolation import HybridInterpolator
+from architeuthis.modeling.hybrid_interpolation import HybridInterpolatedModel
 from architeuthis.modeling.interpolation_unstructured import (
     UnstructuredInterpolatedModel,
 )

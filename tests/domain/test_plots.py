@@ -639,7 +639,7 @@ class EnsembleStub:
 
     def __call__(self, key, query):
         self.queries.append(query)
-        return (self.fields[key] * query[:, 1])[:, None]
+        return (self.fields[key] * query["member"])[:, None]
 
 
 def test_ensemble_along_route_reads_every_member_at_each_segment_center(baseline_report):
@@ -650,11 +650,12 @@ def test_ensemble_along_route_reads_every_member_at_each_segment_center(baseline
 
     n = baseline_report["ctim"].size
     query = wave.queries[0]
-    assert query.shape == (2 * n, 4)
-    assert query[:2, 1].tolist() == [1, 2]
-    assert query[0, 0] == query[1, 0] == baseline_report["ctim"][0]
-    assert query[0, 2] == baseline_report["clat"][0]
-    assert query[0, 3] == baseline_report["clon"][0]
+    assert set(query) == {"valid_time", "member", "latitude", "longitude"}
+    assert all(values.shape == (2 * n,) for values in query.values())
+    assert query["member"][:2].tolist() == [1, 2]
+    assert query["valid_time"][0] == query["valid_time"][1] == baseline_report["ctim"][0]
+    assert query["latitude"][0] == baseline_report["clat"][0]
+    assert query["longitude"][0] == baseline_report["clon"][0]
 
     # Medians of the two members: 1.5 x the field of member 1, the wind converted to knots.
     swh_median = fig.axes[1].get_lines()[0].get_ydata()

@@ -1,7 +1,7 @@
 """
 Gridded interpolation built once, consistent on NumPy and CasADi inputs.
 
-HybridInterpolator has the interface of InterpolatedModel, but builds its
+HybridInterpolatedModel has the interface of InterpolatedModel, but builds its
 NumPy and CasADi interpolators once, from the same data, instead of at
 every call, so that both sides give the same values.
 """
@@ -15,7 +15,7 @@ import architeuthis.numpy as np
 from architeuthis.modeling.surrogate_model import SurrogateModel
 
 
-class HybridInterpolator(SurrogateModel):
+class HybridInterpolatedModel(SurrogateModel):
     """
     Model interpolated on gridded N-dimensional data, R^N -> R^1.
 
@@ -39,7 +39,7 @@ class HybridInterpolator(SurrogateModel):
         >>> x1 = np.linspace(0, 5, 11)
         >>> x2 = np.linspace(0, 10, 21)
         >>> X1, X2 = np.meshgrid(x1, x2, indexing="ij")
-        >>> model = HybridInterpolator(
+        >>> model = HybridInterpolatedModel(
         ...     x_data_coordinates={"x1": x1, "x2": x2},
         ...     y_data_structured=X1**2 + X2,
         ... )
@@ -368,10 +368,10 @@ if __name__ == "__main__":
         "Interpolated bspline": lambda: InterpolatedModel(
             {"x": X, "y": Y}, f, method="bspline", fill_value=None
         ),
-        "Hybrid linear": lambda: HybridInterpolator(
+        "Hybrid linear": lambda: HybridInterpolatedModel(
             {"x": X, "y": Y}, f, method="linear", fill_value=None
         ),
-        "Hybrid bspline": lambda: HybridInterpolator(
+        "Hybrid bspline": lambda: HybridInterpolatedModel(
             {"x": X, "y": Y}, f, method="bspline", fill_value=None
         ),
     }

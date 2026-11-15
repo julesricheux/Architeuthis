@@ -20,7 +20,7 @@ from collections.abc import Callable
 from architeuthis.toolbox.inspect_tools import ensure_callable
 
 # from typing import Sequence
-from architeuthis.common import ArchiteuthisData, status
+from architeuthis.common import ArchiteuthisData, VESSEL_KEYS, status
 
 # Variables required by RoutingAnalysis, and the axes of a polar table, in its order.
 POLAR_KEYS = ("bhp", "max_bhp", "sails_contribution")
@@ -100,6 +100,9 @@ class Vessel(ArchiteuthisData):
         """
         Build the lookup table of a variable of the polars.
 
+        It is queried with a dict keyed by `stw`, `tws`, `twa`, `hs` and
+        `wa`, whatever the names of the coordinates.
+
         Args:
             var_dim: Name of the variable in the data.
             stw_dim: Name of the speed through water coordinate.
@@ -113,8 +116,8 @@ class Vessel(ArchiteuthisData):
             twa_slice: Slice of the true wind angles.
             hs_slice: Slice of the wave heights.
             wa_slice: Slice of the wave angles.
-            method: CasADi interpolation method, such as "linear" or
-                "bspline".
+            method: Interpolation method, "linear", "bspline" or
+                "nearest".
         """
         if var_key is None:
             var_key = var_dim
@@ -122,7 +125,14 @@ class Vessel(ArchiteuthisData):
         coord_dims = [stw_dim, tws_dim, twa_dim, hs_dim, wa_dim]
         coord_slices = [stw_slice, tws_slice, twa_slice, hs_slice, wa_slice]
         
-        super().add_interpolator(var_dim, coord_dims, coord_slices, var_key, method)
+        super().add_interpolator(
+            var_dim,
+            coord_dims,
+            coord_slices,
+            var_key,
+            method,
+            coord_keys=VESSEL_KEYS,
+        )
 
     def add_interpolators(
         self,
@@ -153,18 +163,13 @@ if __name__=="__main__":
     vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
     vessel.add_interpolator("max_bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
     
-    vessel_query = np.array([
-        [6., 15., 60, 4.1, 60],
-        [8., 15., 60, 1, 60],
-    ])
-    
-    # vessel_query = {
-    #     "stw": 12.5,
-    #     "tws": 11,
-    #     "twa": np.abs(62.3),
-    #     "hs": 1.3,
-    #     "wa": np.abs(78.),
-    # }
+    vessel_query = {
+        "stw": np.array([6., 8.]),
+        "tws": 15.,
+        "twa": 60.,
+        "hs": np.array([4.1, 1.]),
+        "wa": 60.,
+    }
     
     bhp = vessel("bhp", vessel_query)
     print(bhp)

@@ -1,5 +1,5 @@
 """
-Tests of HybridInterpolator, checked against InterpolatedModel.
+Tests of HybridInterpolatedModel, checked against InterpolatedModel.
 
 Created on 2026-11-15
 """
@@ -11,7 +11,7 @@ import pytest
 
 import architeuthis as asb
 import architeuthis.numpy as np
-from architeuthis.modeling import HybridInterpolator, InterpolatedModel
+from architeuthis.modeling import HybridInterpolatedModel, InterpolatedModel
 from architeuthis.modeling.surrogate_model import SurrogateModel
 
 
@@ -39,7 +39,7 @@ def models(method, fill_value=np.nan):
         method=method,
         fill_value=fill_value,
     )
-    return HybridInterpolator(**kwargs), InterpolatedModel(**kwargs)
+    return HybridInterpolatedModel(**kwargs), InterpolatedModel(**kwargs)
 
 
 def test_is_a_surrogate_model():
@@ -53,7 +53,7 @@ def test_is_a_surrogate_model():
 
 
 def test_default_arguments_match():
-    hybrid = HybridInterpolator(COORDS, VALUES)
+    hybrid = HybridInterpolatedModel(COORDS, VALUES)
     reference = InterpolatedModel(COORDS, VALUES)
     assert hybrid.method == reference.method == "bspline"
     assert onp.isnan(hybrid.fill_value) and onp.isnan(reference.fill_value)
@@ -128,7 +128,7 @@ def test_extrapolation_with_fill_value_none():
 
 def test_one_dimensional_input():
     x = np.linspace(0, 1, 11)
-    hybrid = HybridInterpolator(x, x**2, method="linear")
+    hybrid = HybridInterpolatedModel(x, x**2, method="linear")
     reference = InterpolatedModel(x, x**2, method="linear")
     for query in (0.25, onp.array([0.25, 0.5]), ca.DM([0.25, 0.5])):
         out, ref = hybrid(query), reference(query)
@@ -146,9 +146,9 @@ def test_nearest_rejects_symbolic_inputs():
 
 def test_invalid_inputs():
     with pytest.raises(ValueError):
-        HybridInterpolator(COORDS, VALUES.T)
+        HybridInterpolatedModel(COORDS, VALUES.T)
     with pytest.raises(ValueError):
-        HybridInterpolator(COORDS, VALUES, method="cubic")
+        HybridInterpolatedModel(COORDS, VALUES, method="cubic")
     hybrid, _ = models("linear")
     with pytest.raises(TypeError):
         hybrid(onp.array([1.0, 2.0]))  # A dict is expected

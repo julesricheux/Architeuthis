@@ -86,12 +86,14 @@ Stubs that are not functional yet: `environment.Environment` (also has a broken 
 - **Time** as a float epoch-seconds coordinate named `valid_time`.
 - **Dimension order** matching the `coord_dims` passed to `add_interpolator`.
 
-`add_interpolator` builds a CasADi `interpolant` from the array. Know these behaviours:
+`add_interpolator` builds a `HybridInterpolatedModel` (`modeling/hybrid_interpolation.py`) from the array, stored in `interpolators`. Its NumPy and CasADi evaluators are built once from the same data: SciPy fits the B-spline coefficients, much faster than `casadi.interpolant(..., "bspline")`. Know these behaviours:
 
-- Dimensions are **positional**: the array is squeezed, sliced and raveled in Fortran order, so array dimension order must equal `coord_dims` order. The names only select coordinates.
+- Dimensions are **positional**: the array is squeezed and sliced, so array dimension order must equal `coord_dims` order. The names only select coordinates.
+- **Query keys are standard names**, whatever the names in the data: `valid_time, latitude, longitude` for forecasts, plus `member` for `EnsembleHerbieForecast`, `latitude, longitude` for `Topography`, and `stw, tws, twa, hs, wa` for `Vessel` (`common.FORECAST_KEYS` and the like, passed as `coord_keys`). `obj.input_names(var_key)` gives them.
+- Outside the grid, `fill_value=None`: "linear" extrapolates, "bspline" keeps the boundary value. "nearest" takes no symbolic query.
 - **NaN becomes 0**, so land currents and missing values read as calm conditions.
 - Herbie and Copernicus forecasts append two fake time steps (+1e6 s, +1e7 s) filled with 0, so fields fade to zero past the horizon rather than failing. `RoutingAnalysis.check_valid_time` assumes this by treating `valid_time[-3]` as the last real step; `CDSForecast` does not pad, so the check is off by two steps there.
-- Calling `obj(var_key, X)` takes `X` with shape `(n_queries, n_dims)` and returns a column vector.
+- Calling `obj(var_key, X)` takes a dict keyed by those names, whose values (NumPy or CasADi, scalars or columns) are broadcast, as in `core._passage`. An array of shape `(n_queries, n_dims)` with columns in key order still works. It returns a CasADi column, a DM for numeric queries, which are computed with NumPy.
 
 `Topography` computes `distance_to_iso0`, normally registered with `var_key="z"`: a signed distance to the navigable boundary in **nautical miles**, positive on land or inside exclusion zones and negative at sea. `depth_offset` treats shallow water as land and `z_margin` adds clearance. Its coordinates are `lat` and `lon` (ETOPO 2022), unlike the `latitude` and `longitude` of forecasts. Exclusion zones are `ExclusionZone` objects or plain `[lat, lon]` lists, rasterized into this field; the caller defines them and passes them to `Topography`. The package holds no zone or waypoint of its own: only `iceberg_zone()`, which comes from the IIP bulletin.
 
@@ -169,7 +171,7 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 - Divergence and spread signs are relative to the travel direction: `Route.reversed()` negates divergences, so the reverse route's `plus` is the forward `minus`.
 - `Route.from_position` restarts with a straight first segment. `Voyage.from_position` cannot restart `route_minus`/`route_plus` given as functions and falls back to the spread paths; pass Routes to keep them.
 - `Vessel.hotel_load` and `Vessel.sfc` are wrapped into callables, while `Vessel.max_power` stays a raw value. `sfc` defaults to 0, which makes the objective zero.
-- `EnsembleHerbieForecast.add_interpolator` takes `var_dim, time_dim, member_dim, latitude_dim, longitude_dim`, the order in which `RoutingAnalysis` queries it.
+- `EnsembleHerbieForecast.add_interpolator` takes `var_dim, time_dim, member_dim, latitude_dim, longitude_dim`, which must be the order of the array.
 - Report consumers (`json_wrapper.route_to_geojson`, `ui.py`) also need `init_fac`, which `run` records but `evaluate` does not. `ReportCollection.save` writes to `~/data/routes/` by default.
 - `HRDPSForecast` wind speeds are right but its directions are not: the files have `uvRelativeToGrid` = 1 and the components are not rotated from the rotated grid, about 45 deg off around Saint-Pierre-et-Miquelon compared with GFS. `HerbieLatest` only looks on `aws` and `nomads` by default, so a model elsewhere needs `priority`.
 - `common` reads credentials once, at its import, so a variable set later is ignored. `EUMDAC_USER` and `EUMDAC_PWD` hold the EUMETSAT Consumer Key and Secret, not a login. Once `~/.cdsapirc` exists, `CDS_API_KEY` no longer has any effect. Without `CMEMS_USER`, the Copernicus Marine toolbox looks at its own variables and files, then prompts, and without a terminal `subset` returns `None`.

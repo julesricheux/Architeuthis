@@ -292,21 +292,20 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         clon = midpoints(lon)
         clat = midpoints(lat)
 
-        environment_query = np.concatenate([
-            ctim, clat, clon,
-        ], axis=1)
+        environment_query = {
+            "valid_time": ctim,
+            "latitude": clat,
+            "longitude": clon,
+        }
 
+        # Ensemble forecasts also take the member, broadcast to all segments
         if self.atmosphere_member is not None:
-            atmosphere_query = np.concatenate([
-                ctim, ctim * 0. + self.atmosphere_member, clat, clon,
-            ], axis=1)
+            atmosphere_query = {**environment_query, "member": self.atmosphere_member}
         else:
             atmosphere_query = environment_query
 
         if self.wave_member is not None:
-            wave_query = np.concatenate([
-                ctim, ctim * 0. + self.wave_member, clat, clon,
-            ], axis=1)
+            wave_query = {**environment_query, "member": self.wave_member}
         else:
             wave_query = environment_query
 
@@ -325,10 +324,10 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             n=3,
         )
 
-        topography_query = np.concatenate([
-            tlat,
-            tlon,
-        ], axis=1)
+        topography_query = {
+            "latitude": tlat,
+            "longitude": tlon,
+        }
 
         z = self.topography("z", topography_query)
 
@@ -374,9 +373,13 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         cs = np.sqrt(uc**2. + vc**2.) # current speed in kts
         cd = np.mod(np.arctan2d(uc, vc), 360.) # current going to from 0 to 360 deg
 
-        vessel_query = np.concatenate([
-            stw, tws, np.abs(twa), swh, np.abs(mwa),
-        ], axis=1)
+        vessel_query = {
+            "stw": stw,
+            "tws": tws,
+            "twa": np.abs(twa),
+            "hs": swh,
+            "wa": np.abs(mwa),
+        }
 
         avg_bhp = self.vessel("bhp", vessel_query)
         max_bhp = self.vessel("max_bhp", vessel_query)

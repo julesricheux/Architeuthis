@@ -133,10 +133,10 @@ for i, vessel_data in enumerate(vessel_files):
     # vessel = Vessel(f"vessel_{i}", filepath=vessel_data, sfc=196., hotel_load=172., max_power=maxBHP)
     vessel.load_data()
     
-    vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
-    vessel.add_interpolator("max_bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
-    # vessel.add_interpolator("leeway", "stw", "tws", "twa", "hs", "wa", method="linear")
-    vessel.add_interpolator("sails_contribution", "stw", "tws", "twa", "hs", "wa", method="linear")
+    vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa", method="bspline")
+    vessel.add_interpolator("max_bhp", "stw", "tws", "twa", "hs", "wa", method="bspline")
+    # vessel.add_interpolator("leeway", "stw", "tws", "twa", "hs", "wa", method="bspline")
+    vessel.add_interpolator("sails_contribution", "stw", "tws", "twa", "hs", "wa", method="bspline")
     
     vessels.append(vessel)
 
@@ -185,10 +185,10 @@ for model, atmos in ATMOS.items():
     speed = np.hypot(atmos.data.u10, atmos.data.v10)
     ds[gust_var] = ds[gust_var].where(atmos.data[gust_var] >= speed, speed * gust_default_factor)
 
-    atmos.add_interpolator("u10", "valid_time", "latitude", "longitude", fac=global_corr_fac)
-    atmos.add_interpolator("v10", "valid_time", "latitude", "longitude", fac=global_corr_fac)
+    atmos.add_interpolator("u10", "valid_time", "latitude", "longitude", fac=global_corr_fac, method="bspline")
+    atmos.add_interpolator("v10", "valid_time", "latitude", "longitude", fac=global_corr_fac, method="bspline")
 
-    atmos.add_interpolator(gust_var, "valid_time", "latitude", "longitude", var_key="gust", fac=global_corr_fac)
+    atmos.add_interpolator(gust_var, "valid_time", "latitude", "longitude", var_key="gust", fac=global_corr_fac, method="bspline")
 
 # atmos = DeterministicHerbieForecast(
 #     "wind", model="ifs", product="scda", regex=r":10[u|v]:", fxx=steps,
@@ -225,6 +225,8 @@ for model, atmos in ATMOS.items():
 
 #%% BUILD WAVE INTERPOLATORS
 
+wave_corr_fac = 0.
+
 WAVE = {}
 
 # IFS wave data
@@ -236,8 +238,8 @@ WAVE["ifs"] = DeterministicHerbieForecast(
 )
 WAVE["ifs"].load_data()
 
-WAVE["ifs"].add_interpolator("swh", "valid_time", "latitude", "longitude")
-WAVE["ifs"].add_interpolator("mwd", "valid_time", "latitude", "longitude")
+WAVE["ifs"].add_interpolator("swh", "valid_time", "latitude", "longitude", fac=wave_corr_fac, method="bspline")
+WAVE["ifs"].add_interpolator("mwd", "valid_time", "latitude", "longitude", method="bspline")
 
 # GFS wave data
 WAVE["gfs"] = DeterministicHerbieForecast(
@@ -248,8 +250,8 @@ WAVE["gfs"] = DeterministicHerbieForecast(
 )
 WAVE["gfs"].load_data()
 
-WAVE["gfs"].add_interpolator("swh", "valid_time", "latitude", "longitude", var_key="swh")
-WAVE["gfs"].add_interpolator("dirpw", "valid_time", "latitude", "longitude", var_key="mwd")
+WAVE["gfs"].add_interpolator("swh", "valid_time", "latitude", "longitude", var_key="swh", fac=wave_corr_fac, method="bspline")
+WAVE["gfs"].add_interpolator("dirpw", "valid_time", "latitude", "longitude", var_key="mwd", method="bspline")
 
 # wave_ens = EnsembleHerbieForecast(
 #     "wave_ens", model="ifs", product="waef", regex=r":swh:|:mwd:", fxx=steps,
@@ -292,12 +294,14 @@ current.add_interpolator(
     latitude_slice=slice(None, None, 3),
     longitude_slice=slice(None, None, 3),
     time_slice=slice(None, None, 3),
+    method="bspline",
 )
 current.add_interpolator(
     "vo", "valid_time", "latitude", "longitude",
     latitude_slice=slice(None, None, 3),
     longitude_slice=slice(None, None, 3),
     time_slice=slice(None, None, 3),
+    method="bspline",
 )
 
 
@@ -412,7 +416,8 @@ topo0.add_interpolator(
     "distance_to_iso0",
     "lat",
     "lon",
-    var_key="z"
+    var_key="z",
+    method="bspline",
 )
 
 # topo = Topography(
@@ -592,8 +597,8 @@ plans = [] # PassagePlan of each routing (timed positions)
 
 zero_fac = 0.
 
-models = ["ifs", "gfs"]
-# models = ["ifs",]
+# models = ["ifs", "gfs"]
+models = ["ifs",]
 # facs = np.asarray([0., 1.]) + zero_fac
 # facs = np.asarray([-1., 0., 1.]) + zero_fac
 # facs = np.asarray([-1., 0., 1.]) + zero_fac
@@ -634,7 +639,7 @@ for solve, tf, model, vessel, fac, m, tpg in (
                 ctx["max_bhp"] < ctx["vessel"].max_power,
                 # (wide(ctx["z"]) @ tall(ctx["z"])) == 0.,
                 ctx["z"] < 0.,
-                ctx["aws_gust"] < 35.0,
+                # ctx["aws_gust"] < 35.0,
                 # ctx["aws_gust"] < 30.0,
                 # ctx["aws"] < 25.0,
                 # ctx["aws"] < 20.0,
@@ -683,7 +688,8 @@ for solve, tf, model, vessel, fac, m, tpg in (
         # wave_member=m,
         constraints=custom_constraints,
         options={"include_gusts": True},
-        verbose=False,
+        # verbose=False,
+        verbose=True,
     )
     
     report = analysis.run(
@@ -701,10 +707,10 @@ for solve, tf, model, vessel, fac, m, tpg in (
         # vary_fac=1,
         solver_options = {
             "ipopt":{
-                "acceptable_tol": 1e2,
+                "acceptable_tol": 1e1,
                 # 'linear_solver': 'spral',
                 'linear_solver': 'mumps',
-                "hessian_approximation": "limited-memory",
+                # "hessian_approximation": "limited-memory",
             },
         },
         # solve=0,
@@ -1139,7 +1145,7 @@ for report in reports.select(vessel="eff60"):
 #     },
 #     y_data_structured=ds["u10"].data,
 #     # method="bspline",
-#     method="linear",
+#     method="bspline",
 #     # fill_value=0.
 # )
 # n = 100
