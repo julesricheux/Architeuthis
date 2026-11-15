@@ -103,3 +103,9 @@ and this project follows Semantic Versioning https://semver.org
 - Latest HRDPS run not found: HRDPSForecast now looks on the MSC Datamart.
 - `pyproject.toml` declared the MIT license, while the project is distributed under GPL v3 as in `LICENSE`.
 - The latest HRDPS run could not be found, because `HerbieLatest` only looks on AWS and NOMADS by default. `HRDPSForecast` looks on the MSC Datamart.
+---
+
+## [Unreleased]
+
+### Added
+- `modeling.HybridInterpolator`, a SurrogateModel called like InterpolatedModel whose NumPy and CasADi evaluators are built once from the same data and give the same values.
