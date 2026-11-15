@@ -30,8 +30,10 @@ atmosphere.add_interpolator("v10", "valid_time", "latitude", "longitude")
 
 wave = DeterministicHerbieForecast("wave", model="ifs", product="wave", regex=r":swh:|:mwd:", fxx=steps, date=forecast_date, **domain)
 wave.load_data()
+wave.add_wave_components()  # the direction is interpolated through its components
 wave.add_interpolator("swh", "valid_time", "latitude", "longitude")
-wave.add_interpolator("mwd", "valid_time", "latitude", "longitude")
+wave.add_interpolator("uw", "valid_time", "latitude", "longitude")
+wave.add_interpolator("vw", "valid_time", "latitude", "longitude")
 
 current = CopernicusForecast("current", dataset="cmems_mod_glo_phy_anfc_0.083deg_PT1H-m", variables=["uo", "vo"], date=forecast_date, **domain)
 current.load_data()

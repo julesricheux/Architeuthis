@@ -25,7 +25,7 @@ from architeuthis.common import _banner, status
 from architeuthis.optimization import Opti
 from architeuthis.forecast import Forecast, Topography
 from architeuthis.report import RoutingReport
-from architeuthis.common import ArchiteuthisObject, GUST_DEFAULT_RATIO
+from architeuthis.common import ArchiteuthisObject, GUST_DEFAULT_RATIO, WAVE_COMPONENTS_OFFSET
 # Route and voyage classes live in their own modules, which work without network
 # access; they are re-exported here for compatibility.
 from architeuthis.route import Leg, Route, RouteLibrary, RouteSet, RouteSetLibrary, Waypoint  # noqa: F401
@@ -215,6 +215,10 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
     same report for given positions, without optimizing, with this
     analysis' vessel and forecasts: an open-loop check of a passage
     plan.
+
+    `wave` must have the interpolators `swh`, `uw` and `vw`, the last
+    two added by `Forecast.add_wave_components`: the wave direction is
+    interpolated through its components, as the wind is.
     """
 
     def __init__(
@@ -312,8 +316,17 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         u10 = self.atmosphere("u10", atmosphere_query)
         v10 = self.atmosphere("v10", atmosphere_query)
 
+        missing = {"swh", "uw", "vw"} - set(self.wave.interpolators)
+        if missing:
+            raise KeyError(
+                f"{self.wave.name} has no interpolator for {sorted(missing)}. The wave "
+                "direction is interpolated through its components: call "
+                "add_wave_components, then add_interpolator for swh, uw and vw."
+            )
+
         swh = self.wave("swh", wave_query)
-        mwd = self.wave("mwd", wave_query)
+        uw = self.wave("uw", wave_query)
+        vw = self.wave("vw", wave_query)
 
         uc = self.current("uo", environment_query) * 3600./1852.
         vc = self.current("vo", environment_query) * 3600./1852.
@@ -339,9 +352,10 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         else:
             tws_gust = tws * GUST_DEFAULT_RATIO
 
-        # TODO find why east/north wave generates unstability
-        # swh = np.sqrt(uw**2. + vw**2.)
-        # mwd = np.mod(np.arctan2d(uw, vw)+180, 360.)
+        # Direction the waves come from, as twd. The components weigh swh**2, and
+        # the small offset keeps arctan2 differentiable where they vanish: land,
+        # missing values and the fake steps past the forecast horizon.
+        mwd = np.mod(np.arctan2d(uw, vw + WAVE_COMPONENTS_OFFSET) + 180., 360.)
 
         cog = headings(lat, lon)
 

@@ -365,6 +365,58 @@ class Forecast(ArchiteuthisSpatialData):
             fac,
             coord_keys=FORECAST_KEYS,
         )
+
+    def add_wave_components(
+        self,
+        swh_dim: str = "swh",
+        mwd_dim: str = "mwd",
+        u_dim: str = "uw",
+        v_dim: str = "vw",
+    ):
+        """
+        Add the east and north components of the waves to the data.
+
+        Interpolating a direction jumps from 360 to 0 deg, so the
+        routing interpolates these components instead and takes the
+        direction back with `arctan2`, as for the wind. They point where
+        the waves go, like `u10` and `v10`, and are weighted by the wave
+        energy:
+
+            uw = -swh**2 * sin(mwd)
+            vw = -swh**2 * cos(mwd)
+
+        in m². With this weight, a large sea sets the direction between
+        grid points rather than a calm cell, and land and missing
+        values, where `swh` is NaN and becomes 0, do not count. `swh` is
+        still interpolated on its own for the height, because the norm
+        of interpolated components underestimates it where directions
+        differ. Call this method after `load_data` and before
+        `add_interpolator`.
+
+        Args:
+            swh_dim: Name of the significant wave height, in m.
+            mwd_dim: Name of the mean wave direction, in degrees, where
+                the waves come from: `mwd` for IFS, `dirpw` for GFS.
+            u_dim: Name given to the east component.
+            v_dim: Name given to the north component.
+
+        Example:
+            >>> wave.load_data()
+            >>> wave.add_wave_components()
+            >>> for key in ("swh", "uw", "vw"):
+            ...     wave.add_interpolator(
+            ...         key, "valid_time", "latitude", "longitude"
+            ...     )
+        """
+        energy = self.data[swh_dim] ** 2
+        direction = self.data[mwd_dim]
+
+        self.data[u_dim] = -energy * np.sind(direction)
+        self.data[v_dim] = -energy * np.cosd(direction)
+        for dim in (u_dim, v_dim):
+            self.data[dim].attrs = {"units": "m**2"}
+
+        status(f"➕ Added {u_dim} and {v_dim}: {swh_dim}² components along {mwd_dim} to {self.name} data.")
     
     
 class HerbieForecast(Forecast):

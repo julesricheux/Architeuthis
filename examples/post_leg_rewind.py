@@ -105,9 +105,11 @@ wave = DeterministicHerbieForecast(
     date=mirror_date
 )
 wave.load_data()
+wave.add_wave_components()
 
 wave.add_interpolator("swh", "valid_time", "latitude", "longitude")
-wave.add_interpolator("mwd", "valid_time", "latitude", "longitude")
+wave.add_interpolator("uw", "valid_time", "latitude", "longitude")
+wave.add_interpolator("vw", "valid_time", "latitude", "longitude")
 
 
 #%% BUILD CURRENT INTERPOLATORS

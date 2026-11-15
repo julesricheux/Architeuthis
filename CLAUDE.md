@@ -118,10 +118,12 @@ Required interpolator keys:
 | Object | Keys | Units |
 | --- | --- | --- |
 | `atmosphere` | `u10`, `v10`, optional `gust` (otherwise `tws * GUST_DEFAULT_RATIO`) | m/s, converted to kt |
-| `wave` | `swh`, `mwd` | m, deg |
+| `wave` | `swh`, `uw`, `vw` (from `Forecast.add_wave_components`) | m, m² |
 | `current` | `uo`, `vo` | m/s, converted to kt |
 | `topography` | `z` | nm |
 | `vessel` | `bhp`, `max_bhp`, `sails_contribution`; axes `stw, tws, twa, hs, wa` | kW; kt, kt, deg, m, deg |
+
+The wave direction is interpolated through `uw = -swh**2 * sin(mwd)` and `vw = -swh**2 * cos(mwd)`, which `Forecast.add_wave_components` adds to the data (`mwd_dim="dirpw"` for GFS), because `mwd` itself jumps from 360 to 0 deg. `_passage` takes `mwd = arctan2(uw, vw + WAVE_COMPONENTS_OFFSET) + 180`: the energy weight lets large seas rather than calm or land cells (0 after NaN) set the direction, and the offset (`common`, 1e-2 m²) keeps `arctan2` differentiable where both components vanish. `swh` stays a separate interpolator, because the norm of interpolated components underestimates it where directions differ, and `sqrt` is not differentiable at 0. Reports still give `mwd`.
 
 Modelling choices to preserve or change deliberately: wind and wave angles are relative to COG, apparent wind uses SOG rather than STW, and leeway is not modelled.
 

@@ -225,7 +225,7 @@ for model, atmos in ATMOS.items():
 
 #%% BUILD WAVE INTERPOLATORS
 
-wave_corr_fac = 0.
+wave_corr_fac = 1.
 
 WAVE = {}
 
@@ -237,9 +237,11 @@ WAVE["ifs"] = DeterministicHerbieForecast(
     date=recent
 )
 WAVE["ifs"].load_data()
+WAVE["ifs"].add_wave_components()
 
 WAVE["ifs"].add_interpolator("swh", "valid_time", "latitude", "longitude", fac=wave_corr_fac, method="bspline")
-WAVE["ifs"].add_interpolator("mwd", "valid_time", "latitude", "longitude", method="bspline")
+WAVE["ifs"].add_interpolator("uw", "valid_time", "latitude", "longitude", method="bspline")
+WAVE["ifs"].add_interpolator("vw", "valid_time", "latitude", "longitude", method="bspline")
 
 # GFS wave data
 WAVE["gfs"] = DeterministicHerbieForecast(
@@ -249,9 +251,11 @@ WAVE["gfs"] = DeterministicHerbieForecast(
     date=recent
 )
 WAVE["gfs"].load_data()
+WAVE["gfs"].add_wave_components(mwd_dim="dirpw")
 
 WAVE["gfs"].add_interpolator("swh", "valid_time", "latitude", "longitude", var_key="swh", fac=wave_corr_fac, method="bspline")
-WAVE["gfs"].add_interpolator("dirpw", "valid_time", "latitude", "longitude", var_key="mwd", method="bspline")
+WAVE["gfs"].add_interpolator("uw", "valid_time", "latitude", "longitude", method="bspline")
+WAVE["gfs"].add_interpolator("vw", "valid_time", "latitude", "longitude", method="bspline")
 
 # wave_ens = EnsembleHerbieForecast(
 #     "wave_ens", model="ifs", product="waef", regex=r":swh:|:mwd:", fxx=steps,
@@ -260,6 +264,7 @@ WAVE["gfs"].add_interpolator("dirpw", "valid_time", "latitude", "longitude", var
 #     date=recent
 # )
 # wave_ens.load_data()
+# wave_ens.add_wave_components()
 
 # wave_ens.add_interpolator(
 #     "swh", "valid_time", "number", "latitude", "longitude",
@@ -269,7 +274,14 @@ WAVE["gfs"].add_interpolator("dirpw", "valid_time", "latitude", "longitude", var
 #     longitude_slice=slice(None, None,2),
 # )
 # wave_ens.add_interpolator(
-#     "mwd", "valid_time", "number", "latitude", "longitude",
+#     "uw", "valid_time", "number", "latitude", "longitude",
+#     member_slice=slice(None, None,1),
+#     time_slice=slice(None, None,1),
+#     latitude_slice=slice(None, None,2),
+#     longitude_slice=slice(None, None,2),
+# )
+# wave_ens.add_interpolator(
+#     "vw", "valid_time", "number", "latitude", "longitude",
 #     member_slice=slice(None, None,1),
 #     time_slice=slice(None, None,1),
 #     latitude_slice=slice(None, None,2),
@@ -892,7 +904,7 @@ print("Table copied to clipboard. Paste directly into Word.")
 #%% GPX TRACKS
 
 # track_<MODEL>_<vessel>_<ETD date>.gpx in the working directory, or give report.to_gpx a file name.
-reports.select(solve=1).to_gpx()
+# reports.select(solve=1).to_gpx()
 
 #%% A4 PAGE OF EACH ROUTE
 

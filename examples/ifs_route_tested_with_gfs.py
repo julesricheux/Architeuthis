@@ -117,11 +117,15 @@ WAVE = {
     ),
 }
 WAVE["ifs"].load_data()
+WAVE["ifs"].add_wave_components()
 WAVE["ifs"].add_interpolator("swh", "valid_time", "latitude", "longitude")
-WAVE["ifs"].add_interpolator("mwd", "valid_time", "latitude", "longitude")
+WAVE["ifs"].add_interpolator("uw", "valid_time", "latitude", "longitude")
+WAVE["ifs"].add_interpolator("vw", "valid_time", "latitude", "longitude")
 WAVE["gfs"].load_data()
+WAVE["gfs"].add_wave_components(mwd_dim="dirpw")
 WAVE["gfs"].add_interpolator("swh", "valid_time", "latitude", "longitude", var_key="swh")
-WAVE["gfs"].add_interpolator("dirpw", "valid_time", "latitude", "longitude", var_key="mwd")
+WAVE["gfs"].add_interpolator("uw", "valid_time", "latitude", "longitude")
+WAVE["gfs"].add_interpolator("vw", "valid_time", "latitude", "longitude")
 
 # The same currents are used for both models, so only the wind and waves differ.
 current = CopernicusForecast(

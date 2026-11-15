@@ -29,8 +29,10 @@ atmosphere.add_interpolator("v10", "valid_time", "latitude", "longitude")
 
 wave = DeterministicHerbieForecast("wave", model="ifs", product="wave", regex=r":swh:|:mwd:", fxx=steps, date=date, **domain)
 wave.load_data()
+wave.add_wave_components()  # the direction is interpolated through its components
 wave.add_interpolator("swh", "valid_time", "latitude", "longitude")
-wave.add_interpolator("mwd", "valid_time", "latitude", "longitude")
+wave.add_interpolator("uw", "valid_time", "latitude", "longitude")
+wave.add_interpolator("vw", "valid_time", "latitude", "longitude")
 
 current = CopernicusForecast("current", dataset="cmems_mod_glo_phy_anfc_0.083deg_PT1H-m", variables=["uo", "vo"], date=date, **domain)
 current.load_data()
@@ -58,6 +60,8 @@ for key in ("bhp", "max_bhp", "sails_contribution"):
 | `vessel.Vessel` | A vessel, from its polar file. `sfc` must be given for a routing, because the objective is zero without it. `label` comes from the file name by default: `eff45` for `..._eff45.nc`. |
 
 To route without a current provider, fill a `Forecast` with zeros on the grid of the wind, as `examples/passage_planning.py` does.
+
+The wave direction is not interpolated itself, because it jumps from 360 to 0 deg. `wave.add_wave_components()` adds `uw = -swh**2 * sin(mwd)` and `vw = -swh**2 * cos(mwd)` to the data, the components of where the waves go weighted by their energy, and the routing takes the direction back from them, as for the wind. The weight lets the larger seas, not calm cells or land, set the direction between grid points. `swh` is still interpolated on its own for the height. For GFS, whose direction is `dirpw`, call `add_wave_components(mwd_dim="dirpw")`. The routing needs `swh`, `uw` and `vw`, and reports `mwd` as before.
 
 Once registered, a variable is read by calling its source with a dict. The keys are standard names, whatever the names of the coordinates in the data: `valid_time`, `latitude` and `longitude` for forecasts, plus `member` for an ensemble, `latitude` and `longitude` for the topography, and `stw`, `tws`, `twa`, `hs` and `wa` for a vessel. `input_names(var_key)` gives them. Values are floats or arrays, NumPy or CasADi, broadcast against each other, and the result is a column.
 

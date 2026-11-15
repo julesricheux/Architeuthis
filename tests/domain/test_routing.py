@@ -1,7 +1,10 @@
 """End-to-end routing on synthetic fields. The icebergs module is stubbed in tests/conftest.py."""
 
+import copy
+
 import numpy as np
 import pytest
+import xarray as xr
 
 from architeuthis.common import GUST_DEFAULT_RATIO
 from architeuthis.core import Leg, RoutingAnalysis, Schedule, Voyage
@@ -159,6 +162,37 @@ class TestBaseline:
         assert report["cs"] == pytest.approx(0.1 * knots_per_mps)
         assert report["cd"] == pytest.approx(90.0)
         assert report["swh"] == pytest.approx(1.5)
+        # From its components, within the bias of WAVE_COMPONENTS_OFFSET
+        assert report["mwd"] == pytest.approx(270.0, abs=0.5)
+
+    def test_wave_direction_is_continuous_across_north(self, analyse, open_sea, wave):
+        # Waves from 350 and 10 deg on alternate meridians, so segment midpoints fall
+        # between the two: interpolating mwd itself would give about 180 deg there.
+        crossing = copy.deepcopy(wave)
+        for key in ("uw", "vw", "mwd"):
+            crossing.remove_interpolator(key)
+        direction = xr.zeros_like(crossing.data["swh"])
+        east = (np.round(crossing.data["longitude"] * 2) % 2 == 1)
+        crossing.data["mwd"] = direction + xr.where(east, 10.0, 350.0)
+        crossing.add_wave_components()
+        for key in ("uw", "vw"):
+            crossing.add_interpolator(key, "valid_time", "latitude", "longitude")
+
+        analysis = analyse(open_sea)
+        analysis.wave = crossing
+        report = analysis.run(solve=False, solver_options=MUMPS)
+
+        from_north = np.minimum(report["mwd"], 360.0 - np.asarray(report["mwd"]))
+        assert np.max(from_north) < 10.5
+
+    def test_wave_direction_needs_its_components(self, analyse, open_sea, wave):
+        without = copy.deepcopy(wave)
+        without.remove_interpolator("uw")
+        analysis = analyse(open_sea)
+        analysis.wave = without
+
+        with pytest.raises(KeyError, match="add_wave_components"):
+            analysis.run(solve=False, solver_options=MUMPS)
 
     def test_gusts_default_to_the_standard_ratio(self, report):
         assert report["tws_gust"] == pytest.approx(report["tws"] * GUST_DEFAULT_RATIO)
