@@ -4,8 +4,8 @@ Base classes of the domain and data objects, and shared helpers.
 
 It defines `ArchiteuthisObject`, `ArchiteuthisData` with its `load_data`
 pipeline and its lookup tables, and `ArchiteuthisSpatialData`.
-It reads the credentials from the environment and holds the `status`
-output.
+It holds the paths of the package and the `status` output. The
+credentials are in `credentials`.
 
 Created on Thu Jan 15 12:44:25 2026
 
@@ -25,39 +25,17 @@ from typing import Any, Callable, Literal, Optional, Sequence, Union
 from pandas import Timestamp
 from datetime import datetime
 
-def _get_env_var(key):
-    if key in os.environ:
-        return os.environ[key]
-    else:
-        return None
-
 log = logging.getLogger(__name__)
 
 Datetime = Union[datetime, Timestamp, str]
 
-_USER = os.path.expanduser("~")
+_USER_HOME = os.path.expanduser("~")
 
-#TODO should probably be in __init__
-_HOME = os.path.join(
-    _USER,
-    "data",
-)
+# Where downloads, libraries and reports are kept. ARCHITEUTHIS_HOME moves it,
+# read once at import like the other constants.
+_HOME = os.path.expanduser(os.environ.get("ARCHITEUTHIS_HOME") or os.path.join(_USER_HOME, "data"))
 
 _CDS_URL = "https://cds.climate.copernicus.eu/api"
-_CDS_API_KEY = _get_env_var("CDS_API_KEY")
-
-_CMEMS_USER = _get_env_var("CMEMS_USER")
-_CMEMS_PWD = _get_env_var("CMEMS_PWD")
-
-_EUMDAC_USER = _get_env_var("EUMDAC_USER")
-_EUMDAC_PWD = _get_env_var("EUMDAC_PWD")
-
-_EUMDAC_CREDENTIALS = (_EUMDAC_USER, _EUMDAC_PWD)
-
-file_path = os.path.join(
-    _USER,
-    ".cdsapirc",
-)
 
 
 # ------------------------------------------------------------------------------
@@ -93,59 +71,19 @@ def set_status_sink(sink: Optional[Callable[[str], Any]]) -> None:
 # keeps its own logging and files.
 # ------------------------------------------------------------------------------
 
-_credentials_reported = False
-
-
 def setup_logging(level: int = logging.INFO, force: bool = False) -> None:
     """
-    Log to the console and report data providers without credentials.
+    Log to the console.
 
     `load_data` calls this. It leaves logging alone if the application
     has already configured it, unless `force` is True.
     """
-    global _credentials_reported
-
     logging.basicConfig(
         level=level,
         format="%(asctime)s  %(levelname)-8s  %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         force=force,
     )
-
-    if _credentials_reported:
-        return
-    _credentials_reported = True
-
-    if _CDS_API_KEY is None:
-        log.info("CDS API key was not specified. Copernicus atmosphere data will be unavailable.")
-    if (_CMEMS_USER is None) or (_CMEMS_PWD is None):
-        log.info("CMEMS credentials are incomplete. Copernicus marine service data will be unavailable.")
-    if (_EUMDAC_USER is None) or (_EUMDAC_PWD is None):
-        log.info("EUMDAC credentials are incomplete. Corresponding satellite data will be unavailable.")
-
-
-def ensure_cdsapirc() -> None:
-    """
-    Write `~/.cdsapirc` if it is missing, from `CDS_API_KEY`.
-
-    Called before a CDS download.
-    """
-    if os.path.exists(file_path):
-        return
-
-    if _CDS_API_KEY is None:
-        status(f"⚠️ Warning: {file_path} is missing and CDS_API_KEY is not set. The CDS download may fail.")
-        return
-
-    content = f"""url: {_CDS_URL}
-    key: {_CDS_API_KEY}
-    """
-    try:
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        status(f"Successfully created {file_path}")
-    except OSError as e:
-        status(f"Error: Could not write to {file_path}. {e}")
 
 
 _TOPOGRAPHY_URL = "https://www.ngdc.noaa.gov/thredds/fileServer/global/ETOPO2022/60s/60s_surface_elev_netcdf/ETOPO_2022_v1_60s_N90W180_surface.nc"

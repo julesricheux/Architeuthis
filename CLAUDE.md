@@ -34,13 +34,15 @@ python -m pytest
 
 A single test: `python -m pytest tests/optimization/test_opti_rosenbrock.py::test_2D_rosenbrock`. Only the end-to-end routing tests: `python -m pytest -m integration`. The suite takes under a minute and needs no network or credentials. There is no linter or formatter configuration.
 
-Credentials come from environment variables, and each is only needed for its provider: `CDS_API_KEY`, `CMEMS_USER`, `CMEMS_PWD`, `EUMDAC_USER`, `EUMDAC_PWD`. Herbie sources (IFS, GFS, HRDPS) need none. The README has a tutorial per provider. Never write a real value in a tracked file, including in a comment.
+Credentials are handled by `architeuthis/credentials.py`, and each is only needed for its provider: `CDS_API_KEY`, `CMEMS_USER`, `CMEMS_PWD`, `EUMDAC_KEY`, `EUMDAC_SECRET` (`CREDENTIALS`). Users save them once with `python -m architeuthis.credentials set NAME...`, which stores them in the OS credential store through `keyring` (service `architeuthis`). They are read when a download needs them, never at import: environment variables first (the names above, then aliases: `CDSAPI_KEY`, `COPERNICUSMARINE_SERVICE_USERNAME`/`_PASSWORD`, the former `EUMDAC_USER`/`EUMDAC_PWD`), then the store. Data sources call `require_credentials` in their download hook and keep no secret on the object; a missing one raises `MissingCredentialError` after a ⚠️ status. Herbie sources (IFS, GFS, HRDPS) need none. The README has a tutorial per provider. Never write a real value in a tracked file, including in a comment.
 
-Downloads are cached under `~/data/` (`common._HOME`) in `topo/`, `cmems/`, `cds/`, `eumetsat/` and `iip/`. `RouteLibrary`, `RouteSetLibrary`, `PassagePlanLibrary` and `ExclusionZoneLibrary` store JSON in `route_library/`, `route_sets/`, `passage_plans/` and `exclusion_zones/`. The UI reads route reports from `routes/`, a different format, written by `ReportCollection.save`. Vessel polars are NetCDF files that are not in the repository.
+Downloads are cached under `~/data/` (`common._HOME`, moved by `ARCHITEUTHIS_HOME`, read at import) in `topo/`, `cmems/`, `cds/`, `eumetsat/` and `iip/`. `RouteLibrary`, `RouteSetLibrary`, `PassagePlanLibrary` and `ExclusionZoneLibrary` store JSON in `route_library/`, `route_sets/`, `passage_plans/` and `exclusion_zones/`. The UI reads route reports from `routes/`, a different format, written by `ReportCollection.save`. Vessel polars are NetCDF files that are not in the repository.
 
 Development is Spyder-based: scripts use `#%%` cells and many modules have a `__main__` block used as a manual check.
 
 Branches: work on `develop`, PRs target `main`.
+
+The version is written only in `architeuthis/__init__.py` (`__version__`, a literal): `pyproject.toml` declares it `dynamic` and setuptools reads it with `attr`, and `publish.yml` compares the tag with it through `ast`. Only the `architeuthis/` package is published.
 
 ## Architecture
 
@@ -50,7 +52,8 @@ architeuthis.optimization  Opti (cas.Opti subclass), OptiSol (AeroSandbox)
 architeuthis.modeling      Fitted/interpolated models, black_box (AeroSandbox)
         |
 common.py      ArchiteuthisObject > ArchiteuthisData > ArchiteuthisSpatialData
-        |       load_data() pipeline, add_interpolator(), __call__(), credentials
+        |       load_data() pipeline, add_interpolator(), __call__(), _HOME, status
+credentials.py save/get/delete/require credentials: environment, then OS store (keyring)
         +-- vessel.py     Vessel: polars NetCDF + hotel_load, sfc, max_power
         +-- forecast.py   Topography; Forecast > Herbie (deterministic, HRDPS, ensemble),
         |                 Copernicus (CMEMS), CDS (ERA5)
@@ -143,7 +146,7 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 
 **Import side effects**
 
-- Importing the package has none, and `tests/domain/test_import_side_effects.py` checks it. `load_data` calls `common.setup_logging`, which leaves logging alone if the application has configured it, and `ensure_cdsapirc` runs before a CDS download and never writes `key: None`.
+- Importing the package has none, and `tests/domain/test_import_side_effects.py` checks it. `load_data` calls `common.setup_logging`, which leaves logging alone if the application has configured it, and nothing reads credentials or imports `keyring` at import.
 - `architeuthis.icebergs` fetches the IIP bulletin and shapefiles on first use of `berg_zone`, `polygon` or `berg_geojson` (module `__getattr__`, connect timeout 10 s), once per session unless `refresh()` is called. Calling `exclusion.iceberg_zone()` or reading `core.berg_zone` counts as a use, so these can take time. Offline, it falls back to the last downloads in `~/data/iip/` (`IcebergBulletin.txt`, shapefiles), else to an empty `berg_zone` and GeoJSON, with a warning. `Topography` skips exclusion zones with fewer than 3 points, so routing then runs **without the iceberg limit**.
 - `architeuthis/ui.py` is a script, not a library: importing it downloads forecasts and needs a report JSON in `~/data/routes/`. Run it from inside `architeuthis/` because of `./assets/` relative paths; it serves on port 8052. Its first lines remove `architeuthis/` from `sys.path`, where `architeuthis/numpy` would hide numpy, and it selects the Agg backend, because a GUI backend kills the process at the first raster or contour. So when checking the UI, do not set `MPLBACKEND`, which is not what a user has. In debug mode its reloader runs the script twice, and any restart downloads the forecasts again. Layers that do not depend on its data belong in `wrappers/leaflet_wrapper.py`, where they can be tested.
 - `ui.py` needs Dash >= 4.5 and Dash Mantine Components 3, which needs React 19: right after importing Dash it calls `dash._dash_renderer._set_react_version("19.2.4")`, a private function, because Dash still loads React 18 by default. Without it the page shows only "requires React 19".
@@ -177,7 +180,7 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 - `EnsembleHerbieForecast.add_interpolator` takes `var_dim, time_dim, member_dim, latitude_dim, longitude_dim`, which must be the order of the array.
 - Report consumers (`json_wrapper.route_to_geojson`, `ui.py`) also need `init_fac`, which `run` records but `evaluate` does not. `ReportCollection.save` writes to `~/data/routes/` by default.
 - `HRDPSForecast` wind speeds are right but its directions are not: the files have `uvRelativeToGrid` = 1 and the components are not rotated from the rotated grid, about 45 deg off around Saint-Pierre-et-Miquelon compared with GFS. `HerbieLatest` only looks on `aws` and `nomads` by default, so a model elsewhere needs `priority`.
-- `common` reads credentials once, at its import, so a variable set later is ignored. `EUMDAC_USER` and `EUMDAC_PWD` hold the EUMETSAT Consumer Key and Secret, not a login. Once `~/.cdsapirc` exists, `CDS_API_KEY` no longer has any effect. Without `CMEMS_USER`, the Copernicus Marine toolbox looks at its own variables and files, then prompts, and without a terminal `subset` returns `None`.
+- `EUMDAC_KEY` and `EUMDAC_SECRET` hold the EUMETSAT Consumer Key and Secret, not a login. When neither CMEMS credential is found, `CopernicusForecast` passes `None` to the toolbox only if the `copernicusmarine login` file exists (`COPERNICUSMARINE_CREDENTIALS_DIRECTORY` or `~/.copernicusmarine/`), else it raises; likewise `CDSForecast` falls back to `cdsapi.Client()` only if `CDSAPI_RC` or `~/.cdsapirc` exists. Architeuthis never writes `~/.cdsapirc` any more. Without a credential store (Linux server), `keyring` errors are treated as "not found", so environment variables still work.
 - `core.berg_zone` and `icebergs.berg_zone` are computed when they are read (module `__getattr__`), so `from architeuthis.icebergs import berg_zone` fetches the iceberg limit at that line.
 
 ## Testing
@@ -187,18 +190,18 @@ Tests live in `tests/`, configured in `pyproject.toml`. `.github/workflows/tests
 CI installs the latest dependencies, so it can differ from a local environment. In particular, casadi 3.7 and 3.8 do not always converge the same way, so keep test objectives reasonably well conditioned.
 
 - **`tests/numpy`, `tests/optimization`, `tests/modeling`:** vendored from AeroSandbox, including the `import architeuthis as asb` style.
-- **`tests/domain`:** Architeuthis code. `test_route.py` covers routes, voyages and passage plans offline. `test_routing.py` runs `RoutingAnalysis.run` and `evaluate` end to end, marked `integration`. `test_plots.py` draws every figure from real reports with Agg. `test_ui.py` runs the real `ui.py` without its server, with forecasts and downloads replaced. `test_examples.py` runs every example and the quick start of the README from start to finish on synthetic data, so a new example must be added to its `WINDOWS`. `test_readme.py` checks the README and its links, and `test_plots.py` checks that `docs/user_guide.md` gives the signature of each figure. `test_import_side_effects.py` checks imports in a new interpreter with the network cut off.
+- **`tests/domain`:** Architeuthis code. `test_route.py` covers routes, voyages and passage plans offline. `test_routing.py` runs `RoutingAnalysis.run` and `evaluate` end to end, marked `integration`. `test_plots.py` draws every figure from real reports with Agg. `test_ui.py` runs the real `ui.py` without its server, with forecasts and downloads replaced. `test_examples.py` runs every example and the quick start of the README from start to finish on synthetic data, so a new example must be added to its `WINDOWS`. `test_readme.py` checks the README and its links, and `test_plots.py` checks that `docs/user_guide.md` gives the signature of each figure. `test_import_side_effects.py` checks imports in a new interpreter with the network cut off. `test_credentials.py` covers the credential lookup, the store and the command line, and `test_packaging.py` the single source of the version. Download tests set credentials with `monkeypatch.setenv`.
 - **Expected failure:** `test_black_box_nonsmooth_function` is `xfail` because IPOPT can fail on the kink of `abs()`.
 
 Rules for new tests:
 
-- **Stay offline.** `tests/conftest.py` points `HOME` at a temporary folder, removes credentials and replaces `architeuthis.icebergs` with a stub. Mock providers with `patch("architeuthis.forecast.<name>")`, or `load_data` as `test_examples.py` does.
+- **Stay offline.** `tests/conftest.py` points `HOME` at a temporary folder, removes credentials and their aliases and `ARCHITEUTHIS_HOME`, selects the null `keyring` backend through `PYTHON_KEYRING_BACKEND` so the real credential store is never touched (`test_credentials.py` installs one in memory), and replaces `architeuthis.icebergs` with a stub. Mock providers with `patch("architeuthis.forecast.<name>")`, or `load_data` as `test_examples.py` does.
 - **Use synthetic data.** The fixtures in `tests/domain/conftest.py` provide forecasts, topographies, a vessel and real reports (`baseline_report`, `optimized_report`, `routing`): assign a dataset to `.data`, skip `load_data()`, then call `add_interpolator`. The reports are shared, so copy them to change them.
 - **Pass `linear_solver: mumps`** in routing tests, because of the `spral` crash described under Pitfalls.
 - **Keep the checkout clean.** Importing `wrappers/json_wrapper.py` or `ui.py` writes `assets/dashExtensions_default.js` to the working directory, so import them from a temporary folder, as `tests/domain/test_toolbox.py` does.
 - **Do not change `--tb=native`.** Other traceback styles parse `casadi.py`, which raises `MemoryError` and aborts the session.
 
-Not covered: the real IIP server (`test_icebergs.py` replaces `requests.get`), `ui.py` with real forecasts and in a browser, the rendering of cartopy maps, `satellite.py`, and the default `spral` solver options.
+Not covered: the real IIP server (`test_icebergs.py` replaces `requests.get`), `ui.py` with real forecasts and in a browser, the rendering of cartopy maps, `satellite.py` downloads, the real credential stores of each OS (only checked by hand on Windows), and the default `spral` solver options.
 
 ## Known inconsistencies
 

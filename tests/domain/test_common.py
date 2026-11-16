@@ -9,7 +9,6 @@ from architeuthis import common
 from architeuthis.common import (
     ArchiteuthisData,
     ArchiteuthisObject,
-    ensure_cdsapirc,
     set_status_sink,
     setup_logging,
     status,
@@ -283,7 +282,6 @@ def clean_logging(monkeypatch):
     root = logging.getLogger()
     handlers = list(root.handlers)
     level = root.level
-    monkeypatch.setattr(common, "_credentials_reported", False)
 
     def clean(*new_handlers):
         root.handlers[:] = new_handlers
@@ -322,52 +320,9 @@ def test_setup_logging_can_force_its_configuration(clean_logging):
     assert root.level == logging.WARNING
 
 
-def test_missing_credentials_are_reported_once(clean_logging, monkeypatch):
-    messages = []
-    monkeypatch.setattr(common.log, "info", messages.append)
-    clean_logging()
-
-    setup_logging()
-    setup_logging()
-
-    assert sum("CDS API key" in message for message in messages) == 1
-
-
 def test_load_data_sets_logging_up(clean_logging):
     root = clean_logging()
 
     Table().load_data()
 
     assert len(root.handlers) == 1
-
-
-class TestCdsapirc:
-    @pytest.fixture
-    def path(self, monkeypatch, tmp_path):
-        path = tmp_path / ".cdsapirc"
-        monkeypatch.setattr(common, "file_path", str(path))
-        return path
-
-    def test_written_from_the_key(self, path, monkeypatch):
-        monkeypatch.setattr(common, "_CDS_API_KEY", "my-key")
-
-        ensure_cdsapirc()
-
-        assert "key: my-key" in path.read_text()
-
-    def test_existing_file_is_kept(self, path, monkeypatch):
-        monkeypatch.setattr(common, "_CDS_API_KEY", "my-key")
-        path.write_text("mine")
-
-        ensure_cdsapirc()
-
-        assert path.read_text() == "mine"
-
-    def test_never_written_without_a_key(self, path, monkeypatch, capsys):
-        # It used to be written at import with `key: None`, which then hid the real problem.
-        monkeypatch.setattr(common, "_CDS_API_KEY", None)
-
-        ensure_cdsapirc()
-
-        assert not path.exists()
-        assert "CDS_API_KEY is not set" in capsys.readouterr().out

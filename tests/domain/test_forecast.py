@@ -9,6 +9,7 @@ import pytest
 import xarray as xr
 
 import architeuthis.forecast as forecast_module
+from architeuthis.credentials import MissingCredentialError
 from architeuthis.forecast import (
     HRDPSForecast,
     _regrid_to_lat_lon,
@@ -288,8 +289,14 @@ def copernicus_forecast():
     )
 
 
+@pytest.fixture
+def cmems_credentials(monkeypatch):
+    monkeypatch.setenv("CMEMS_USER", "my-user")
+    monkeypatch.setenv("CMEMS_PWD", "my-password")
+
+
 @patch("architeuthis.forecast.copernicusmarine.subset")
-def test_copernicus_downloads_the_requested_subset(subset):
+def test_copernicus_downloads_the_requested_subset(subset, cmems_credentials):
     subset.return_value.file_path = "dummy.nc"
     forecast = copernicus_forecast()
 
@@ -297,10 +304,49 @@ def test_copernicus_downloads_the_requested_subset(subset):
 
     assert forecast.path == "dummy.nc"
     kwargs = subset.call_args.kwargs
+    assert kwargs["username"] == "my-user"
+    assert kwargs["password"] == "my-password"
     assert kwargs["dataset_id"] == "dummy-dataset"
     assert kwargs["variables"] == ["uo", "vo"]
     assert kwargs["start_datetime"] == BASE_DATE
     assert kwargs["skip_existing"] is True
+
+
+@patch("architeuthis.forecast.copernicusmarine.subset")
+def test_copernicus_credentials_are_read_when_downloading(subset, monkeypatch):
+    forecast = copernicus_forecast()
+    monkeypatch.setenv("COPERNICUSMARINE_SERVICE_USERNAME", "late-user")
+    monkeypatch.setenv("COPERNICUSMARINE_SERVICE_PASSWORD", "late-password")
+
+    forecast._download_data()
+
+    assert subset.call_args.kwargs["password"] == "late-password"
+
+
+def test_copernicus_object_holds_no_credential(cmems_credentials):
+    forecast = copernicus_forecast()
+
+    assert "my-password" not in repr(vars(forecast))
+
+
+@patch("architeuthis.forecast.copernicusmarine.subset")
+def test_copernicus_without_credentials_stops_before_downloading(subset, capsys):
+    with pytest.raises(MissingCredentialError, match="CMEMS_USER, CMEMS_PWD"):
+        copernicus_forecast()._download_data()
+
+    subset.assert_not_called()
+    assert "⚠️" in capsys.readouterr().out
+
+
+@patch("architeuthis.forecast.copernicusmarine.subset")
+def test_copernicus_login_file_is_left_to_the_toolbox(subset, monkeypatch, tmp_path):
+    monkeypatch.setenv("COPERNICUSMARINE_CREDENTIALS_DIRECTORY", str(tmp_path))
+    (tmp_path / ".copernicusmarine-credentials").write_text("")
+
+    copernicus_forecast()._download_data()
+
+    assert subset.call_args.kwargs["username"] is None
+    assert subset.call_args.kwargs["password"] is None
 
 
 def test_copernicus_conversion_renames_time_and_pads_it():
@@ -350,6 +396,7 @@ def test_cds_request_covers_the_period_and_domain():
 
 def test_cds_reuses_a_cached_file(tmp_path, monkeypatch):
     monkeypatch.setattr(forecast_module, "_HOME", str(tmp_path))
+    monkeypatch.setenv("CDS_API_KEY", "my-key")
     forecast = cds_forecast()
 
     with patch("architeuthis.forecast.cdsapi.Client") as client:
@@ -368,6 +415,7 @@ def test_cds_reuses_a_cached_file(tmp_path, monkeypatch):
 
 def test_cds_cache_key_depends_on_the_request(tmp_path, monkeypatch):
     monkeypatch.setattr(forecast_module, "_HOME", str(tmp_path))
+    monkeypatch.setenv("CDS_API_KEY", "my-key")
     first, second = cds_forecast(), cds_forecast(max_lat=10.0)
 
     with patch("architeuthis.forecast.cdsapi.Client"):
@@ -375,6 +423,39 @@ def test_cds_cache_key_depends_on_the_request(tmp_path, monkeypatch):
         second._download_data()
 
     assert first.path != second.path
+
+
+def test_cds_key_goes_to_the_client_and_never_to_a_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(forecast_module, "_HOME", str(tmp_path / "data"))
+    monkeypatch.setattr(forecast_module, "_USER_HOME", str(tmp_path))
+    monkeypatch.setenv("CDS_API_KEY", "my-key")
+
+    with patch("architeuthis.forecast.cdsapi.Client") as client:
+        cds_forecast()._download_data()
+
+    client.assert_called_once_with(url=forecast_module._CDS_URL, key="my-key")
+    assert not (tmp_path / ".cdsapirc").exists()
+
+
+def test_cds_without_key_uses_the_cdsapirc_of_the_user(tmp_path, monkeypatch):
+    monkeypatch.setattr(forecast_module, "_HOME", str(tmp_path / "data"))
+    monkeypatch.setattr(forecast_module, "_USER_HOME", str(tmp_path))
+    (tmp_path / ".cdsapirc").write_text("url: x\nkey: y\n")
+
+    with patch("architeuthis.forecast.cdsapi.Client") as client:
+        cds_forecast()._download_data()
+
+    client.assert_called_once_with()
+
+
+def test_cds_without_any_key_stops_before_downloading(tmp_path, monkeypatch):
+    monkeypatch.setattr(forecast_module, "_HOME", str(tmp_path / "data"))
+    monkeypatch.setattr(forecast_module, "_USER_HOME", str(tmp_path))
+
+    with patch("architeuthis.forecast.cdsapi.Client") as client, pytest.raises(MissingCredentialError, match="CDS_API_KEY"):
+        cds_forecast()._download_data()
+
+    client.assert_not_called()
 
 
 def test_cds_conversion_renames_time_without_padding():

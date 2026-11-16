@@ -170,95 +170,93 @@ Each variable has the five dimensions below, in this order:
 
 IFS, GFS, HRDPS, ETOPO and the iceberg limit need no account. The other providers are free but need one, and only when you use them:
 
-| You want | Provider | Environment variables |
+| You want | Provider | Credentials |
 | --- | --- | --- |
 | Currents, `forecast.CopernicusForecast` | [Copernicus Marine](#copernicus-marine-currents) | `CMEMS_USER`, `CMEMS_PWD` |
 | Reanalysis, `forecast.CDSForecast` | [Climate Data Store](#climate-data-store-era5) | `CDS_API_KEY` |
-| Satellite observations, `satellite.ASCATData`, `satellite.PoseidonData` | [EUMETSAT](#eumetsat-satellite-observations) | `EUMDAC_USER`, `EUMDAC_PWD` |
+| Satellite observations, `satellite.ASCATData`, `satellite.PoseidonData` | [EUMETSAT](#eumetsat-satellite-observations) | `EUMDAC_KEY`, `EUMDAC_SECRET` |
 
-### > Setting an Environment Variable
+### > Saving Your Credentials Once
 
-Architeuthis reads these variables **when it is imported**, so set them first, then open a new terminal or restart Spyder. The examples below use `CMEMS_USER`: do the same for each variable.
-
-**Windows:** search for *Edit environment variables for your account* in the Start menu, then choose *New*. Or, in PowerShell:
-```powershell
-setx CMEMS_USER "your-username"
-```
-
-**Linux and macOS:** add this line to `~/.bashrc` or `~/.zshrc`:
+Run this once in a terminal, in the environment where Architeuthis is installed, with the names you need. It asks for each value, hidden when it is secret:
 ```bash
-export CMEMS_USER="your-username"
+python -m architeuthis.credentials set CMEMS_USER CMEMS_PWD
 ```
 
-**In a conda environment,** so that the values only apply there, then activate the environment again:
+Architeuthis then finds them in every session, in Spyder, a notebook or a script, with nothing to set and nothing to restart. They are kept encrypted by your operating system, under the name `architeuthis`: in the *Windows Credential Manager*, the *macOS Keychain*, or the *Secret Service* of your Linux desktop (GNOME Keyring, KWallet), through [keyring](https://pypi.org/project/keyring/).
+
+To check which credentials are found, and where, without showing them:
 ```bash
-conda env config vars set CMEMS_USER="your-username" -n py313-architeuthis
+python -m architeuthis.credentials status
 ```
 
-**For one session only,** before any Architeuthis import:
+To change one, run `set` again. To remove one, use `delete`, for example `python -m architeuthis.credentials delete CMEMS_PWD`. The same is possible from Python:
+```python
+from architeuthis.credentials import save_credential, credential_sources
+
+save_credential("CMEMS_PWD")  # asks for it, hidden
+print(credential_sources())
+```
+
+### > Environment Variables
+
+A credential can also come from an environment variable of the same name, which then takes precedence over the saved one. This suits a CI job, a container or a Linux server without credential store. Architeuthis reads it when a download starts, so it can be set during a session:
 ```python
 import os
 from getpass import getpass
 
-os.environ["CMEMS_USER"] = "your-username"
 os.environ["CMEMS_PWD"] = getpass("Copernicus Marine password: ")
-
-from architeuthis.forecast import CopernicusForecast
 ```
 
-To check which variables Python can see, without showing their values:
-```python
-import os
+The variables of the providers' own clients are read too: `CDSAPI_KEY`, `COPERNICUSMARINE_SERVICE_USERNAME` and `COPERNICUSMARINE_SERVICE_PASSWORD`. So are `EUMDAC_USER` and `EUMDAC_PWD`, the former names of `EUMDAC_KEY` and `EUMDAC_SECRET`.
 
-for name in ("CMEMS_USER", "CMEMS_PWD", "CDS_API_KEY", "EUMDAC_USER", "EUMDAC_PWD"):
-    print(name, "is set" if os.environ.get(name) else "is missing")
-```
-
-> 🔒 **Keep credentials out of your code.** Anything committed to a repository stays in its history, even after it is removed from the files, and a public repository exposes it to everyone. These methods store values in plain text in your user profile, so keep them out of shared machines and shared folders. If a credential leaks, change it at the provider right away. A value typed in a command also stays in the shell history.
+> 🔒 **Keep credentials out of your code.** Anything committed to a repository stays in its history, even after it is removed from the files, and a public repository exposes it to everyone. An environment variable saved in your profile (`setx`, `~/.bashrc`, `conda env config vars`) is stored in plain text, unlike a saved credential, so if you used them before, save your credentials as above, then delete those variables. If a credential leaks, change it at the provider right away.
 
 ### Copernicus Marine (currents)
 
 1. Create a free account at [data.marine.copernicus.eu/register](https://data.marine.copernicus.eu/register).
-2. Set `CMEMS_USER` to your username and `CMEMS_PWD` to your password.
+2. Save your username as `CMEMS_USER` and your password as `CMEMS_PWD`.
 3. Check them, which prints `True` if they are valid:
 ```python
-import os
-
 import copernicusmarine
 
-print(copernicusmarine.login(os.environ["CMEMS_USER"], os.environ["CMEMS_PWD"], check_credentials_valid=True))
+from architeuthis.credentials import get_credential
+
+print(copernicusmarine.login(get_credential("CMEMS_USER"), get_credential("CMEMS_PWD"), check_credentials_valid=True))
 ```
 
-If you prefer, leave the variables unset and store your credentials once with `copernicusmarine login`. The toolbox then finds them in `~/.copernicusmarine/`. The startup log still says that they are incomplete, which you can ignore.
+If you already stored your credentials with `copernicusmarine login`, Architeuthis lets the toolbox use them when it finds none of its own. This file is in plain text, in `~/.copernicusmarine/`.
 
 ### Climate Data Store (ERA5)
 
 1. Create a free account at the [Climate Data Store](https://cds.climate.copernicus.eu/how-to-api).
-2. Copy your *Personal Access Token* from your profile page, and set `CDS_API_KEY` to it.
+2. Copy your *Personal Access Token* from your profile page, and save it as `CDS_API_KEY`.
 3. Open the page of each dataset you need, such as [ERA5 single levels](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels?tab=download), and accept its Terms of Use. Downloads are refused until you do.
 
-At its first download, Architeuthis writes the token to `~/.cdsapirc` and uses this file from then on. **If you change your token, update or delete this file**, because a new `CDS_API_KEY` does not replace it. You can also write the file yourself and leave the variable unset:
+Architeuthis gives the token to the CDS client directly. If it finds none, the client reads its own `~/.cdsapirc`, a plain text file like this one:
 ```text
 url: https://cds.climate.copernicus.eu/api
 key: your-personal-access-token
 ```
 
+Versions 0.2.0 and earlier wrote this file from `CDS_API_KEY`. Once your token is saved, you can delete it.
+
 ### EUMETSAT (satellite observations)
 
-Despite their names, these two variables do **not** take your login and password:
+These two credentials are **not** your login and password:
 
 1. Create a free EUMETSAT account and open the [API key page](https://api.eumetsat.int/api-key/).
-2. Set `EUMDAC_USER` to your **Consumer Key** and `EUMDAC_PWD` to your **Consumer Secret**.
+2. Save your **Consumer Key** as `EUMDAC_KEY` and your **Consumer Secret** as `EUMDAC_SECRET`.
 3. Check them, which prints an expiry date, or `401 Unauthorized` if they are wrong:
 ```python
-import os
-
 import eumdac
 
-print(eumdac.AccessToken((os.environ["EUMDAC_USER"], os.environ["EUMDAC_PWD"])).expiration)
+from architeuthis.credentials import get_credential
+
+print(eumdac.AccessToken((get_credential("EUMDAC_KEY"), get_credential("EUMDAC_SECRET"))).expiration)
 ```
 
-`eumdac set-credentials` configures the `eumdac` command only, so Architeuthis still needs the variables.
+`eumdac set-credentials` configures the `eumdac` command only, so Architeuthis still needs its own.
 
 ---
 

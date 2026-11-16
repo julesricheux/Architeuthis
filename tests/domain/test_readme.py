@@ -70,15 +70,26 @@ def test_links_inside_the_readme_lead_to_a_heading(readme):
         assert anchor in headings, anchor
 
 
-def test_tutorials_cover_every_credential_that_is_read():
-    common = (ROOT / "architeuthis" / "common.py").read_text(encoding="utf-8")
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    names = re.findall(r'_get_env_var\("(\w+)"\)', common)
+def test_tutorials_cover_every_credential_that_is_read(readme):
+    from architeuthis.credentials import CREDENTIALS
 
-    assert set(names) == {"CDS_API_KEY", "CMEMS_USER", "CMEMS_PWD", "EUMDAC_USER", "EUMDAC_PWD"}
     section = readme[readme.index("## 🔑 Credentials"):readme.index("The Routing Problem")]
-    for name in names:
-        assert f"`{name}`" in section
+    assert set(CREDENTIALS) == {"CDS_API_KEY", "CMEMS_USER", "CMEMS_PWD", "EUMDAC_KEY", "EUMDAC_SECRET"}
+    for credential in CREDENTIALS.values():
+        for variable in credential.variables:
+            assert f"`{variable}`" in section
+
+
+def test_readme_saves_credentials_with_the_real_command(readme):
+    from architeuthis.credentials import CREDENTIALS
+
+    commands = re.findall(r"python -m architeuthis\.credentials ([^`\n]+)", readme)
+
+    assert len(commands) == 3
+    for command in commands:
+        action, *names = command.split()
+        assert action in ("set", "status", "delete"), command
+        assert set(names) <= set(CREDENTIALS), command
 
 
 def test_eumetsat_tutorial_asks_for_what_the_client_expects(readme):
@@ -87,11 +98,11 @@ def test_eumetsat_tutorial_asks_for_what_the_client_expects(readme):
     import eumdac
 
     assert "consumer_key, consumer_secret" in inspect.getdoc(eumdac.AccessToken.__init__)
-    assert "`EUMDAC_USER` to your **Consumer Key**" in readme
-    assert "`EUMDAC_PWD` to your **Consumer Secret**" in readme
+    assert "**Consumer Key** as `EUMDAC_KEY`" in readme
+    assert "**Consumer Secret** as `EUMDAC_SECRET`" in readme
 
 
-def test_cds_tutorial_gives_the_url_that_is_written(readme):
+def test_cds_tutorial_gives_the_url_of_the_client(readme):
     from architeuthis.common import _CDS_URL
 
     assert f"url: {_CDS_URL}" in readme
