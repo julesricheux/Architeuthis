@@ -3,7 +3,8 @@
 Base classes of the domain and data objects, and shared helpers.
 
 It defines `ArchiteuthisObject`, `ArchiteuthisData` with its `load_data`
-pipeline and its lookup tables, and `ArchiteuthisSpatialData`.
+pipeline and its models (lookup tables or functions), `FunctionModel`
+and `ArchiteuthisSpatialData`.
 It holds the paths of the package and the `status` output. The
 credentials are in `credentials`.
 
@@ -145,6 +146,92 @@ def to_timestamp(value: Union[Datetime, float, int]) -> float:
     return float(timestamp.timestamp())
 
 
+class FunctionModel:
+    """
+    A model computed by a function, R^N -> R^1.
+
+    It is called like a HybridInterpolatedModel, with a dict of inputs,
+    and calls `function(x, **args)`, where `x` holds the inputs named
+    in `inputs`. `args` are fixed arguments, such as fitted parameters.
+    Written with `architeuthis.numpy`, the function takes CasADi inputs
+    and the routing differentiates through it.
+
+    Args:
+        function: Function of a dict of inputs, and of `args`.
+        inputs: Names of the inputs, the keys of the queries.
+        args: Fixed keyword arguments of `function`.
+        output: Which part of the result is the value: None for the
+            result itself, or the first item of a tuple result; a key,
+            looked up in a dict result, else in the dicts of a tuple
+            result such as `(value, components)`; an index of a tuple
+            result; or a function of the result.
+        name: Name of this model.
+
+    Example:
+        >>> def power(x, p):
+        ...     return p["k"] * x["stw"]**3
+        >>> model = FunctionModel(power, ["stw"], {"p": {"k": 1.2}})
+        >>> model({"stw": 10.})
+    """
+
+    def __init__(
+        self,
+        function: Callable,
+        inputs: Sequence[str],
+        args: Optional[dict] = None,
+        output: Union[None, str, int, Callable] = None,
+        name: Optional[str] = None,
+    ):
+        self.function = function
+        self.inputs = list(inputs)
+        self.args = dict(args) if args is not None else {}
+        self.output = output
+        self.name = name if name is not None else getattr(function, "__name__", "function")
+
+    def input_names(self) -> list[str]:
+        """
+        Names of the inputs of this model.
+
+        Returns:
+            The keys that a query of this model takes.
+        """
+        return list(self.inputs)
+
+    def __call__(self, x: dict):
+        """
+        Evaluate the function and select its output.
+
+        Args:
+            x: Inputs keyed by name. Keys that are not inputs of this
+                model are not passed to the function.
+
+        Returns:
+            The selected output of the function.
+        """
+        missing = [key for key in self.inputs if key not in x]
+        if missing:
+            raise KeyError(f"{self.name} needs the inputs {missing}.")
+
+        result = self.function({key: x[key] for key in self.inputs}, **self.args)
+        return self._select(result)
+
+    def _select(self, result):
+        output = self.output
+        if output is None:
+            return result[0] if isinstance(result, tuple) else result
+        if callable(output):
+            return output(result)
+        if isinstance(output, int):
+            return result[output]
+        if isinstance(result, dict):
+            return result[output]
+        if isinstance(result, tuple):
+            for item in result:
+                if isinstance(item, dict) and output in item:
+                    return item[output]
+        raise KeyError(f"{self.name} has no output {output!r}.")
+
+
 class ArchiteuthisObject(ABC):
     """
     Base class of the domain objects.
@@ -166,10 +253,13 @@ class ArchiteuthisObject(ABC):
     
 class ArchiteuthisData(ArchiteuthisObject):
     """
-    Base class of the objects backed by a dataset.
+    Base class of the objects backed by data or by models.
 
-    `load_data` fills `data`, and `add_interpolator` builds the lookup
-    tables that calling this object queries.
+    Calling this object queries one of its `models`, by key. A model is
+    any callable taking a dict of inputs, with an `input_names()`
+    method: `add_interpolator` builds a lookup table from `data`, which
+    `load_data` fills, `add_function` wraps a function and its fixed
+    arguments, and `add_model` registers any other.
 
     Args:
         name: Name of this object, used in status messages.
@@ -187,8 +277,17 @@ class ArchiteuthisData(ArchiteuthisObject):
         self.path = None
         self.data = None
         self.var_keys = set()
-        self.interpolators = {}
-        
+        self.models = {}
+
+    @property
+    def interpolators(self) -> dict:
+        """
+        The models of this object, interpolated or not.
+
+        This is the former name of `models`, kept for compatibility.
+        """
+        return self.models
+
     def load_data(self):
         """
         Locate, download, read, convert and extend the data.
@@ -260,7 +359,7 @@ class ArchiteuthisData(ArchiteuthisObject):
                 with these keys.
         """
         if var_key in self.var_keys:
-            status(f"🟦 {var_key} already in {self.name} interpolators.")
+            status(f"🟦 {var_key} already in {self.name} models.")
             return
 
         if coord_keys is None:
@@ -281,33 +380,114 @@ class ArchiteuthisData(ArchiteuthisObject):
             nan=0.,
         ) * fac  # apply correction factor if specified
 
-        self.interpolators[var_key] = HybridInterpolatedModel(
+        model = HybridInterpolatedModel(
             x_data_coordinates=x,
             y_data_structured=f,
             method=method,
             fill_value=None,  # extrapolate, as the former CasADi interpolant
             name=f"LUT_{var_dim}",
         )
+        self.add_model(var_key, model, description=var_dim)
+
+    def add_function(
+        self,
+        var_key: str,
+        function: Callable,
+        inputs: Sequence[str],
+        args: Optional[dict] = None,
+        output: Union[None, str, int, Callable] = None,
+    ):
+        """
+        Register a function as the model of a variable.
+
+        It is called as `function(x, **args)`, where `x` is a dict of
+        the `inputs` of the query. Written with `architeuthis.numpy`, it
+        takes CasADi inputs and the routing differentiates through it.
+        A `var_key` that already exists is left as it is.
+
+        Args:
+            var_key: Key of the model when calling this object.
+            function: Function of a dict of inputs, and of `args`.
+            inputs: Names of the inputs, the keys of the queries.
+            args: Fixed keyword arguments, such as fitted parameters.
+            output: Which part of the result is the value, see
+                `FunctionModel`: for example a key of the components
+                of a `(value, components)` result.
+
+        Example:
+            >>> vessel.add_function(
+            ...     "bhp",
+            ...     propulsion_power,
+            ...     inputs=["stw", "tws", "twa", "swh", "mwa"],
+            ...     args={"p": parameters},
+            ... )
+        """
+        model = FunctionModel(
+            function=function,
+            inputs=inputs,
+            args=args,
+            output=output,
+            name=f"{self.name}_{var_key}",
+        )
+        self.add_model(var_key, model, description=getattr(function, "__name__", None))
+
+    def add_model(
+        self,
+        var_key: str,
+        model: Callable,
+        description: Optional[str] = None,
+    ):
+        """
+        Register a model, queried by calling this object.
+
+        A model is called with a dict of inputs, NumPy or CasADi, and
+        its `input_names()` method gives their keys. A `var_key` that
+        already exists is left as it is.
+
+        Args:
+            var_key: Key of the model when calling this object.
+            model: A HybridInterpolatedModel, a FunctionModel or any
+                object with the same interface.
+            description: What the model is, for the status message.
+        """
+        if var_key in self.var_keys:
+            status(f"🟦 {var_key} already in {self.name} models.")
+            return
+
+        self.models[var_key] = model
         self.var_keys.add(var_key)
 
-        status(f"➕ Added {var_key}: {var_dim} to {self.name} interpolators.")
+        what = f": {description}" if description else ""
+        status(f"➕ Added {var_key}{what} to {self.name} models.")
+
+    def remove_model(
+        self,
+        var_key: str,
+    ):
+        """
+        Remove a model, if it exists.
+
+        Args:
+            var_key: Key of the model.
+        """
+        if var_key in self.var_keys:
+            del self.models[var_key]
+            self.var_keys.remove(var_key)
+            status(f"➖ Removed {var_key} from {self.name} models.")
+        else:
+            status(f"💔 {var_key} not found in {self.name} models.")
 
     def remove_interpolator(
         self,
         var_key: str,
     ):
         """
-        Remove a lookup table, if it exists.
+        Remove a model, if it exists, as `remove_model` does.
 
         Args:
             var_key: Key given to `add_interpolator`.
         """
-        if var_key in self.var_keys:
-            del self.interpolators[var_key]
-            self.var_keys.remove(var_key)
-            status(f"➖ Removed {var_key} from {self.name} interpolators.")
-        else:
-            status(f"💔 {var_key} not found in {self.name} interpolators.")
+        self.remove_model(var_key)
 
     def __call__(
         self,
@@ -315,19 +495,21 @@ class ArchiteuthisData(ArchiteuthisObject):
         X,
     ):
         """
-        Query a lookup table.
+        Query a model: a lookup table, a function or another.
 
         Args:
-            var_key: Key given to `add_interpolator`.
+            var_key: Key given to `add_interpolator`, `add_function`
+                or `add_model`.
             X: Query points, as a dict of floats or arrays keyed by the
-                input names of the table (see `input_names`), broadcast
-                against each other. NumPy or CasADi. An array of shape
-                (n_queries, n_dims), with columns in the order of the
-                inputs, is also accepted.
+                input names of the model (see `input_names`), broadcast
+                against each other. NumPy or CasADi. Other keys are
+                ignored, so one query can serve several models. An
+                array of shape (n_queries, n_dims), with columns in the
+                order of the inputs, is also accepted.
 
         Returns:
             A CasADi column vector, DM for numeric queries, or None if
-            this object has no lookup table.
+            this object has no model.
 
         Example:
             >>> forecast("u10", {
@@ -336,14 +518,14 @@ class ArchiteuthisData(ArchiteuthisObject):
             ...     "longitude": lon,
             ... })
         """
-        if not self.interpolators:
-            status(f"💔 {self.name} has no interpolators and thus cannot be called.")
+        if not self.models:
+            status(f"💔 {self.name} has no models and thus cannot be called.")
             return None
 
-        interpolator = self.interpolators[var_key]
+        model = self.models[var_key]
+        names = model.input_names()
 
         if not isinstance(X, dict):
-            names = interpolator.input_names()
             if np.is_casadi_type(X, recursive=False):
                 if X.shape[1] != len(names):
                     raise ValueError(
@@ -353,8 +535,13 @@ class ArchiteuthisData(ArchiteuthisObject):
             else:
                 X = np.reshape(np.asarray(X, dtype=float), (-1, len(names)))
             X = {name: X[:, i] for i, name in enumerate(names)}
+        else:
+            missing = [name for name in names if name not in X]
+            if missing:
+                raise KeyError(f"{self.name}: queries of {var_key} need {missing}.")
+            X = {name: X[name] for name in names}
 
-        result = tall(interpolator(X))
+        result = tall(model(X))
         # Numeric queries are evaluated with NumPy, but return a DM column
         # as the former CasADi interpolant did, so float() and casadi
         # operations keep working on them.
@@ -367,15 +554,15 @@ class ArchiteuthisData(ArchiteuthisObject):
         var_key: str,
     ) -> list[str]:
         """
-        Names of the inputs of a lookup table.
+        Names of the inputs of a model.
 
         Args:
-            var_key: Key given to `add_interpolator`.
+            var_key: Key of the model.
 
         Returns:
-            The keys that a query of this table takes.
+            The keys that a query of this model takes.
         """
-        return self.interpolators[var_key].input_names()
+        return self.models[var_key].input_names()
 
     
 class ArchiteuthisSpatialData(ArchiteuthisData):

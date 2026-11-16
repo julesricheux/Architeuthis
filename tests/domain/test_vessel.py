@@ -106,3 +106,21 @@ def test_add_interpolators_takes_its_variables(polar):
     vessel.add_interpolators(keys=["bhp"])
 
     assert set(vessel.interpolators) == {"bhp"}
+
+
+def semi_empirical_power(x, p):
+    return p["k"] * x["stw"] ** 3
+
+
+def test_vessel_without_polar_file_takes_functions():
+    vessel = Vessel("function_ship", verbose=False)
+    vessel.add_function("bhp", semi_empirical_power, inputs=["stw"], args={"p": {"k": POLAR_POWER_COEFFICIENT}})
+
+    assert vessel.path is None
+    assert vessel.label == "function_ship"
+    assert float(vessel("bhp", {"stw": 10.0})) == pytest.approx(POLAR_POWER_COEFFICIENT * 1e3)
+
+
+def test_vessel_without_polar_file_has_nothing_to_load():
+    with pytest.raises(AssertionError, match="no polar file"):
+        Vessel("function_ship", verbose=False).load_data()

@@ -20,7 +20,7 @@ import architeuthis.numpy as np
 
 from abc import abstractmethod
 from typing import Callable, Optional, Union
-from architeuthis.vessel import Vessel
+from architeuthis.vessel import POLAR_KEYS, Vessel
 from architeuthis.common import _banner, status
 from architeuthis.optimization import Opti
 from architeuthis.forecast import Forecast, Topography
@@ -238,6 +238,14 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
     `wave` must have the interpolators `swh`, `uw` and `vw`, the last
     two added by `Forecast.add_wave_components`: the wave direction is
     interpolated through its components, as the wind is.
+
+    The vessel needs the models `bhp`, `max_bhp` and
+    `sails_contribution`, each queried with the inputs it names among
+    `stw`, `sog`, `tws`, `twa`, `hs` or `swh`, `wa` or `mwa`, `aws` and
+    `awa` (angles in absolute value). Any other input, a water
+    temperature or a wave period for example, is a forecast variable:
+    it is read from the first of `atmosphere`, `wave` and `current`
+    that has a model with that key.
     """
 
     def __init__(
@@ -406,13 +414,31 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         cs = np.sqrt(uc**2. + vc**2.) # current speed in kts
         cd = np.mod(np.arctan2d(uc, vc), 360.) # current going to from 0 to 360 deg
 
+        # Every vessel model takes the inputs it names: polar tables the first
+        # five, semi-empirical functions possibly others. Angles are absolute.
         vessel_query = {
             "stw": stw,
             "tws": tws,
             "twa": np.abs(twa),
             "hs": swh,
             "wa": np.abs(mwa),
+            "sog": sog,
+            "swh": swh,
+            "mwa": np.abs(mwa),
+            "aws": aws,
+            "awa": np.abs(awa),
         }
+
+        # Other inputs (water temperature, wave period...) are forecast
+        # variables, read from the first forecast that has a model of them.
+        forecast_queries = (
+            (self.atmosphere, atmosphere_query),
+            (self.wave, wave_query),
+            (self.current, environment_query),
+        )
+        for key in self._vessel_inputs():
+            if key not in vessel_query:
+                vessel_query[key] = self._forecast_variable(key, forecast_queries)
 
         avg_bhp = self.vessel("bhp", vessel_query)
         max_bhp = self.vessel("max_bhp", vessel_query)
@@ -464,6 +490,32 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             }
 
         return passage
+
+    def _vessel_inputs(self) -> list:
+        """
+        Inputs of the vessel models that routing queries, in order.
+        """
+        inputs = []
+        for var_key in POLAR_KEYS:
+            for name in self.vessel.input_names(var_key):
+                if name not in inputs:
+                    inputs.append(name)
+        return inputs
+
+    def _forecast_variable(self, key, forecast_queries):
+        """
+        A vessel input read from the forecasts, at segment midpoints.
+
+        The atmosphere is looked at first, then the wave and the current.
+        """
+        for forecast, query in forecast_queries:
+            if key in forecast.models:
+                return forecast(key, query)
+        names = ", ".join(forecast.name for forecast, _ in forecast_queries)
+        raise KeyError(
+            f"{self.vessel.name} needs {key!r}, which no forecast ({names}) "
+            "has. Add a model of it, with add_interpolator or add_function."
+        )
 
     def _resolve_constraints(self, constraints, ctx) -> list:
         active_constraints = constraints if constraints is not None else self.constraints
