@@ -108,7 +108,7 @@ vessel_files = [
     r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_28up_28down_7buff_5m_eff45.nc",
     r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_28up_28down_7buff_5m_eff60.nc",
     # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff75.nc",
-    r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff90.nc",
+    # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff90.nc",
     # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff100.nc",
     # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff60.nc",
 ]
@@ -609,8 +609,8 @@ plans = [] # PassagePlan of each routing (timed positions)
 
 zero_fac = 0.
 
-# models = ["ifs", "gfs"]
-models = ["ifs",]
+models = ["ifs", "gfs"]
+# models = ["ifs",]
 # facs = np.asarray([0., 1.]) + zero_fac
 # facs = np.asarray([-1., 0., 1.]) + zero_fac
 # facs = np.asarray([-1., 0., 1.]) + zero_fac
@@ -908,7 +908,7 @@ print("Table copied to clipboard. Paste directly into Word.")
 #%% GPX TRACKS
 
 # track_<MODEL>_<vessel>_<ETD date>.gpx in the working directory, or give report.to_gpx a file name.
-# reports.select(solve=1).to_gpx()
+reports.select(solve=1).to_gpx()
 
 #%% A4 PAGE OF EACH ROUTE
 

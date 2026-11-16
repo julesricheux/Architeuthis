@@ -52,11 +52,13 @@ def test_is_a_surrogate_model():
         assert onp.array_equal(hybrid.x_data[k], reference.x_data[k])
 
 
-def test_default_arguments_match():
+def test_default_arguments():
     hybrid = HybridInterpolatedModel(COORDS, VALUES)
     reference = InterpolatedModel(COORDS, VALUES)
     assert hybrid.method == reference.method == "bspline"
-    assert onp.isnan(hybrid.fill_value) and onp.isnan(reference.fill_value)
+    # Unlike InterpolatedModel, which returns NaN, it extrapolates by default
+    assert hybrid.fill_value is None
+    assert onp.isfinite(hybrid({"x1": 12.0, "x2": 5.0}))
 
 
 @pytest.mark.parametrize("method", ["linear", "nearest"])
