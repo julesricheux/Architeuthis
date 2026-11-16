@@ -70,15 +70,49 @@ def test_links_inside_the_readme_lead_to_a_heading(readme):
         assert anchor in headings, anchor
 
 
-def test_tutorials_cover_every_credential_that_is_read():
-    common = (ROOT / "architeuthis" / "common.py").read_text(encoding="utf-8")
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    names = re.findall(r'_get_env_var\("(\w+)"\)', common)
+def test_tutorials_cover_every_credential_that_is_read(readme):
+    from architeuthis.credentials import CREDENTIALS
 
-    assert set(names) == {"CDS_API_KEY", "CMEMS_USER", "CMEMS_PWD", "EUMDAC_USER", "EUMDAC_PWD"}
     section = readme[readme.index("## 🔑 Credentials"):readme.index("The Routing Problem")]
-    for name in names:
-        assert f"`{name}`" in section
+    assert set(CREDENTIALS) == {"CDS_API_KEY", "CMEMS_USER", "CMEMS_PWD", "EUMDAC_KEY", "EUMDAC_SECRET"}
+    for credential in CREDENTIALS.values():
+        for variable in credential.variables:
+            assert f"`{variable}`" in section
+
+
+def test_readme_saves_credentials_with_the_real_command(readme):
+    from architeuthis.credentials import CREDENTIALS
+
+    commands = re.findall(r"python -m architeuthis\.credentials ([^`\n]+)", readme)
+
+    assert {command.split()[0] for command in commands} == {"set", "status", "delete"}
+    for command in commands:
+        action, *names = command.split()
+        assert action in ("set", "status", "delete"), command
+        assert set(names) <= set(CREDENTIALS), command
+
+
+def test_status_example_looks_like_the_real_output(readme):
+    from architeuthis.credentials import CREDENTIALS
+
+    example = re.search(r"```text\n(CDS_API_KEY .+?)```", readme, flags=re.DOTALL).group(1)
+    lines = example.strip().splitlines()
+
+    assert [line.split()[0] for line in lines] == list(CREDENTIALS)
+    for name, line in zip(CREDENTIALS, lines):
+        assert line == f"{name:<14} {line[15:]}"
+        assert line[15:] in ("missing", "credential store")
+
+
+def test_data_folder_table_lists_every_folder_used():
+    section = (ROOT / "README.md").read_text(encoding="utf-8").split("### > The Data Folder")[1].split("### >")[0]
+    source = "\n".join(path.read_text(encoding="utf-8") for path in (ROOT / "architeuthis").glob("*.py"))
+    folders = set(re.findall(r'os\.path\.join\(_HOME, "(\w+)"', source)) | set(re.findall(r'^\s+"(topo)",$', source, flags=re.MULTILINE))
+
+    assert folders >= {"topo", "cmems", "cds", "eumetsat", "iip", "routes"}
+    for folder in folders:
+        assert f"`{folder}/`" in section, folder
+    assert "ARCHITEUTHIS_HOME" in section
 
 
 def test_eumetsat_tutorial_asks_for_what_the_client_expects(readme):
@@ -87,11 +121,11 @@ def test_eumetsat_tutorial_asks_for_what_the_client_expects(readme):
     import eumdac
 
     assert "consumer_key, consumer_secret" in inspect.getdoc(eumdac.AccessToken.__init__)
-    assert "`EUMDAC_USER` to your **Consumer Key**" in readme
-    assert "`EUMDAC_PWD` to your **Consumer Secret**" in readme
+    assert "**Consumer Key** as `EUMDAC_KEY`" in readme
+    assert "**Consumer Secret** as `EUMDAC_SECRET`" in readme
 
 
-def test_cds_tutorial_gives_the_url_that_is_written(readme):
+def test_cds_tutorial_gives_the_url_of_the_client(readme):
     from architeuthis.common import _CDS_URL
 
     assert f"url: {_CDS_URL}" in readme

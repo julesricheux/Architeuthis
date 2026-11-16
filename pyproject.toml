@@ -4,7 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "architeuthis"
-version = "0.2.0"  # must match the release tag
+# The version is architeuthis.__version__, read without importing the package.
+dynamic = ["version"]
 description = "An open-source, mesh-free and differntiable ocean weather routing and decision-making framework for hybrid sailing ships"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -69,6 +70,7 @@ dependencies = [
     "pyproj",
     "sortedcontainers",
     "tqdm",
+    "keyring",
 ]
 
 [project.optional-dependencies]
@@ -91,6 +93,9 @@ test = [
 Homepage = "https://github.com/julesricheux/Architeuthis"
 Repository = "https://github.com/julesricheux/Architeuthis"
 Issues = "https://github.com/julesricheux/Architeuthis/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "architeuthis.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["architeuthis*"]

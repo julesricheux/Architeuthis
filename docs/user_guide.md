@@ -54,8 +54,8 @@ for key in ("bhp", "max_bhp", "sails_contribution"):
 | `forecast.DeterministicHerbieForecast` | A deterministic forecast through Herbie: IFS, GFS and their wave models, chosen with `model`, `product` and `regex`. No account. |
 | `forecast.EnsembleHerbieForecast` | The members of an ensemble, IFS for example. `add_interpolator` takes `var_dim, time_dim, member_dim, latitude_dim, longitude_dim`. No account. |
 | `forecast.HRDPSForecast` | The 10 m wind of HRDPS continental, regridded on a regular grid, the latest run by default. Its wind direction is not reliable yet: the components are relative to the rotated grid of the model and are not rotated, about 45° off around Saint-Pierre-et-Miquelon. |
-| `forecast.CopernicusForecast` | Currents and other products of Copernicus Marine. Needs an account. |
-| `forecast.CDSForecast` | ERA5 reanalysis. Needs an account. |
+| `forecast.CopernicusForecast` | Currents and other products of Copernicus Marine. Needs an account, `CMEMS_USER` and `CMEMS_PWD`. |
+| `forecast.CDSForecast` | ERA5 reanalysis. Needs an account, `CDS_API_KEY`. |
 | `forecast.Topography` | The signed distance to land and to your exclusion zones. It needs only its box, and `exclusion_zones` if you have some. |
 | `vessel.Vessel` | A vessel, from its polar file. `sfc` must be given for a routing, because the objective is zero without it. `label` comes from the file name by default: `eff45` for `..._eff45.nc`. |
 
@@ -72,6 +72,22 @@ bhp = vessel("bhp", {"stw": 10., "tws": 15., "twa": 60., "hs": 2., "wa": 30.})
 ```
 
 `add_interpolator` takes `method="linear"` (the default), `"bspline"`, smooth and suited to optimization, or `"nearest"`.
+
+### Credentials and the data folder
+
+The [README](../README.md#-credentials-and-settings) explains how to get each credential and save it once. `architeuthis.credentials` holds the functions behind `python -m architeuthis.credentials`:
+
+| Function | Does |
+| --- | --- |
+| `save_credential(name, value=None)` | Stores a credential in the credential store of the operating system, through `keyring`. Without `value`, asks for it, hidden when it is secret. |
+| `get_credential(name)` | Its value, from its environment variables first, then from the credential store, or `None`. Read when called, never at import. |
+| `credential_sources()` | Where each credential is found, without its value. |
+| `delete_credential(name)` | Removes it from the credential store, and says whether it was there. |
+| `require_credentials(*names, provider, fallback_files=())` | The values a provider needs, or a ⚠️ status and a `MissingCredentialError` naming what is missing. |
+
+`CREDENTIALS` lists the names, `CDS_API_KEY`, `CMEMS_USER`, `CMEMS_PWD`, `EUMDAC_KEY` and `EUMDAC_SECRET`, with the environment variables read for each. The data sources read them when they download, and keep none on the object. A data source cannot be given credentials as arguments, so that they stay out of scripts.
+
+Downloads, libraries and reports are kept in `~/data/`. Set `ARCHITEUTHIS_HOME` before importing Architeuthis to keep them elsewhere, as the [README](../README.md#-the-data-folder) explains.
 
 ## Keeping and reusing results
 

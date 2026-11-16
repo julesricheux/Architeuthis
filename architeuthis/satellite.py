@@ -16,7 +16,8 @@ import zipfile
 import xarray as xr
 
 from typing import Union
-from architeuthis.common import ArchiteuthisSpatialData, Datetime, _EUMDAC_CREDENTIALS, _HOME, status
+from architeuthis.common import ArchiteuthisSpatialData, Datetime, _HOME, status
+from architeuthis.credentials import require_credentials
 
 
 class ArchiteuthisSatelliteData(ArchiteuthisSpatialData):
@@ -55,8 +56,10 @@ class EUMETSATData(ArchiteuthisSatelliteData):
     """
     Satellite data downloaded from the EUMETSAT Data Store.
 
-    Credentials come from `EUMDAC_USER` and `EUMDAC_PWD`, which hold the
-    Consumer Key and Secret.
+    Credentials come from `EUMDAC_KEY` and `EUMDAC_SECRET`, the Consumer
+    Key and Secret, read from the environment or the credential store
+    when downloading (see `architeuthis.credentials`). `EUMDAC_USER`
+    and `EUMDAC_PWD` are still read as their former names.
 
     Args:
         name: Name of this object, used in status messages.
@@ -82,8 +85,6 @@ class EUMETSATData(ArchiteuthisSatelliteData):
         max_lat: float = 90.,
         verbose: bool = True,
     ):
-        self.__EUMDAC_CREDENTIALS = _EUMDAC_CREDENTIALS
-        
         self.dataset = dataset
         
         self.f99 = end
@@ -99,7 +100,10 @@ class EUMETSATData(ArchiteuthisSatelliteData):
        
         
     def _locate_data(self):
-        self.token = eumdac.AccessToken(self.__EUMDAC_CREDENTIALS)
+        # Read here and not kept on the object, unlike the token, which
+        # expires.
+        credentials = require_credentials("EUMDAC_KEY", "EUMDAC_SECRET", provider="EUMETSAT")
+        self.token = eumdac.AccessToken(credentials)
 
         self.datastore = eumdac.DataStore(self.token)
         

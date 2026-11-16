@@ -18,8 +18,28 @@ os.environ["HOME"] = _temporary_home
 os.environ["USERPROFILE"] = _temporary_home
 os.environ["MPLBACKEND"] = "Agg"
 
-for credential in ("CDS_API_KEY", "CMEMS_USER", "CMEMS_PWD", "EUMDAC_USER", "EUMDAC_PWD"):
-    os.environ.pop(credential, None)
+# Credentials, with the variables of the provider clients, and a moved data folder.
+for variable in (
+    "CDS_API_KEY",
+    "CDSAPI_KEY",
+    "CDSAPI_URL",
+    "CDSAPI_RC",
+    "CMEMS_USER",
+    "CMEMS_PWD",
+    "COPERNICUSMARINE_SERVICE_USERNAME",
+    "COPERNICUSMARINE_SERVICE_PASSWORD",
+    "COPERNICUSMARINE_CREDENTIALS_DIRECTORY",
+    "EUMDAC_KEY",
+    "EUMDAC_SECRET",
+    "EUMDAC_USER",
+    "EUMDAC_PWD",
+    "ARCHITEUTHIS_HOME",
+):
+    os.environ.pop(variable, None)
+
+# Never read or write the real credential store of the machine: this backend stores
+# nothing and finds nothing. tests/domain/test_credentials.py uses one in memory.
+os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
 
 # architeuthis.icebergs downloads the IIP bulletin and shapefiles when its data is first
 # used, by the default exclusion zones for example. Replace it so that tests never depend

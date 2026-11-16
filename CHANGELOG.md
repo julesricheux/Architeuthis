@@ -112,12 +112,29 @@ and this project follows Semantic Versioning https://semver.org
 - `RoutingAnalysis.run(solve=False)` no longer calls IPOPT, whose empty problem crashed the kernel with `spral` on Windows. The baseline is evaluated directly.
 - B-spline interpolators on 2-point axes (degree 1) broke the CasADi Hessian, so solves failed. These axes are now raised to the requested degree, with the same values.
 
+### Security
+- Credentials can be saved once, encrypted in the credential store of the operating system (Windows Credential Manager, macOS Keychain, Secret Service), with `python -m architeuthis.credentials set` or `credentials.save_credential`. Environment variables still work and take precedence.
+- The CDS key is given to `cdsapi.Client` directly and never written to `~/.cdsapirc` in plain text. A `~/.cdsapirc` of the user is still read when no key is found.
+- Data sources no longer keep credentials as attributes: they are read when downloading.
+
 ### Added
+- `credentials` module: `save_credential`, `get_credential`, `credential_sources`, `delete_credential`, `require_credentials` and the `python -m architeuthis.credentials` command (`set`, `status`, `delete`).
+- `EUMDAC_KEY` and `EUMDAC_SECRET`, the new names of `EUMDAC_USER` and `EUMDAC_PWD`, which are still read.
+- The variables of the provider clients are read too: `CDSAPI_KEY`, `COPERNICUSMARINE_SERVICE_USERNAME`, `COPERNICUSMARINE_SERVICE_PASSWORD`.
+- `ARCHITEUTHIS_HOME` moves the data folder, `~/data/` by default.
+- `keyring` dependency.
 - `modeling.HybridInterpolatedModel`, a SurrogateModel called like InterpolatedModel whose NumPy and CasADi evaluators are built once from the same data and give the same values.
 - `input_names(var_key)` on data objects, and the `coord_keys` argument of `add_interpolator`.
 
 ### Changed
+- Credentials are read when a download needs them rather than at import, so a variable set during a session is used.
+- A missing credential stops the download at once, with a ⚠️ status and a `MissingCredentialError` naming it and the command that saves it. The startup log no longer lists missing credentials.
+- The version is written only in `architeuthis/__init__.py`: `pyproject.toml` reads it (`dynamic`), and so does the release check of the tag.
+- `common._USER` renamed `common._USER_HOME`, as it holds the home directory.
 - `add_interpolator` builds a HybridInterpolatedModel instead of a CasADi interpolant: B-spline tables are built hundreds of times faster, with the same values, and numeric queries are computed with NumPy.
 - `HybridInterpolatedModel` extrapolates by default (`fill_value=None`), where InterpolatedModel returns NaN.
 - The wave direction is interpolated through its east and north components weighted by the wave energy, `uw` and `vw`, added by the new `Forecast.add_wave_components`, instead of `mwd`, whose jump from 360 to 0 deg made the routing unstable. RoutingAnalysis needs the wave interpolators `swh`, `uw` and `vw`; reports still give `mwd`.
 - Data objects are queried with dicts keyed by standard names (`valid_time`, `member`, `latitude`, `longitude`; `stw`, `tws`, `twa`, `hs`, `wa`), whatever the names in the data. Arrays of shape (n_queries, n_dims) are still accepted.
+
+### Removed
+- `common.ensure_cdsapirc`, `common.file_path` and the credential constants of `common` (`_CDS_API_KEY`, `_CMEMS_USER`, `_CMEMS_PWD`, `_EUMDAC_USER`, `_EUMDAC_PWD`, `_EUMDAC_CREDENTIALS`).

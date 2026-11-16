@@ -28,7 +28,8 @@ from typing import Sequence, Union
 from herbie import Herbie, HerbieLatest, FastHerbie
 from scipy.ndimage import distance_transform_edt
 from architeuthis.toolbox.string_formatting import get_request_id
-from architeuthis.common import ArchiteuthisData, ArchiteuthisSpatialData, Datetime, ENSEMBLE_KEYS, FORECAST_KEYS, TOPOGRAPHY_KEYS, _CMEMS_USER, _CMEMS_PWD, _HOME, _TOPOGRAPHY_URL, ensure_cdsapirc, status
+from architeuthis.common import ArchiteuthisData, ArchiteuthisSpatialData, Datetime, ENSEMBLE_KEYS, FORECAST_KEYS, TOPOGRAPHY_KEYS, _CDS_URL, _HOME, _TOPOGRAPHY_URL, _USER_HOME, status
+from architeuthis.credentials import require_credentials
 
 
 logging.getLogger("cdsapi").handlers.clear()
@@ -837,11 +838,21 @@ class EnsembleHerbieForecast(HerbieForecast):
         )
 
           
+def _copernicusmarine_credentials_file() -> str:
+    """
+    The file written by `copernicusmarine login`.
+    """
+    directory = os.environ.get("COPERNICUSMARINE_CREDENTIALS_DIRECTORY") or os.path.join(_USER_HOME, ".copernicusmarine")
+    return os.path.join(directory, ".copernicusmarine-credentials")
+
+
 class CopernicusForecast(Forecast):
     """
     A forecast of the Copernicus Marine Service (CMEMS).
 
-    Credentials come from `CMEMS_USER` and `CMEMS_PWD`.
+    Credentials come from `CMEMS_USER` and `CMEMS_PWD`, read from the
+    environment or the credential store when downloading (see
+    `architeuthis.credentials`), else from `copernicusmarine login`.
 
     Args:
         name: Name of this object, used in status messages.
@@ -876,9 +887,6 @@ class CopernicusForecast(Forecast):
         compression_level: int = 1,
         engine: str = "netcdf4",
     ):
-        self.__USER = _CMEMS_USER
-        self.__PWD = _CMEMS_PWD
-        
         self.dataset = dataset
         self.variables = variables
         
@@ -900,10 +908,18 @@ class CopernicusForecast(Forecast):
         return pd.Timestamp.today().normalize()
         
     def _download_data(self):
-        
+        # Read here and not kept on the object, so that it can be copied,
+        # pickled or inspected without exposing the credentials.
+        username, password = require_credentials(
+            "CMEMS_USER",
+            "CMEMS_PWD",
+            provider="Copernicus Marine",
+            fallback_files=[_copernicusmarine_credentials_file()],
+        )
+
         req = copernicusmarine.subset(
-            username=self.__USER,
-            password=self.__PWD,
+            username=username,
+            password=password,
             dataset_id=self.dataset,
             variables=self.variables,
             minimum_longitude=self.min_lon,
@@ -945,7 +961,9 @@ class CDSForecast(Forecast):
     """
     Data of the Copernicus Climate Data Store (CDS), such as ERA5.
 
-    Credentials come from `CDS_API_KEY` or `~/.cdsapirc`.
+    The key comes from `CDS_API_KEY`, read from the environment or the
+    credential store when downloading (see `architeuthis.credentials`),
+    else from `~/.cdsapirc`.
 
     Args:
         name: Name of this object, used in status messages.
@@ -1055,8 +1073,13 @@ class CDSForecast(Forecast):
             # Talk to the server
             os.makedirs(directory, exist_ok=True)
             
-            ensure_cdsapirc()
-            client = cdsapi.Client()
+            (key,) = require_credentials(
+                "CDS_API_KEY",
+                provider="The Climate Data Store",
+                fallback_files=[os.environ.get("CDSAPI_RC") or os.path.join(_USER_HOME, ".cdsapirc")],
+            )
+            # Without a key, cdsapi reads the ~/.cdsapirc of the user.
+            client = cdsapi.Client() if key is None else cdsapi.Client(url=_CDS_URL, key=key)
             client.retrieve(self.dataset, self.request).download(target=path)
             
             status("✅ Download completed.")
