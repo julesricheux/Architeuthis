@@ -107,6 +107,9 @@ and this project follows Semantic Versioning https://semver.org
 
 ## [Unreleased]
 
+### Fixed
+- The UI showed only an error with dash-mantine-components 3, which needs React 19: it is pinned below 3, as Dash is below 4.
+
 ### Added
 - `modeling.HybridInterpolatedModel`, a SurrogateModel called like InterpolatedModel whose NumPy and CasADi evaluators are built once from the same data and give the same values.
 - `input_names(var_key)` on data objects, and the `coord_keys` argument of `add_interpolator`.

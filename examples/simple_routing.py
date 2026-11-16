@@ -145,7 +145,7 @@ for i, vessel_data in enumerate(vessel_files):
 # global_corr_fac = 1.10 # global models speed correction (120% @ 10m, 105% @ 100m)
 global_corr_fac = 1.20 # global models speed correction (120% @ 10m, 105% @ 100m)
 
-recent = pd.Timestamp("now").floor("1d")
+recent = pd.Timestamp("now").floor("1d8h")
 # recent = pd.Timestamp('2026-05-30 00:00')
 # mirror_end = pd.Timestamp('2025-12-21 12:00')
 
@@ -628,7 +628,7 @@ def to_time(s):
 timeframes = [
     # (to_time("2026-11-05T11h00"), to_time("2026-11-15T10:00")),
     # (to_time("2026-11-06T08h40"), to_time("2026-11-15T04:00")),
-    (to_time(recent + pd.Timedelta(hours=9)), to_time(recent + pd.Timedelta(days=8, hours=20))),
+    (to_time(recent + pd.Timedelta(days=4, hours=9)), to_time(recent + pd.Timedelta(days=8+4, hours=20))),
     # (to_time("2026-10-16T00h00"), to_time("2026-10-26T05:00")),
 ]
 
@@ -643,6 +643,8 @@ for solve, tf, model, vessel, fac, m, tpg in (
         )
     ):
                 
+    tol = 1e-3
+                
     etd, eta = tf
     
     if float(vessel.label.removeprefix("eff")) > 5.0:
@@ -651,6 +653,7 @@ for solve, tf, model, vessel, fac, m, tpg in (
                 ctx["max_bhp"] < ctx["vessel"].max_power,
                 # (wide(ctx["z"]) @ tall(ctx["z"])) == 0.,
                 ctx["z"] < 0.,
+                # ctx["stw"] < 20.,
                 # ctx["aws_gust"] < 35.0,
                 # ctx["aws_gust"] < 30.0,
                 # ctx["aws"] < 25.0,
@@ -663,6 +666,7 @@ for solve, tf, model, vessel, fac, m, tpg in (
                 ctx["max_bhp"] < ctx["vessel"].max_power,
                 # (wide(ctx["z"]) @ tall(ctx["z"])) == 0.,
                 
+                # ctx["z"] < 0.,
                 ctx["z"] < 0.,
                 # ctx["aws"] < 35.0,
                 # ctx["aws"] > 10.0,
@@ -720,8 +724,8 @@ for solve, tf, model, vessel, fac, m, tpg in (
         solver_options = {
             "ipopt":{
                 "acceptable_tol": 1e1,
-                # 'linear_solver': 'spral',
-                'linear_solver': 'mumps',
+                'linear_solver': 'spral',
+                # 'linear_solver': 'mumps',
                 # "hessian_approximation": "limited-memory",
             },
         },
@@ -911,7 +915,7 @@ print("Table copied to clipboard. Paste directly into Word.")
 # See "Plotting" in docs/user_guide.md for the options, for example:
 # plot_report(report, save_as="report.pdf")  # a true A4 page
 # plot_report(report, ylim={"sog": (6., 13.), "bhp": (0., 3084.)})
-for report in reports.select(vessel="eff60"):
+for report in reports.select(vessel="eff45"):
     plot_report(report)
 
 #%% FIGURE AND TABLE SETTINGS OF EARLIER STUDIES
