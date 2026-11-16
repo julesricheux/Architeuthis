@@ -164,7 +164,7 @@ _banner = """
 
 # North-going offset added to the wave components before arctan2, in m²
 # (swh**2): it biases the direction by less than 0.6 deg from swh = 1 m.
-WAVE_COMPONENTS_OFFSET = 1e-2
+WAVE_COMPONENTS_OFFSET = 0.
 
 GUST_DEFAULT_RATIO = 1.23 # (https://cimmse.wordpress.com/2013/09/20/a-wind-gust-factor-database-of-marine-observations-from-10-tropical-cyclones-2/)
 
@@ -292,7 +292,7 @@ class ArchiteuthisData(ArchiteuthisObject):
         coord_dims: Sequence[str],
         coord_slices: Sequence[slice],
         var_key: str,
-        method: Literal["bspline", "linear", "nearest"] = "linear",
+        method: Literal["bspline", "linear", "nearest"] = "bspline",
         fac: float = 1.0,
         coord_keys: Optional[Sequence[str]] = None,
     ):
