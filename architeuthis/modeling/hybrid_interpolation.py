@@ -51,7 +51,7 @@ class HybridInterpolatedModel(SurrogateModel):
         x_data_coordinates: np.ndarray | dict[str, np.ndarray],
         y_data_structured: np.ndarray,
         method: Literal["bspline", "linear", "nearest"] = "bspline",
-        fill_value=np.nan,
+        fill_value=None,
         degree: int = 3,
         name: str = "hybrid_interpolator",
     ):
@@ -69,7 +69,9 @@ class HybridInterpolatedModel(SurrogateModel):
                 "linear" extrapolates, "bspline" keeps the value at the
                 boundary and "nearest" takes the nearest grid point.
             degree: B-spline degree, reduced along any axis that has
-                too few points.
+                too few points. An axis of 2 points stays linear, but
+                keeps this degree so that CasADi can take its second
+                derivative.
             name: Name of the CasADi function.
         """
         try:
@@ -135,7 +137,21 @@ class HybridInterpolatedModel(SurrogateModel):
                 spline = make_interp_spline(grid, coefficients, k=k, axis=axis)
                 # SciPy moves the fitted axis to the front: put it back
                 coefficients = _onp.moveaxis(spline.c, 0, axis)
-                knots.append(spline.t)
+                axis_knots = spline.t
+                if len(grid) == 2 and degree > 1:
+                    # CasADi cannot take the second derivative of a degree-1
+                    # B-spline (Sparsity::band fails), which IPOPT needs. The
+                    # segment is written exactly as a degree-`degree` Bezier
+                    # curve instead, with evenly spaced control points.
+                    first = _onp.take(coefficients, [0], axis=axis)
+                    last = _onp.take(coefficients, [1], axis=axis)
+                    steps = _onp.linspace(0.0, 1.0, degree + 1)
+                    shape = [1] * coefficients.ndim
+                    shape[axis] = degree + 1
+                    coefficients = first + (last - first) * steps.reshape(shape)
+                    axis_knots = _onp.r_[[grid[0]] * (degree + 1), [grid[-1]] * (degree + 1)]
+                    degrees[axis] = degree
+                knots.append(axis_knots)
             self._numpy_function = NdBSpline(
                 tuple(knots), coefficients, tuple(degrees)
             )

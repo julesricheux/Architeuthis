@@ -74,11 +74,11 @@ dependencies = [
 [project.optional-dependencies]
 app = [
     "flask",
-    "dash>=3.2,<4",
+    "dash>=4.5,<5",
     "dash-extensions",
     "dash-leaflet",
-    # 3.x needs React 19, which Dash 3 does not load
-    "dash-mantine-components<3",
+    # 3.x needs React 19, which ui.py selects in Dash 4.5
+    "dash-mantine-components>=3,<4",
     "dash-iconify",
 ]
 test = [

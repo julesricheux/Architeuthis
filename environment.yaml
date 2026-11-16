@@ -21,9 +21,9 @@ dependencies:
       - herbie-data
       - copernicusmarine
       - requests
-      - dash==3.2.0
+      - dash==4.5.0
       - dash-leaflet
-      - dash-mantine-components<3
+      - dash-mantine-components>=3,<4
       - dash-iconify
       - cartopy
       - metpy

@@ -108,7 +108,9 @@ and this project follows Semantic Versioning https://semver.org
 ## [Unreleased]
 
 ### Fixed
-- The UI showed only an error with dash-mantine-components 3, which needs React 19: it is pinned below 3, as Dash is below 4.
+- The UI showed only an error with dash-mantine-components 3, which needs React 19. The app requires Dash 4.5 and DMC 3, and `ui.py` selects React 19.
+- `RoutingAnalysis.run(solve=False)` no longer calls IPOPT, whose empty problem crashed the kernel with `spral` on Windows. The baseline is evaluated directly.
+- B-spline interpolators on 2-point axes (degree 1) broke the CasADi Hessian, so solves failed. These axes are now raised to the requested degree, with the same values.
 
 ### Added
 - `modeling.HybridInterpolatedModel`, a SurrogateModel called like InterpolatedModel whose NumPy and CasADi evaluators are built once from the same data and give the same values.

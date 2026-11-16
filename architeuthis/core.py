@@ -156,6 +156,25 @@ _REPORT_QUANTITIES = (
 _GUST_QUANTITIES = ("tws_gust", "aws_gust")
 
 
+def _evaluate_at(opti, expression, parameter_values):
+    """
+    Numeric value of an expression of parameters only, without solving.
+
+    Args:
+        opti: The Opti instance that holds the parameters.
+        expression: A CasADi expression, or a plain number.
+        parameter_values: `opti.value_parameters()`.
+
+    Returns:
+        A float for a scalar, otherwise a NumPy array, as `OptiSol`
+        returns them.
+    """
+    if not isinstance(expression, (ca.MX, ca.SX, ca.DM)):
+        return expression
+    value = onp.asarray(opti.value(expression, parameter_values), dtype=float)
+    return float(value) if value.size == 1 else value
+
+
 def _constraint_violation(constraint):
     """
     Symbolic violation of `a < b`, `a <= b` or `a == b`, or None.
@@ -668,21 +687,31 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         # if self.verbose:
         status(_banner)
 
-        sol = opti.solve(
-            max_iter=max_iter,
-            callback=callback,
-            behavior_on_failure="return_last",
-            options=solver_options,
-            verbose=self.verbose,
-        )
-
-        solve_status = 1 if opti.return_status() in SOLVED else 2
+        if solve:
+            sol = opti.solve(
+                max_iter=max_iter,
+                callback=callback,
+                behavior_on_failure="return_last",
+                options=solver_options,
+                verbose=self.verbose,
+            )
+            solve_status = 1 if opti.return_status() in SOLVED else 2
+            values = {key: sol(expression) for key, expression in passage.items()}
+        else:
+            # The reference route has no variable: evaluate it at the parameter
+            # values rather than give IPOPT an empty problem, which spral crashes
+            # on with casadi 3.7.2 on Windows and MUMPS rejects.
+            sol = None
+            solve_status = 1
+            parameter_values = opti.value_parameters()
+            values = {
+                key: _evaluate_at(opti, expression, parameter_values)
+                for key, expression in passage.items()
+            }
 
         self.opti = opti
         self.sol = sol
         self.status = solve_status
-
-        values = {key: sol(expression) for key, expression in passage.items()}
 
         output = self._report(
             values,
