@@ -85,11 +85,34 @@ def test_readme_saves_credentials_with_the_real_command(readme):
 
     commands = re.findall(r"python -m architeuthis\.credentials ([^`\n]+)", readme)
 
-    assert len(commands) == 3
+    assert {command.split()[0] for command in commands} == {"set", "status", "delete"}
     for command in commands:
         action, *names = command.split()
         assert action in ("set", "status", "delete"), command
         assert set(names) <= set(CREDENTIALS), command
+
+
+def test_status_example_looks_like_the_real_output(readme):
+    from architeuthis.credentials import CREDENTIALS
+
+    example = re.search(r"```text\n(CDS_API_KEY .+?)```", readme, flags=re.DOTALL).group(1)
+    lines = example.strip().splitlines()
+
+    assert [line.split()[0] for line in lines] == list(CREDENTIALS)
+    for name, line in zip(CREDENTIALS, lines):
+        assert line == f"{name:<14} {line[15:]}"
+        assert line[15:] in ("missing", "credential store")
+
+
+def test_data_folder_table_lists_every_folder_used():
+    section = (ROOT / "README.md").read_text(encoding="utf-8").split("### > The Data Folder")[1].split("### >")[0]
+    source = "\n".join(path.read_text(encoding="utf-8") for path in (ROOT / "architeuthis").glob("*.py"))
+    folders = set(re.findall(r'os\.path\.join\(_HOME, "(\w+)"', source)) | set(re.findall(r'^\s+"(topo)",$', source, flags=re.MULTILINE))
+
+    assert folders >= {"topo", "cmems", "cds", "eumetsat", "iip", "routes"}
+    for folder in folders:
+        assert f"`{folder}/`" in section, folder
+    assert "ARCHITEUTHIS_HOME" in section
 
 
 def test_eumetsat_tutorial_asks_for_what_the_client_expects(readme):

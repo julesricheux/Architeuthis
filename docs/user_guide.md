@@ -75,7 +75,7 @@ bhp = vessel("bhp", {"stw": 10., "tws": 15., "twa": 60., "hs": 2., "wa": 30.})
 
 ### Credentials and the data folder
 
-The [README](../README.md#-credentials) explains how to get each credential and save it once. `architeuthis.credentials` holds the functions behind `python -m architeuthis.credentials`:
+The [README](../README.md#-credentials-and-settings) explains how to get each credential and save it once. `architeuthis.credentials` holds the functions behind `python -m architeuthis.credentials`:
 
 | Function | Does |
 | --- | --- |
@@ -87,7 +87,7 @@ The [README](../README.md#-credentials) explains how to get each credential and 
 
 `CREDENTIALS` lists the names, `CDS_API_KEY`, `CMEMS_USER`, `CMEMS_PWD`, `EUMDAC_KEY` and `EUMDAC_SECRET`, with the environment variables read for each. The data sources read them when they download, and keep none on the object. A data source cannot be given credentials as arguments, so that they stay out of scripts.
 
-Downloads, libraries and reports are kept in `~/data/`. Set `ARCHITEUTHIS_HOME` before importing Architeuthis to keep them elsewhere.
+Downloads, libraries and reports are kept in `~/data/`. Set `ARCHITEUTHIS_HOME` before importing Architeuthis to keep them elsewhere, as the [README](../README.md#-the-data-folder) explains.
 
 ## Keeping and reusing results
 
