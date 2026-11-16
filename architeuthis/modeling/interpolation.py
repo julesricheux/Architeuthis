@@ -188,8 +188,8 @@ class InterpolatedModel(SurrogateModel):
 
 if __name__=="__main__":
     
-    X = np.linspace(-10, 10, 5)
-    Y = np.linspace(-10, 10, 10)
+    X = np.linspace(-10, 10, 1000)
+    Y = np.linspace(-10, 10, 1000)
     XX, YY = np.meshgrid(X, Y, indexing="ij")
     f = (-XX - 2.)**3. + YY**3.
     

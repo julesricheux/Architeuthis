@@ -78,9 +78,12 @@ steps = list(range(0, 145, 3)) + list(range(150, 361, 6))
 forecast_date = etd.tz_localize(None) # latest 00 UTC run
 
 
-def herbie_fields(name, keys, **herbie):
+def herbie_fields(name, keys, wave_direction=None, **herbie):
     forecast = DeterministicHerbieForecast(name, fxx=steps, date=forecast_date, **domain, **herbie)
     forecast.load_data()
+    if wave_direction is not None:
+        # The routing interpolates the wave direction through its components uw and vw.
+        forecast.add_wave_components(mwd_dim=wave_direction)
     for variable, key in keys.items():
         forecast.add_interpolator(variable, "valid_time", "latitude", "longitude", var_key=key)
     return forecast
@@ -95,7 +98,9 @@ def build_vessel(name, polar=POLAR, **performance):
 
 
 ifs_wind = herbie_fields("wind_ifs", {"u10": "u10", "v10": "v10"}, model="ifs", product="oper", regex=r":10[u|v]:")
-ifs_wave = herbie_fields("wave_ifs", {"swh": "swh", "mwd": "mwd"}, model="ifs", product="wave", regex=r":swh:|:mwd:")
+WAVE_KEYS = {"swh": "swh", "uw": "uw", "vw": "vw"}
+
+ifs_wave = herbie_fields("wave_ifs", WAVE_KEYS, wave_direction="mwd", model="ifs", product="wave", regex=r":swh:|:mwd:")
 # Calm water on the IFS grid, so that no credentials are needed. For real currents use
 # CopernicusForecast (Mercator SMOC, CMEMS credentials) as in post_leg_rewind.py.
 calm = xr.zeros_like(ifs_wind.data["u10"])
@@ -175,7 +180,7 @@ plans.save(plan, overwrite=True)
 plan = PassagePlan.load(plans.path(plan.name))
 
 gfs_wind = herbie_fields("wind_gfs", {"u10": "u10", "v10": "v10"}, model="gfs", product="pgrb2.0p25", regex=r"(?:U|V)GRD:10 m")
-gfs_wave = herbie_fields("wave_gfs", {"swh": "swh", "dirpw": "mwd"}, model="gfs_wave", product="global.0p25", regex=r":HTSGW:|:DIRPW:")
+gfs_wave = herbie_fields("wave_gfs", WAVE_KEYS, wave_direction="dirpw", model="gfs_wave", product="global.0p25", regex=r":HTSGW:|:DIRPW:")
 
 heavier_hotel_load = build_vessel("vessel_hotel_250", sfc=196.0, hotel_load=250.0, max_power=3e3)
 

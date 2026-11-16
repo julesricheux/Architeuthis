@@ -14,6 +14,7 @@ from architeuthis.common import (
     setup_logging,
     status,
 )
+from architeuthis.modeling import HybridInterpolatedModel
 
 
 class Table(ArchiteuthisData):
@@ -150,6 +151,77 @@ def test_interpolator_is_differentiable():
     gradient = ca.Function("gradient", [query], [ca.jacobian(table("value", query), query)])
 
     assert np.asarray(gradient([0.5, 0.5])).ravel() == pytest.approx([1.0, 10.0])
+
+
+def test_interpolator_is_a_hybrid_interpolated_model():
+    table = Table()
+    table.add()
+
+    assert isinstance(table.interpolators["value"], HybridInterpolatedModel)
+    assert table.input_names("value") == ["x", "y"]
+
+
+def test_call_takes_a_dict_of_broadcast_values():
+    table = Table()
+    table.add()
+
+    result = table("value", {"x": np.array([0.0, 1.0, 2.0]), "y": 1.0})
+
+    assert isinstance(result, ca.DM)
+    assert result.shape == (3, 1)
+    assert np.asarray(result).ravel() == pytest.approx([10.0, 11.0, 12.0])
+
+
+def test_dict_and_array_queries_agree():
+    table = Table()
+    table.add()
+    rng = np.random.default_rng(0)
+    queries = rng.uniform(-0.5, 2.5, (20, 2))  # Inside and outside the grid
+
+    from_array = table("value", queries)
+    from_dict = table("value", {"x": queries[:, 0], "y": queries[:, 1]})
+
+    assert np.asarray(from_dict) == pytest.approx(np.asarray(from_array))
+
+
+def test_coord_keys_rename_the_inputs():
+    table = Table()
+    table.add_interpolator("value", ["x", "y"], [slice(None)] * 2, "value", coord_keys=["a", "b"])
+
+    assert table.input_names("value") == ["a", "b"]
+    assert float(table("value", {"a": 2.0, "b": 1.0})) == pytest.approx(12.0)
+    with pytest.raises(ValueError):
+        table.add_interpolator("value", ["x", "y"], [slice(None)] * 2, "other", coord_keys=["a"])
+
+
+@pytest.mark.parametrize("method", ["linear", "bspline"])
+def test_numeric_and_symbolic_queries_agree(method):
+    table = Table()
+    table.add(method=method)
+    x, y = ca.MX.sym("x", 4), ca.MX.sym("y", 4)
+    symbolic = ca.Function("f", [x, y], [table("value", {"x": x, "y": y})])
+    xs, ys = np.array([0.1, 0.7, 1.9, 2.4]), np.array([0.0, 0.3, 0.9, 1.2])
+
+    numeric = table("value", {"x": xs, "y": ys})
+
+    assert np.asarray(symbolic(xs, ys)) == pytest.approx(np.asarray(numeric), rel=1e-10)
+
+
+def test_bspline_interpolator_is_smooth():
+    x = np.linspace(0.0, 4.0, 9)
+    y = np.linspace(0.0, 2.0, 5)
+    table = Table()
+    table.data = xr.Dataset(
+        {"value": (("x", "y"), x[:, None] ** 2 + y[None, :] ** 2)},
+        coords={"x": x, "y": y},
+    )
+    table.add(method="bspline")
+    query = ca.MX.sym("query", 1, 2)
+    hessian = ca.Function("hessian", [query], [ca.hessian(table("value", query), query)[0]])
+
+    # A cubic spline reproduces the quadratic, including its curvature.
+    assert float(table("value", np.array([[1.3, 0.7]]))) == pytest.approx(1.3**2 + 0.7**2)
+    assert np.asarray(hessian([1.3, 0.7])) == pytest.approx(np.diag([2.0, 2.0]))
 
 
 # ------------------------------------------------------------------------------

@@ -25,7 +25,7 @@ from architeuthis.common import _banner, status
 from architeuthis.optimization import Opti
 from architeuthis.forecast import Forecast, Topography
 from architeuthis.report import RoutingReport
-from architeuthis.common import ArchiteuthisObject, GUST_DEFAULT_RATIO
+from architeuthis.common import ArchiteuthisObject, GUST_DEFAULT_RATIO, WAVE_COMPONENTS_OFFSET
 # Route and voyage classes live in their own modules, which work without network
 # access; they are re-exported here for compatibility.
 from architeuthis.route import Leg, Route, RouteLibrary, RouteSet, RouteSetLibrary, Waypoint  # noqa: F401
@@ -156,6 +156,25 @@ _REPORT_QUANTITIES = (
 _GUST_QUANTITIES = ("tws_gust", "aws_gust")
 
 
+def _evaluate_at(opti, expression, parameter_values):
+    """
+    Numeric value of an expression of parameters only, without solving.
+
+    Args:
+        opti: The Opti instance that holds the parameters.
+        expression: A CasADi expression, or a plain number.
+        parameter_values: `opti.value_parameters()`.
+
+    Returns:
+        A float for a scalar, otherwise a NumPy array, as `OptiSol`
+        returns them.
+    """
+    if not isinstance(expression, (ca.MX, ca.SX, ca.DM)):
+        return expression
+    value = onp.asarray(opti.value(expression, parameter_values), dtype=float)
+    return float(value) if value.size == 1 else value
+
+
 def _constraint_violation(constraint):
     """
     Symbolic violation of `a < b`, `a <= b` or `a == b`, or None.
@@ -215,6 +234,10 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
     same report for given positions, without optimizing, with this
     analysis' vessel and forecasts: an open-loop check of a passage
     plan.
+
+    `wave` must have the interpolators `swh`, `uw` and `vw`, the last
+    two added by `Forecast.add_wave_components`: the wave direction is
+    interpolated through its components, as the wind is.
     """
 
     def __init__(
@@ -292,29 +315,37 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         clon = midpoints(lon)
         clat = midpoints(lat)
 
-        environment_query = np.concatenate([
-            ctim, clat, clon,
-        ], axis=1)
+        environment_query = {
+            "valid_time": ctim,
+            "latitude": clat,
+            "longitude": clon,
+        }
 
+        # Ensemble forecasts also take the member, broadcast to all segments
         if self.atmosphere_member is not None:
-            atmosphere_query = np.concatenate([
-                ctim, ctim * 0. + self.atmosphere_member, clat, clon,
-            ], axis=1)
+            atmosphere_query = {**environment_query, "member": self.atmosphere_member}
         else:
             atmosphere_query = environment_query
 
         if self.wave_member is not None:
-            wave_query = np.concatenate([
-                ctim, ctim * 0. + self.wave_member, clat, clon,
-            ], axis=1)
+            wave_query = {**environment_query, "member": self.wave_member}
         else:
             wave_query = environment_query
 
         u10 = self.atmosphere("u10", atmosphere_query)
         v10 = self.atmosphere("v10", atmosphere_query)
 
+        missing = {"swh", "uw", "vw"} - set(self.wave.interpolators)
+        if missing:
+            raise KeyError(
+                f"{self.wave.name} has no interpolator for {sorted(missing)}. The wave "
+                "direction is interpolated through its components: call "
+                "add_wave_components, then add_interpolator for swh, uw and vw."
+            )
+
         swh = self.wave("swh", wave_query)
-        mwd = self.wave("mwd", wave_query)
+        uw = self.wave("uw", wave_query)
+        vw = self.wave("vw", wave_query)
 
         uc = self.current("uo", environment_query) * 3600./1852.
         vc = self.current("vo", environment_query) * 3600./1852.
@@ -325,10 +356,10 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             n=3,
         )
 
-        topography_query = np.concatenate([
-            tlat,
-            tlon,
-        ], axis=1)
+        topography_query = {
+            "latitude": tlat,
+            "longitude": tlon,
+        }
 
         z = self.topography("z", topography_query)
 
@@ -340,9 +371,10 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         else:
             tws_gust = tws * GUST_DEFAULT_RATIO
 
-        # TODO find why east/north wave generates unstability
-        # swh = np.sqrt(uw**2. + vw**2.)
-        # mwd = np.mod(np.arctan2d(uw, vw)+180, 360.)
+        # Direction the waves come from, as twd. The components weigh swh**2, and
+        # the small offset keeps arctan2 differentiable where they vanish: land,
+        # missing values and the fake steps past the forecast horizon.
+        mwd = np.mod(np.arctan2d(uw, vw + WAVE_COMPONENTS_OFFSET) + 180., 360.)
 
         cog = headings(lat, lon)
 
@@ -374,9 +406,13 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         cs = np.sqrt(uc**2. + vc**2.) # current speed in kts
         cd = np.mod(np.arctan2d(uc, vc), 360.) # current going to from 0 to 360 deg
 
-        vessel_query = np.concatenate([
-            stw, tws, np.abs(twa), swh, np.abs(mwa),
-        ], axis=1)
+        vessel_query = {
+            "stw": stw,
+            "tws": tws,
+            "twa": np.abs(twa),
+            "hs": swh,
+            "wa": np.abs(mwa),
+        }
 
         avg_bhp = self.vessel("bhp", vessel_query)
         max_bhp = self.vessel("max_bhp", vessel_query)
@@ -651,21 +687,31 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         # if self.verbose:
         status(_banner)
 
-        sol = opti.solve(
-            max_iter=max_iter,
-            callback=callback,
-            behavior_on_failure="return_last",
-            options=solver_options,
-            verbose=self.verbose,
-        )
-
-        solve_status = 1 if opti.return_status() in SOLVED else 2
+        if solve:
+            sol = opti.solve(
+                max_iter=max_iter,
+                callback=callback,
+                behavior_on_failure="return_last",
+                options=solver_options,
+                verbose=self.verbose,
+            )
+            solve_status = 1 if opti.return_status() in SOLVED else 2
+            values = {key: sol(expression) for key, expression in passage.items()}
+        else:
+            # The reference route has no variable: evaluate it at the parameter
+            # values rather than give IPOPT an empty problem, which spral crashes
+            # on with casadi 3.7.2 on Windows and MUMPS rejects.
+            sol = None
+            solve_status = 1
+            parameter_values = opti.value_parameters()
+            values = {
+                key: _evaluate_at(opti, expression, parameter_values)
+                for key, expression in passage.items()
+            }
 
         self.opti = opti
         self.sol = sol
         self.status = solve_status
-
-        values = {key: sol(expression) for key, expression in passage.items()}
 
         output = self._report(
             values,

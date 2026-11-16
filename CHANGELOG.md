@@ -103,3 +103,21 @@ and this project follows Semantic Versioning https://semver.org
 - Latest HRDPS run not found: HRDPSForecast now looks on the MSC Datamart.
 - `pyproject.toml` declared the MIT license, while the project is distributed under GPL v3 as in `LICENSE`.
 - The latest HRDPS run could not be found, because `HerbieLatest` only looks on AWS and NOMADS by default. `HRDPSForecast` looks on the MSC Datamart.
+---
+
+## [Unreleased]
+
+### Fixed
+- The UI showed only an error with dash-mantine-components 3, which needs React 19. The app requires Dash 4.5 and DMC 3, and `ui.py` selects React 19.
+- `RoutingAnalysis.run(solve=False)` no longer calls IPOPT, whose empty problem crashed the kernel with `spral` on Windows. The baseline is evaluated directly.
+- B-spline interpolators on 2-point axes (degree 1) broke the CasADi Hessian, so solves failed. These axes are now raised to the requested degree, with the same values.
+
+### Added
+- `modeling.HybridInterpolatedModel`, a SurrogateModel called like InterpolatedModel whose NumPy and CasADi evaluators are built once from the same data and give the same values.
+- `input_names(var_key)` on data objects, and the `coord_keys` argument of `add_interpolator`.
+
+### Changed
+- `add_interpolator` builds a HybridInterpolatedModel instead of a CasADi interpolant: B-spline tables are built hundreds of times faster, with the same values, and numeric queries are computed with NumPy.
+- `HybridInterpolatedModel` extrapolates by default (`fill_value=None`), where InterpolatedModel returns NaN.
+- The wave direction is interpolated through its east and north components weighted by the wave energy, `uw` and `vw`, added by the new `Forecast.add_wave_components`, instead of `mwd`, whose jump from 360 to 0 deg made the routing unstable. RoutingAnalysis needs the wave interpolators `swh`, `uw` and `vw`; reports still give `mwd`.
+- Data objects are queried with dicts keyed by standard names (`valid_time`, `member`, `latitude`, `longitude`; `stw`, `tws`, `twa`, `hs`, `wa`), whatever the names in the data. Arrays of shape (n_queries, n_dims) are still accepted.

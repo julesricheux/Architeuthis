@@ -17,9 +17,9 @@ import logging
 from abc import ABC, abstractmethod
 
 import architeuthis.numpy as np
-from architeuthis.modeling import InterpolatedModel
+from architeuthis.modeling import HybridInterpolatedModel
 
-from casadi import interpolant
+from casadi import DM
 
 from typing import Any, Callable, Literal, Optional, Sequence, Union
 from pandas import Timestamp
@@ -162,7 +162,17 @@ _banner = """
 ===================================================================
 """
 
+# North-going offset added to the wave components before arctan2, in m²
+# (swh**2): it biases the direction by less than 0.6 deg from swh = 1 m.
+WAVE_COMPONENTS_OFFSET = 0.
+
 GUST_DEFAULT_RATIO = 1.23 # (https://cimmse.wordpress.com/2013/09/20/a-wind-gust-factor-database-of-marine-observations-from-10-tropical-cyclones-2/)
+
+# Input names of the lookup tables, the keys of the queries
+TOPOGRAPHY_KEYS = ("latitude", "longitude")
+FORECAST_KEYS = ("valid_time", "latitude", "longitude")
+ENSEMBLE_KEYS = ("valid_time", "member", "latitude", "longitude")
+VESSEL_KEYS = ("stw", "tws", "twa", "hs", "wa")
 
 
 def tall(array):
@@ -280,18 +290,21 @@ class ArchiteuthisData(ArchiteuthisObject):
         self,
         var_dim: str,
         coord_dims: Sequence[str],
-        coord_slices: Sequence [str],
+        coord_slices: Sequence[slice],
         var_key: str,
-        method: Literal["bspline", "linear", "nearest"] = "linear",
+        method: Literal["bspline", "linear", "nearest"] = "bspline",
         fac: float = 1.0,
+        coord_keys: Optional[Sequence[str]] = None,
     ):
         """
-        Build a CasADi lookup table of a variable of `data`.
+        Build the lookup table of a variable of `data`.
 
-        Dimensions are positional: the array is squeezed, sliced and
-        raveled in Fortran order, so its dimension order must be the one
-        of `coord_dims`. NaN values become 0. A `var_key` that already
-        exists is left as it is.
+        The table is a HybridInterpolatedModel, which takes NumPy and
+        CasADi queries alike. Dimensions are positional: the array is
+        squeezed and sliced, so its dimension order must be the one of
+        `coord_dims`. NaN values become 0. Outside the grid, "linear"
+        extrapolates and "bspline" keeps the value at the boundary. A
+        `var_key` that already exists is left as it is.
 
         Args:
             var_dim: Name of the variable in `data`.
@@ -300,60 +313,47 @@ class ArchiteuthisData(ArchiteuthisObject):
             coord_slices: One slice per coordinate, applied to the
                 coordinates and the data.
             var_key: Key of the lookup table when calling this object.
-            method: CasADi interpolation method, such as "linear" or
-                "bspline".
+            method: Interpolation method, "linear", "bspline" or
+                "nearest" ("nearest" takes numeric queries only).
             fac: Factor applied to the values, to correct or convert
                 them.
+            coord_keys: Names of the inputs of the lookup table, one per
+                coordinate, by default `coord_dims`. Queries are dicts
+                with these keys.
         """
         if var_key in self.var_keys:
             status(f"🟦 {var_key} already in {self.name} interpolators.")
-        else:
-            # TODO for backup
-            # build interpolator x
-            x = [
-                np.asarray(self.data.coords[dim].values[sel])
-                for dim, sel in zip(coord_dims, coord_slices)
-            ]
-            
-            # build interpolator f
-            f = np.nan_to_num(
-                self.data[var_dim].to_numpy().squeeze()[*coord_slices].ravel(order='F'),
-                nan=0.
-            ) * fac # apply correction factor if specified
-            
-            # build interpolator
-            self.interpolators[var_key] = interpolant(
-                f"LUT_{var_dim}",
-                method,
-                x,
-                f,
-                # jit=True,
+            return
+
+        if coord_keys is None:
+            coord_keys = coord_dims
+        if len(coord_keys) != len(coord_dims):
+            raise ValueError(
+                f"{self.name}: {len(coord_keys)} coord_keys "
+                f"for {len(coord_dims)} coord_dims."
             )
-            
-            # TODO get up and running
-            # # build interpolator x
-            # x = {
-            #     dim: np.asarray(self.data.coords[dim].values[sel])
-            #     for dim, sel in zip(coord_dims, coord_slices)
-            # }
-            
-            # # build interpolator f
-            # f = np.nan_to_num(
-            #     self.data[var_dim].to_numpy().squeeze()[*coord_slices],
-            #     nan=0.
-            # ) * fac # apply correction factor if specified
-            
-            # # build interpolator
-            # self.interpolators[var_key] = InterpolatedModel(
-            #     x_data_coordinates=x,
-            #     y_data_structured=f,
-            #     method=method,
-            #     fill_value=np.nan
-            # )
-            self.var_keys.add(var_key)
-            
-            status(f"➕ Added {var_key}: {var_dim} to {self.name} interpolators.")
-    
+
+        x = {
+            key: np.asarray(self.data.coords[dim].values[sel], dtype=float)
+            for key, dim, sel in zip(coord_keys, coord_dims, coord_slices)
+        }
+
+        f = np.nan_to_num(
+            self.data[var_dim].to_numpy().squeeze()[*coord_slices],
+            nan=0.,
+        ) * fac  # apply correction factor if specified
+
+        self.interpolators[var_key] = HybridInterpolatedModel(
+            x_data_coordinates=x,
+            y_data_structured=f,
+            method=method,
+            fill_value=None,  # extrapolate, as the former CasADi interpolant
+            name=f"LUT_{var_dim}",
+        )
+        self.var_keys.add(var_key)
+
+        status(f"➕ Added {var_key}: {var_dim} to {self.name} interpolators.")
+
     def remove_interpolator(
         self,
         var_key: str,
@@ -370,7 +370,7 @@ class ArchiteuthisData(ArchiteuthisObject):
             status(f"➖ Removed {var_key} from {self.name} interpolators.")
         else:
             status(f"💔 {var_key} not found in {self.name} interpolators.")
-            
+
     def __call__(
         self,
         var_key,
@@ -381,19 +381,63 @@ class ArchiteuthisData(ArchiteuthisObject):
 
         Args:
             var_key: Key given to `add_interpolator`.
-            X: Query points, of shape (n_queries, n_dims).
+            X: Query points, as a dict of floats or arrays keyed by the
+                input names of the table (see `input_names`), broadcast
+                against each other. NumPy or CasADi. An array of shape
+                (n_queries, n_dims), with columns in the order of the
+                inputs, is also accepted.
 
         Returns:
-            A column vector, or None if this object has no lookup table.
+            A CasADi column vector, DM for numeric queries, or None if
+            this object has no lookup table.
+
+        Example:
+            >>> forecast("u10", {
+            ...     "valid_time": t,
+            ...     "latitude": lat,
+            ...     "longitude": lon,
+            ... })
         """
         if not self.interpolators:
             status(f"💔 {self.name} has no interpolators and thus cannot be called.")
             return None
-        
-        # TODO test X size. Should be (q, n)
-            
-        return tall(self.interpolators[var_key](np.transpose(X)))
-        # return self.interpolators[var_key](X)
+
+        interpolator = self.interpolators[var_key]
+
+        if not isinstance(X, dict):
+            names = interpolator.input_names()
+            if np.is_casadi_type(X, recursive=False):
+                if X.shape[1] != len(names):
+                    raise ValueError(
+                        f"{self.name}: queries of {var_key} have "
+                        f"{len(names)} columns {names}, not {X.shape[1]}."
+                    )
+            else:
+                X = np.reshape(np.asarray(X, dtype=float), (-1, len(names)))
+            X = {name: X[:, i] for i, name in enumerate(names)}
+
+        result = tall(interpolator(X))
+        # Numeric queries are evaluated with NumPy, but return a DM column
+        # as the former CasADi interpolant did, so float() and casadi
+        # operations keep working on them.
+        if not np.is_casadi_type(result, recursive=False):
+            result = DM(result)
+        return result
+
+    def input_names(
+        self,
+        var_key: str,
+    ) -> list[str]:
+        """
+        Names of the inputs of a lookup table.
+
+        Args:
+            var_key: Key given to `add_interpolator`.
+
+        Returns:
+            The keys that a query of this table takes.
+        """
+        return self.interpolators[var_key].input_names()
 
     
 class ArchiteuthisSpatialData(ArchiteuthisData):

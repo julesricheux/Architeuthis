@@ -100,7 +100,11 @@ def atmosphere():
 
 @pytest.fixture(scope="session")
 def wave():
-    return uniform_forecast("wave", swh=1.5, mwd=270.0)
+    forecast = uniform_forecast("wave", swh=1.5, mwd=270.0)
+    forecast.add_wave_components()
+    for key in ("uw", "vw"):
+        forecast.add_interpolator(key, "valid_time", "latitude", "longitude")
+    return forecast
 
 
 @pytest.fixture(scope="session")

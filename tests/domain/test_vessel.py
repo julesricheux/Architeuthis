@@ -48,6 +48,17 @@ def test_load_polar_from_netcdf_and_query_it(tmp_path, polar):
     assert np.asarray(result).ravel() == pytest.approx(expected)
 
 
+def test_polars_are_queried_by_their_axes(polar):
+    vessel = Vessel("ship", filepath="polar.nc")
+    vessel.data = polar
+    vessel.add_interpolator("bhp", *POLAR_DIMS)
+    query = {"stw": np.array([6.0, 8.0]), "tws": 15.0, "twa": 60.0, "hs": 1.0, "wa": 60.0}
+
+    assert vessel.input_names("bhp") == list(POLAR_DIMS)
+    expected = [POLAR_POWER_COEFFICIENT * 6.0**3, POLAR_POWER_COEFFICIENT * 8.0**3]
+    assert np.asarray(vessel("bhp", query)).ravel() == pytest.approx(expected)
+
+
 def test_interpolator_accepts_a_custom_key_and_slices(polar):
     vessel = Vessel("ship", filepath="polar.nc")
     vessel.data = polar

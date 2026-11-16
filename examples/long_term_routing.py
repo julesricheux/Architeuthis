@@ -192,9 +192,11 @@ WAVE["ifs"] = DeterministicHerbieForecast(
     date=recent
 )
 WAVE["ifs"].load_data()
+WAVE["ifs"].add_wave_components()
 
 WAVE["ifs"].add_interpolator("swh", "valid_time", "latitude", "longitude")
-WAVE["ifs"].add_interpolator("mwd", "valid_time", "latitude", "longitude")
+WAVE["ifs"].add_interpolator("uw", "valid_time", "latitude", "longitude")
+WAVE["ifs"].add_interpolator("vw", "valid_time", "latitude", "longitude")
 
 # GFS wave data
 WAVE["gfs"] = DeterministicHerbieForecast(
@@ -204,9 +206,11 @@ WAVE["gfs"] = DeterministicHerbieForecast(
     date=recent
 )
 WAVE["gfs"].load_data()
+WAVE["gfs"].add_wave_components(mwd_dim="dirpw")
 
 WAVE["gfs"].add_interpolator("swh", "valid_time", "latitude", "longitude", var_key="swh")
-WAVE["gfs"].add_interpolator("dirpw", "valid_time", "latitude", "longitude", var_key="mwd")
+WAVE["gfs"].add_interpolator("uw", "valid_time", "latitude", "longitude")
+WAVE["gfs"].add_interpolator("vw", "valid_time", "latitude", "longitude")
 
 wave_ens = EnsembleHerbieForecast(
     "wave_ens", model="ifs", product="waef", regex=r":swh:|:mwd:", fxx=steps,
@@ -215,6 +219,7 @@ wave_ens = EnsembleHerbieForecast(
     date=recent
 )
 wave_ens.load_data()
+wave_ens.add_wave_components()
 
 wave_ens.add_interpolator(
     "swh", "valid_time", "number", "latitude", "longitude",
@@ -224,7 +229,14 @@ wave_ens.add_interpolator(
     longitude_slice=slice(None, None,2),
 )
 wave_ens.add_interpolator(
-    "mwd", "valid_time", "number", "latitude", "longitude",
+    "uw", "valid_time", "number", "latitude", "longitude",
+    member_slice=slice(None, None,1),
+    time_slice=slice(None, None,1),
+    latitude_slice=slice(None, None,2),
+    longitude_slice=slice(None, None,2),
+)
+wave_ens.add_interpolator(
+    "vw", "valid_time", "number", "latitude", "longitude",
     member_slice=slice(None, None,1),
     time_slice=slice(None, None,1),
     latitude_slice=slice(None, None,2),

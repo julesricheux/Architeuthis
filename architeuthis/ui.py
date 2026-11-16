@@ -47,6 +47,11 @@ from dash import html, dcc
 from dash.dependencies import Input, Output, State
 from dash_iconify import DashIconify
 from dash_extensions.enrich import DashProxy
+from dash import _dash_renderer
+
+# Dash Mantine Components 3 needs React 19, which Dash 4.5 ships but does not
+# load by default. This must run before the page is first served.
+_dash_renderer._set_react_version("19.2.4")
 from flask import send_file, request, jsonify
 
 # from herbie.toolbox import ccrs
@@ -236,7 +241,7 @@ steps_00_12 = list(range(0, 145, 3)) + list(range(150, 361, 6))
 # mirror_date = pd.Timestamp('2026-02-12 00:00:00')
 # mirror_end = pd.Timestamp('2026-01-31 23:00:00')
 
-recent = pd.Timestamp("now").floor("1d")
+recent = pd.Timestamp("now").floor("1d8h")
 # recent = pd.Timestamp('2026-11-08 00:00:00')
 
 ATMOS = {}
@@ -290,7 +295,7 @@ if PRODUCT == "oper":
 # )
 
 
-recent = pd.Timestamp("now").floor("1d")
+# recent = pd.Timestamp("now").floor("1d")
 # recent = pd.Timestamp('2026-11-08 00:00:00')
 
 WAVE = {}

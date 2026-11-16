@@ -98,6 +98,9 @@ def test_interpolator_exposes_the_distance_as_z():
 
     assert float(topography("z", np.array([[2.0, 0.0]]))) < 0.0
     assert float(topography("z", np.array([[2.0, 9.0]]))) > 0.0
+    # Queried by `latitude` and `longitude`, although the data has `lat` and `lon`
+    z = np.asarray(topography("z", {"latitude": 2.0, "longitude": np.array([0.0, 9.0])}))
+    assert z[0, 0] < 0.0 < z[1, 0]
 
 
 def test_located_path_is_under_the_data_directory(monkeypatch):

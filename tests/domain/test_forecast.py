@@ -76,6 +76,85 @@ def test_add_interpolator_defaults_key_to_variable_name():
     assert float(forecast("wind", np.array([[0.5, 0.5, 0.5]]))) == pytest.approx(3.0)
 
 
+def test_forecast_is_queried_by_standard_names():
+    forecast = Forecast("test", date=BASE_DATE, fxx=[0])
+    forecast.data = xr.Dataset(
+        {"u10": (("time", "lat", "lon"), np.arange(8.0).reshape(2, 2, 2))},
+        coords={"time": [0.0, 1.0], "lat": [0.0, 1.0], "lon": [0.0, 1.0]},
+    )
+
+    forecast.add_interpolator("u10", "time", "lat", "lon")
+    query = {"valid_time": 1.0, "latitude": np.array([0.0, 1.0]), "longitude": 1.0}
+
+    assert forecast.input_names("u10") == ["valid_time", "latitude", "longitude"]
+    assert np.asarray(forecast("u10", query)).ravel() == pytest.approx([5.0, 7.0])
+
+
+def wave_forecast(direction_name="mwd", swh=None, direction=None):
+    axis = [0.0, 1.0]
+    swh = np.full((2, 2, 2), 2.0) if swh is None else swh
+    direction = np.full((2, 2, 2), 270.0) if direction is None else direction
+    forecast = Forecast("wave", date=BASE_DATE, fxx=[0], verbose=False)
+    forecast.data = xr.Dataset(
+        {
+            "swh": (("valid_time", "latitude", "longitude"), swh),
+            direction_name: (("valid_time", "latitude", "longitude"), direction),
+        },
+        coords={"valid_time": axis, "latitude": axis, "longitude": axis},
+    )
+    return forecast
+
+
+@pytest.mark.parametrize(
+    "direction, expected",
+    [(270.0, (4.0, 0.0)), (0.0, (0.0, -4.0)), (90.0, (-4.0, 0.0)), (180.0, (0.0, 4.0))],
+)
+def test_wave_components_go_where_the_waves_go_weighted_by_energy(direction, expected):
+    forecast = wave_forecast(direction=np.full((2, 2, 2), direction))
+
+    forecast.add_wave_components()
+
+    # swh = 2 m: the components are swh**2 = 4 m² along the direction the waves go to.
+    assert float(forecast.data["uw"][0, 0, 0]) == pytest.approx(expected[0], abs=1e-12)
+    assert float(forecast.data["vw"][0, 0, 0]) == pytest.approx(expected[1], abs=1e-12)
+    assert forecast.data["uw"].attrs["units"] == "m**2"
+
+
+def test_wave_components_take_other_names():
+    forecast = wave_forecast(direction_name="dirpw")
+
+    forecast.add_wave_components(mwd_dim="dirpw", u_dim="east", v_dim="north")
+
+    assert {"east", "north"} <= set(forecast.data.data_vars)
+    assert "uw" not in forecast.data
+
+
+def test_missing_waves_add_no_component():
+    swh = np.full((2, 2, 2), 2.0)
+    swh[:, 0, 0] = np.nan  # land
+    forecast = wave_forecast(swh=swh)
+    forecast.add_wave_components()
+    forecast.add_interpolator("uw", "valid_time", "latitude", "longitude")
+
+    # NaN becomes 0, so the land corner pulls the magnitude but not the direction.
+    assert float(forecast("uw", {"valid_time": 0.0, "latitude": 0.0, "longitude": 0.0})) == 0.0
+
+
+def test_wave_components_interpolate_across_north():
+    direction = np.zeros((2, 2, 2))
+    direction[:, :, 0], direction[:, :, 1] = 350.0, 10.0
+    forecast = wave_forecast(direction=direction)
+    forecast.add_wave_components()
+    for key in ("uw", "vw"):
+        forecast.add_interpolator(key, "valid_time", "latitude", "longitude")
+    query = {"valid_time": 0.5, "latitude": 0.5, "longitude": 0.5}
+
+    uw, vw = float(forecast("uw", query)), float(forecast("vw", query))
+
+    # Halfway between 350 and 10 deg, the waves come from the north, not from 180 deg.
+    assert np.mod(np.degrees(np.arctan2(uw, vw)) + 180.0, 360.0) == pytest.approx(0.0, abs=1e-9)
+
+
 # ------------------------------------------------------------------------------
 # Herbie
 # ------------------------------------------------------------------------------
@@ -175,6 +254,23 @@ def test_ensemble_interpolator_has_four_dimensions():
     forecast.add_interpolator("u10", "number", "valid_time", "latitude", "longitude")
 
     assert float(forecast("u10", np.array([[2.0, 0.5, 0.5, 0.5]]))) == pytest.approx(2.0)
+
+
+def test_ensemble_is_queried_with_a_member():
+    forecast = EnsembleHerbieForecast("ensemble", model="ifs", product="enfo", date=BASE_DATE)
+    member = [1.0, 2.0]
+    axis = [0.0, 1.0]
+    values = np.broadcast_to(np.array(member)[None, :, None, None], (2, 2, 2, 2))
+    forecast.data = xr.Dataset(
+        {"u10": (("valid_time", "number", "latitude", "longitude"), values)},
+        coords={"valid_time": axis, "number": member, "latitude": axis, "longitude": axis},
+    )
+
+    forecast.add_interpolator("u10", "valid_time", "number", "latitude", "longitude")
+    query = {"valid_time": np.array([0.2, 0.8]), "member": 2.0, "latitude": 0.5, "longitude": 0.5}
+
+    assert forecast.input_names("u10") == ["valid_time", "member", "latitude", "longitude"]
+    assert np.asarray(forecast("u10", query)).ravel() == pytest.approx([2.0, 2.0])
 
 
 # ------------------------------------------------------------------------------

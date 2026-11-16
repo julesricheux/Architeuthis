@@ -66,8 +66,8 @@ def build_validation_report(
 ====================================================================
 
 • Models runtime:  {ref_f00.strftime('%Y/%m/%d %Hh%M UTC')}
-• Earliest ASCAT:  {pd.to_datetime(ascat_query[:, 0].min(), unit='s').strftime('%Y/%m/%d %Hh%M UTC')}
-• Latest ASCAT:    {pd.to_datetime(ascat_query[:, 0].max(), unit='s').strftime('%Y/%m/%d %Hh%M UTC')}
+• Earliest ASCAT:  {pd.to_datetime(ascat_query['valid_time'].min(), unit='s').strftime('%Y/%m/%d %Hh%M UTC')}
+• Latest ASCAT:    {pd.to_datetime(ascat_query['valid_time'].max(), unit='s').strftime('%Y/%m/%d %Hh%M UTC')}
     
 """
 
@@ -208,9 +208,11 @@ def compare_ascat_vs_models(
         si_obs = si[mask][::step] * fac # m/s
         wdir_obs = wdir[mask][::step]   # degrees, meteorological
         
-        ascat_query = np.vstack([
-            tim, lat, lon,
-        ]).T
+        ascat_query = {
+            "valid_time": tim,
+            "latitude": lat,
+            "longitude": lon,
+        }
         
         # Build interpolators
         atmos.add_interpolator("si10", "valid_time", "latitude", "longitude")

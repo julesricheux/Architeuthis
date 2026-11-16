@@ -692,12 +692,12 @@ def _members_along_route(report, forecast, key):
     ctim, clat, clon = (onp.ravel(report[entry]) for entry in ("ctim", "clat", "clon"))
     members = forecast.data["number"].values
 
-    query = onp.column_stack([
-        onp.repeat(ctim, members.size),
-        onp.tile(members, ctim.size),
-        onp.repeat(clat, members.size),
-        onp.repeat(clon, members.size),
-    ])
+    query = {
+        "valid_time": onp.repeat(ctim, members.size),
+        "member": onp.tile(members, ctim.size),
+        "latitude": onp.repeat(clat, members.size),
+        "longitude": onp.repeat(clon, members.size),
+    }
 
     return onp.asarray(forecast(key, query), dtype=float).reshape((members.size, ctim.size), order="F")
 
