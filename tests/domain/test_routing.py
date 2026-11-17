@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
+import architeuthis.numpy as anp
 from architeuthis.common import GUST_DEFAULT_RATIO
 from architeuthis.core import Leg, RoutingAnalysis, Schedule, Voyage
 from architeuthis.toolbox.geo_utils import distances, poly_deviated_route
@@ -471,3 +472,163 @@ def test_analysis_options_are_not_shared(analyse, open_sea):
 
 def test_analysis_describes_its_exclusion_zones(analyse, open_sea):
     assert "exclusion_zones" in analyse(open_sea).describe()
+
+
+# ------------------------------------------------------------------------------
+# Function-based polars
+# ------------------------------------------------------------------------------
+
+
+POLAR_POWER_COEFFICIENT = 1.2  # as built by the `vessel` fixture
+
+
+def semi_empirical_power(x, p):
+    """Cubic power, corrected by the water temperature, as a fitted model would be."""
+    return p["k"] * x["stw"] ** 3 * (1.0 + p["k_temperature"] * (x["water_temperature"] - 12.0))
+
+
+def function_vessel():
+    from architeuthis.vessel import Vessel
+
+    # max_power as the fixture: a slack of 1e12 kW unsettles IPOPT's barrier.
+    vessel = Vessel("function_ship", sfc=SFC, hotel_load=HOTEL_LOAD, max_power=1e6, verbose=False)
+    parameters = {"k": POLAR_POWER_COEFFICIENT, "k_temperature": 0.01}
+    for key in ("bhp", "max_bhp"):
+        vessel.add_function(key, semi_empirical_power, inputs=["stw", "water_temperature"], args={"p": parameters})
+    vessel.add_function("sails_contribution", lambda x: 0.0 * x["stw"], inputs=["stw", "tws", "twa"])
+    return vessel
+
+
+def current_with_temperature(current, temperature):
+    """A current forecast that also has the water temperature, as a function of position and time."""
+    from architeuthis.forecast import Forecast
+
+    forecast = Forecast("current", date=0.0, fxx=None, verbose=False)
+    forecast.data = current.data
+    for key in ("uo", "vo"):
+        forecast.add_interpolator(key, "valid_time", "latitude", "longitude")
+    forecast.add_function(
+        "water_temperature",
+        lambda x: temperature + 0.0 * x["latitude"],
+        inputs=["valid_time", "latitude", "longitude"],
+    )
+    return forecast
+
+
+@pytest.mark.integration
+def test_function_polar_reads_its_inputs_from_the_forecasts(vessel, atmosphere, wave, current, open_sea):
+    def baseline(ship, temperature):
+        analysis = RoutingAnalysis(
+            "analysis",
+            ship,
+            make_voyage(),
+            atmosphere,
+            wave,
+            current_with_temperature(current, temperature),
+            open_sea,
+            verbose=False,
+        )
+        return analysis.run(solve=False, solver_options=MUMPS)
+
+    table = baseline(vessel, 12.0)
+    at_12 = baseline(function_vessel(), 12.0)
+    at_22 = baseline(function_vessel(), 22.0)
+
+    # The table interpolates the cubic law linearly between whole knots.
+    assert np.ravel(at_12["avg_bhp"]) == pytest.approx(np.ravel(table["avg_bhp"]), rel=1e-2)
+    assert np.ravel(at_22["avg_bhp"]) == pytest.approx(1.1 * np.ravel(at_12["avg_bhp"]), rel=1e-9)
+    assert at_22["fuel"] > at_12["fuel"]
+
+
+@pytest.mark.integration
+def test_function_polar_can_be_optimized(atmosphere, wave, current, island):
+    analysis = RoutingAnalysis(
+        "analysis",
+        function_vessel(),
+        make_voyage(),
+        atmosphere,
+        wave,
+        current_with_temperature(current, 12.0),
+        island,
+        verbose=False,
+    )
+
+    report = analysis.run(max_iter=500, solver_options=MUMPS)
+
+    assert report["status"] in (0, 1)
+    assert report["vessel"] == "function_ship"
+    assert np.max(report["z"]) < 1e-2
+
+
+def test_missing_forecast_variable_is_reported(atmosphere, wave, current, open_sea):
+    analysis = RoutingAnalysis(
+        "analysis",
+        function_vessel(),
+        make_voyage(),
+        atmosphere,
+        wave,
+        current,
+        open_sea,
+        verbose=False,
+    )
+
+    with pytest.raises(KeyError, match="water_temperature"):
+        analysis.run(solve=False, solver_options=MUMPS)
+
+
+# ------------------------------------------------------------------------------
+# Wind at other heights
+# ------------------------------------------------------------------------------
+
+
+def wind_polar(suffix):
+    """A polar whose power depends on the true and apparent wind named with `suffix`."""
+
+    def power(x):
+        sails = x[f"aws{suffix}"] * (1.0 + anp.cosd(x[f"awa{suffix}"])) + x[f"tws{suffix}"] * (1.0 + anp.cosd(x[f"twa{suffix}"]))
+        return 1.2 * x["stw"] ** 3 + 5.0 * sails + 0.0 * x[f"twd{suffix}"]
+
+    return power
+
+
+def wind_vessel(suffix):
+    from architeuthis.vessel import Vessel
+
+    vessel = Vessel(f"wind{suffix}", sfc=SFC, hotel_load=HOTEL_LOAD, max_power=1e6, verbose=False)
+    inputs = ["stw"] + [f"{name}{suffix}" for name in ("tws", "twd", "twa", "aws", "awa")]
+    for key in ("bhp", "max_bhp"):
+        vessel.add_function(key, wind_polar(suffix), inputs)
+    vessel.add_function("sails_contribution", lambda x: 0.0 * x["stw"], ["stw"])
+    return vessel
+
+
+def atmosphere_with_wind_at_100_m(factor):
+    from .conftest import uniform_forecast
+
+    return uniform_forecast("atmosphere", u10=5.0, v10=2.0, u100=5.0 * factor, v100=2.0 * factor)
+
+
+@pytest.mark.integration
+def test_wind_at_another_height_is_relative_to_the_vessel(wave, current, open_sea):
+    def baseline(vessel, atmosphere):
+        analysis = RoutingAnalysis(
+            "analysis", vessel, make_voyage(), atmosphere, wave, current, open_sea, verbose=False,
+        )
+        return analysis.run(solve=False, solver_options=MUMPS)
+
+    with_ten = baseline(wind_vessel(""), atmosphere_with_wind_at_100_m(1.0))
+    same_wind = baseline(wind_vessel("100"), atmosphere_with_wind_at_100_m(1.0))
+    stronger_wind = baseline(wind_vessel("100"), atmosphere_with_wind_at_100_m(1.5))
+
+    # Same wind at 100 m as at 10 m: the same quantities, so the same power.
+    assert np.ravel(same_wind["avg_bhp"]) == pytest.approx(np.ravel(with_ten["avg_bhp"]), rel=1e-9)
+    assert not np.allclose(np.ravel(stronger_wind["avg_bhp"]), np.ravel(same_wind["avg_bhp"]))
+
+
+def test_wind_at_a_height_without_its_components_is_reported(atmosphere, wave, current, open_sea):
+    analysis = RoutingAnalysis(
+        "analysis", wind_vessel("100"), make_voyage(), atmosphere, wave, current, open_sea, verbose=False,
+    )
+
+    with pytest.raises(KeyError, match="u100"):
+        analysis.run(solve=False, solver_options=MUMPS)

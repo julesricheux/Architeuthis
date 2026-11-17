@@ -57,7 +57,7 @@ for key in ("bhp", "max_bhp", "sails_contribution"):
 | `forecast.CopernicusForecast` | Currents and other products of Copernicus Marine. Needs an account, `CMEMS_USER` and `CMEMS_PWD`. |
 | `forecast.CDSForecast` | ERA5 reanalysis. Needs an account, `CDS_API_KEY`. |
 | `forecast.Topography` | The signed distance to land and to your exclusion zones. It needs only its box, and `exclusion_zones` if you have some. |
-| `vessel.Vessel` | A vessel, from its polar file. `sfc` must be given for a routing, because the objective is zero without it. `label` comes from the file name by default: `eff45` for `..._eff45.nc`. |
+| `vessel.Vessel` | A vessel, from its polar file or from functions (see [Polars as functions](#polars-as-functions)). `sfc` must be given for a routing, because the objective is zero without it. `label` comes from the file name by default, `eff45` for `..._eff45.nc`, or is the name without a file. |
 
 To route without a current provider, fill a `Forecast` with zeros on the grid of the wind, as `examples/passage_planning.py` does.
 
@@ -71,7 +71,51 @@ z = topography("z", {"latitude": lats, "longitude": lons})
 bhp = vessel("bhp", {"stw": 10., "tws": 15., "twa": 60., "hs": 2., "wa": 30.})
 ```
 
+Keys that a variable does not take are ignored, so one query can serve several variables.
+
 `add_interpolator` takes `method="linear"` (the default), `"bspline"`, smooth and suited to optimization, or `"nearest"`.
+
+### Polars as functions
+
+A table is one kind of model. `add_function(var_key, function, inputs, args=None, output=None)` registers a function instead: it is called as `function(x, **args)`, where `x` is a dict of its `inputs`, and `args` holds fixed arguments such as fitted parameters. Written with `architeuthis.numpy`, without `if` on values, it takes CasADi inputs and the routing differentiates through it. `output` picks the value when the function returns more: a key of a dict, a key of the dict of a `(value, components)` tuple, an index, or a function of the result. `add_model` registers any other object that is called with a dict and has an `input_names()` method.
+
+A vessel defined by semi-empirical functions needs no polar file:
+
+```python
+from my_polars import propulsion_power, total_power, parameters
+
+inputs = ["stw", "tws", "twa", "swh", "mwa", "mwp", "water_temperature"]
+
+vessel = Vessel("vessel", sfc=220., max_power=4100.)  # no filepath, no load_data
+vessel.add_function("bhp", propulsion_power, inputs, args={"p": parameters})
+vessel.add_function("max_bhp", total_power, inputs, args={"p": parameters})
+vessel.add_function(
+    "sails_contribution",
+    propulsion_power,
+    inputs,
+    args={"p": parameters, "return_components": True},
+    output=lambda result: -result[1]["aero_sails"],
+)
+```
+
+The routing gives each vessel model the inputs it names. It computes `stw`, `sog`, `tws`, `twd`, `twa`, `hs` (or `swh`), `wa` (or `mwa`), `aws` and `awa`, angles relative to the COG in absolute value. The wind at another height is computed the same way from its components: an input `tws100`, `twd100`, `twa100`, `aws100` or `awa100` makes the routing read `u100` and `v100` (m/s) from the forecasts, so `atmosphere.add_interpolator("u100", ...)` and `"v100"` are all it takes; any height works. Any other input is a forecast variable, read at the middle of each segment from the first of `atmosphere`, `wave` and `current` that has a model with that key, so register it there under the name the vessel uses. A conversion is a function of the forecast itself:
+
+```python
+wave.add_interpolator("mwp", "valid_time", "latitude", "longitude")
+current.add_interpolator("thetao", "valid_time", "latitude", "longitude", var_key="water_temperature")
+atmosphere.add_interpolator("t2m", "valid_time", "latitude", "longitude")
+atmosphere.add_function(
+    "air_temperature",
+    lambda x: atmosphere("t2m", x) - 273.15,
+    inputs=["valid_time", "latitude", "longitude"],
+)
+```
+
+A Herbie forecast may mix fields at different levels in one download, such as the IFS 10 m wind and 2 m temperature with `regex=r":(?:10[uv]|2t):"`.
+
+`examples/function_polar_routing.py` routes a voyage with a dummy polar of this kind, which depends on `stw`, `tws`, `twa`, `swh`, `mwa` and the air temperature of IFS. It needs no polar file and no credentials.
+
+The three vessel models are evaluated separately, so a function that computes all components is computed three times when the problem is built.
 
 ### Credentials and the data folder
 

@@ -42,15 +42,22 @@ class Vessel(ArchiteuthisData):
     """
     Represents the vessel and its performance characteristics.
 
+    Its polars are models queried by key, as for any data object:
+    tables interpolated from a polar file (`load_data`, then
+    `add_interpolator`), or functions such as semi-empirical models
+    with fitted parameters (`add_function`), without a file. Routing
+    needs `bhp`, `max_bhp` and `sails_contribution`, and gives each
+    model the inputs it names: see `RoutingAnalysis`.
+
     `label` is a short identifier that tags the reports of this vessel
     and appears in the UI, `eff45` for example. By default it is taken
-    from the polar file name.
+    from the polar file name, or is the name without a file.
     """
 
     def __init__(
         self,
         name: str,
-        filepath: str,
+        filepath: Optional[str] = None,
         hotel_load: Union[Callable, float, int] = 0., # kW
         max_power: Union[Callable, float, int] = 1e12, # kW
         sfc: Union[Callable, float, int] = 0., # g/kWh
@@ -60,8 +67,10 @@ class Vessel(ArchiteuthisData):
         super().__init__(name, verbose)
         
         self.path = filepath
-        self.label = label if label is not None else _label_from_path(filepath)
-        
+        if label is None:
+            label = _label_from_path(filepath) if filepath is not None else name
+        self.label = label
+
         self.hotel_load = ensure_callable(hotel_load) # TODO to define with kwargs to be more flexible
         self.sfc = ensure_callable(sfc) # TODO to define with kwargs to be more flexible
         # self.max_power = ensure_callable(max_power)
@@ -71,6 +80,7 @@ class Vessel(ArchiteuthisData):
         self.max_power = max_power
         
     def _locate_data(self):
+        assert self.path is not None, f"💔 {self.name} has no polar file: use add_function."
         assert os.path.exists(self.path), f"💔 '{self.path}' does not exist."
         status(f"✅ {self.name} data found.")
         

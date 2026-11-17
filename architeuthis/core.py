@@ -11,6 +11,7 @@ Created on Mon Jan 19 15:54:06 2026
 
 
 import json
+import re
 
 import casadi as ca
 import numpy as onp
@@ -20,7 +21,7 @@ import architeuthis.numpy as np
 
 from abc import abstractmethod
 from typing import Callable, Optional, Union
-from architeuthis.vessel import Vessel
+from architeuthis.vessel import POLAR_KEYS, Vessel
 from architeuthis.common import _banner, status
 from architeuthis.optimization import Opti
 from architeuthis.forecast import Forecast, Topography
@@ -155,6 +156,10 @@ _REPORT_QUANTITIES = (
 )
 _GUST_QUANTITIES = ("tws_gust", "aws_gust")
 
+# Vessel inputs of the wind at a height, `twa100` for example: computed from the
+# forecast variables `u100` and `v100`, as the 10 m wind is from `u10` and `v10`.
+_WIND_AT_HEIGHT = re.compile(r"^(tws|twd|twa|aws|awa)(\d+)$")
+
 
 def _evaluate_at(opti, expression, parameter_values):
     """
@@ -238,6 +243,17 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
     `wave` must have the interpolators `swh`, `uw` and `vw`, the last
     two added by `Forecast.add_wave_components`: the wave direction is
     interpolated through its components, as the wind is.
+
+    The vessel needs the models `bhp`, `max_bhp` and
+    `sails_contribution`, each queried with the inputs it names among
+    `stw`, `sog`, `tws`, `twa`, `hs` or `swh`, `wa` or `mwa`, `aws` and
+    `awa` (angles in absolute value). Any other input, a water
+    temperature or a wave period for example, is a forecast variable:
+    it is read from the first of `atmosphere`, `wave` and `current`
+    that has a model with that key. The wind at another height,
+    `tws100`, `twd100`, `twa100`, `aws100` or `awa100` for example, is
+    computed from the forecast variables `u100` and `v100`, relative to
+    the vessel as the 10 m wind is.
     """
 
     def __init__(
@@ -406,13 +422,39 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         cs = np.sqrt(uc**2. + vc**2.) # current speed in kts
         cd = np.mod(np.arctan2d(uc, vc), 360.) # current going to from 0 to 360 deg
 
+        # Every vessel model takes the inputs it names: polar tables the first
+        # five, semi-empirical functions possibly others. Angles are absolute.
         vessel_query = {
             "stw": stw,
             "tws": tws,
             "twa": np.abs(twa),
             "hs": swh,
             "wa": np.abs(mwa),
+            "sog": sog,
+            "swh": swh,
+            "mwa": np.abs(mwa),
+            "aws": aws,
+            "awa": np.abs(awa),
+            "twd": twd,
         }
+
+        # Other inputs are forecast variables, read from the first forecast that
+        # has a model of them: a water temperature, a wave period... The wind at
+        # another height (tws100, twa100, awa100...) is computed from u100 and
+        # v100, relative to the vessel as the 10 m wind is.
+        forecast_queries = (
+            (self.atmosphere, atmosphere_query),
+            (self.wave, wave_query),
+            (self.current, environment_query),
+        )
+        for key in self._vessel_inputs():
+            if key in vessel_query:
+                continue
+            wind = _WIND_AT_HEIGHT.match(key)
+            if wind is not None:
+                vessel_query |= self._wind_at_height(wind.group(2), cog, sog, forecast_queries)
+            else:
+                vessel_query[key] = self._forecast_variable(key, forecast_queries)
 
         avg_bhp = self.vessel("bhp", vessel_query)
         max_bhp = self.vessel("max_bhp", vessel_query)
@@ -464,6 +506,61 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             }
 
         return passage
+
+    def _vessel_inputs(self) -> list:
+        """
+        Inputs of the vessel models that routing queries, in order.
+        """
+        inputs = []
+        for var_key in POLAR_KEYS:
+            for name in self.vessel.input_names(var_key):
+                if name not in inputs:
+                    inputs.append(name)
+        return inputs
+
+    def _forecast_variable(self, key, forecast_queries):
+        """
+        A vessel input read from the forecasts, at segment midpoints.
+
+        The atmosphere is looked at first, then the wave, the current.
+        """
+        for forecast, query in forecast_queries:
+            if key in forecast.models:
+                return forecast(key, query)
+        names = ", ".join(forecast.name for forecast, _ in forecast_queries)
+        raise KeyError(
+            f"{self.vessel.name} needs {key!r}, which no forecast ({names}) "
+            "has. Add a model of it, with add_interpolator or add_function."
+        )
+
+    def _wind_at_height(self, height, cog, sog, forecast_queries) -> dict:
+        """
+        The wind at a height, relative to the vessel, as vessel inputs.
+
+        `u{height}` and `v{height}` (m/s) are read from the forecasts
+        and give the same quantities as `u10` and `v10`: `tws`, `twd`,
+        `twa`, `aws` and `awa` suffixed with the height, in kt and
+        degrees, angles relative to the COG in absolute value.
+        """
+        u = self._forecast_variable(f"u{height}", forecast_queries) * 3600./1852.
+        v = self._forecast_variable(f"v{height}", forecast_queries) * 3600./1852.
+
+        tws = np.sqrt(u**2. + v**2.)
+        twd = np.mod(np.arctan2d(u, v) + 180., 360.)
+        twa = np.mod(twd - cog + 180., 360.) - 180
+
+        u_aw = tws * np.sind(twa)
+        v_aw = tws * np.cosd(twa) + sog
+        aws = np.sqrt(u_aw**2. + v_aw**2.)
+        awa = np.arctan2d(u_aw, v_aw)
+
+        return {
+            f"tws{height}": tws,
+            f"twd{height}": twd,
+            f"twa{height}": np.abs(twa),
+            f"aws{height}": aws,
+            f"awa{height}": np.abs(awa),
+        }
 
     def _resolve_constraints(self, constraints, ctx) -> list:
         active_constraints = constraints if constraints is not None else self.constraints

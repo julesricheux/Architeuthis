@@ -54,7 +54,7 @@ architeuthis.modeling      Fitted/interpolated models, black_box (AeroSandbox)
 common.py      ArchiteuthisObject > ArchiteuthisData > ArchiteuthisSpatialData
         |       load_data() pipeline, add_interpolator(), __call__(), _HOME, status
 credentials.py save/get/delete/require credentials: environment, then OS store (keyring)
-        +-- vessel.py     Vessel: polars NetCDF + hotel_load, sfc, max_power
+        +-- vessel.py     Vessel: polars (NetCDF or functions) + hotel_load, sfc, max_power
         +-- forecast.py   Topography; Forecast > Herbie (deterministic, HRDPS, ensemble),
         |                 Copernicus (CMEMS), CDS (ERA5)
         +-- satellite.py  EUMETSATData > ASCATData, PoseidonData (validation)
@@ -74,7 +74,8 @@ toolbox/       geo_utils (route geometry), plot_utils (figures, documented in do
                json_utils (report JSON codec), inspect_tools, string_formatting...
 wrappers/      json_wrapper (GeoJSON), leaflet_wrapper (zone layers), legacy provider wrappers
 examples/      simple_routing, long_term_routing, ensemble_routing, post_leg_rewind,
-               passage_planning, ifs_route_tested_with_gfs, short_term_routing, comparison_ascat_models;
+               passage_planning, ifs_route_tested_with_gfs, short_term_routing, comparison_ascat_models,
+               function_polar_routing;
                they define their own sources and zones, and keep past settings as commented lines
 tests/         numpy, optimization, modeling (AeroSandbox), domain (Architeuthis)
 ```
@@ -89,7 +90,9 @@ Stubs that are not functional yet: `environment.Environment` (also has a broken 
 - **Time** as a float epoch-seconds coordinate named `valid_time`.
 - **Dimension order** matching the `coord_dims` passed to `add_interpolator`.
 
-`add_interpolator` builds a `HybridInterpolatedModel` (`modeling/hybrid_interpolation.py`) from the array, stored in `interpolators`. Its NumPy and CasADi evaluators are built once from the same data: SciPy fits the B-spline coefficients, much faster than `casadi.interpolant(..., "bspline")`. Know these behaviours:
+Each data object holds **models** in `models` (`interpolators` is the same dict, the former name), keyed by `var_key`. A model is any object called with a dict of inputs and having `input_names()`, registered with `add_model`. A table is one kind: `add_function(var_key, function, inputs, args, output)` wraps `function(x, **args)` into a `common.FunctionModel`, for semi-empirical polars with fitted parameters for example (`Vessel` then needs no `filepath`); `output` picks a key, index or function of a result such as `(value, components)`. `__call__` passes each model only its own inputs, so a query may hold more keys.
+
+`add_interpolator` builds a `HybridInterpolatedModel` (`modeling/hybrid_interpolation.py`) from the array, registered through `add_model`. Its NumPy and CasADi evaluators are built once from the same data: SciPy fits the B-spline coefficients, much faster than `casadi.interpolant(..., "bspline")`. Know these behaviours:
 
 - Dimensions are **positional**: the array is squeezed and sliced, so array dimension order must equal `coord_dims` order. The names only select coordinates.
 - **Query keys are standard names**, whatever the names in the data: `valid_time, latitude, longitude` for forecasts, plus `member` for `EnsembleHerbieForecast`, `latitude, longitude` for `Topography`, and `stw, tws, twa, hs, wa` for `Vessel` (`common.FORECAST_KEYS` and the like, passed as `coord_keys`). `obj.input_names(var_key)` gives them.
@@ -106,7 +109,7 @@ Stubs that are not functional yet: `environment.Environment` (also has a broken 
 - **Fixed:** ETD, ETA, departure and arrival, so the schedule is a hard requirement and speed is an outcome (`sog = distance / dt`).
 - **Time grid:** comes from the atmospheric forecast. Segment centers (`ctim`) are the `valid_time` values strictly between ETD and ETA, and nodes (`tim`) are ETD, their midpoints and ETA. `skip_tim` thins them.
 - **Decision variables:** `vlat` and `vlon`, offsets of interior nodes from a reference route. With `vary_fac=True`, also `deviation_fac`, which blends `Voyage.route_minus`, `route_ortho` and `route_plus` (-1, 0, +1).
-- **Evaluation:** weather is sampled at segment midpoints, topography at nodes resampled with `n=3`, and the vessel with `[stw, tws, |twa|, swh, |mwa|]`.
+- **Evaluation:** weather is sampled at segment midpoints, topography at nodes resampled with `n=3`, and the vessel with a query of `stw, tws, |twa|, hs, |wa|` plus `sog, swh, |mwa|, aws, |awa|, twd`, from which each model takes its inputs. An input matching `(tws|twd|twa|aws|awa)<height>` (`_WIND_AT_HEIGHT`, `twa100` for example) is computed by `_wind_at_height` from the forecast variables `u<height>` and `v<height>`, with the formulas of the 10 m wind. Any other vessel input is a forecast variable, read by `_forecast_variable` from the first of `atmosphere`, `wave`, `current` with a model of that key, else `KeyError`.
 - **Constraints:** a callable `ctx -> list` or a plain list, given to the constructor or to `run`. `ctx` exposes the symbolic quantities plus `vessel` and `opti`. The default is `max_bhp < vessel.max_power` and `z < 0`.
 - **`solve=False`:** evaluates the reference route without optimizing it, giving a baseline for comparison.
 - **Shared model:** `_passage(tim, ctim, lat, lon, ...)` builds every symbolic quantity; `run` feeds it Opti variables and `evaluate` plain MX symbols. Change the physics there only.
@@ -124,7 +127,7 @@ Required interpolator keys:
 | `wave` | `swh`, `uw`, `vw` (from `Forecast.add_wave_components`) | m, m² |
 | `current` | `uo`, `vo` | m/s, converted to kt |
 | `topography` | `z` | nm |
-| `vessel` | `bhp`, `max_bhp`, `sails_contribution`; axes `stw, tws, twa, hs, wa` | kW; kt, kt, deg, m, deg |
+| `vessel` | `bhp`, `max_bhp`, `sails_contribution`; tables on axes `stw, tws, twa, hs, wa`, functions on any inputs | kW; kt, kt, deg, m, deg |
 
 The wave direction is interpolated through `uw = -swh**2 * sin(mwd)` and `vw = -swh**2 * cos(mwd)`, which `Forecast.add_wave_components` adds to the data (`mwd_dim="dirpw"` for GFS), because `mwd` itself jumps from 360 to 0 deg. `_passage` takes `mwd = arctan2(uw, vw + WAVE_COMPONENTS_OFFSET) + 180`: the energy weight lets large seas rather than calm or land cells (0 after NaN) set the direction, and the offset (`common`, 1e-2 m²) keeps `arctan2` differentiable where both components vanish. `swh` stays a separate interpolator, because the norm of interpolated components underestimates it where directions differ, and `sqrt` is not differentiable at 0. Reports still give `mwd`.
 
@@ -176,9 +179,10 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 - `Schedule` and `Voyage` convert dates with `common.to_timestamp`; naive dates are UTC, so give local times with a timezone.
 - Divergence and spread signs are relative to the travel direction: `Route.reversed()` negates divergences, so the reverse route's `plus` is the forward `minus`.
 - `Route.from_position` restarts with a straight first segment. `Voyage.from_position` cannot restart `route_minus`/`route_plus` given as functions and falls back to the spread paths; pass Routes to keep them.
-- `Vessel.hotel_load` and `Vessel.sfc` are wrapped into callables, while `Vessel.max_power` stays a raw value. `sfc` defaults to 0, which makes the objective zero.
+- `Vessel.hotel_load` and `Vessel.sfc` are wrapped into callables, while `Vessel.max_power` stays a raw value. `sfc` defaults to 0, which makes the objective zero. `max_power` defaults to 1e12 kW: such a slack on `max_bhp < max_power` can send IPOPT's adaptive barrier off and the route diverging, so give a realistic value.
 - `EnsembleHerbieForecast.add_interpolator` takes `var_dim, time_dim, member_dim, latitude_dim, longitude_dim`, which must be the order of the array.
 - Report consumers (`json_wrapper.route_to_geojson`, `ui.py`) also need `init_fac`, which `run` records but `evaluate` does not. `ReportCollection.save` writes to `~/data/routes/` by default.
+- `DeterministicHerbieForecast` reads each GRIB file with `forecast.open_grib` (`cfgrib.open_datasets`, one hypercube per level, merged without their scalar level coordinates), so one `regex` may mix levels, such as the IFS 10 m wind and 2 m temperature. Plain `xr.open_dataset(engine="cfgrib")` would skip `t2m` and the concatenation fail on `heightAboveGround`. Two variables of the same name at two levels would collide; cfgrib names them apart (`u10`, `u100`).
 - `HRDPSForecast` wind speeds are right but its directions are not: the files have `uvRelativeToGrid` = 1 and the components are not rotated from the rotated grid, about 45 deg off around Saint-Pierre-et-Miquelon compared with GFS. `HerbieLatest` only looks on `aws` and `nomads` by default, so a model elsewhere needs `priority`.
 - `EUMDAC_KEY` and `EUMDAC_SECRET` hold the EUMETSAT Consumer Key and Secret, not a login. When neither CMEMS credential is found, `CopernicusForecast` passes `None` to the toolbox only if the `copernicusmarine login` file exists (`COPERNICUSMARINE_CREDENTIALS_DIRECTORY` or `~/.copernicusmarine/`), else it raises; likewise `CDSForecast` falls back to `cdsapi.Client()` only if `CDSAPI_RC` or `~/.cdsapirc` exists. Architeuthis never writes `~/.cdsapirc` any more. Without a credential store (Linux server), `keyring` errors are treated as "not found", so environment variables still work.
 - `core.berg_zone` and `icebergs.berg_zone` are computed when they are read (module `__getattr__`), so `from architeuthis.icebergs import berg_zone` fetches the iceberg limit at that line.

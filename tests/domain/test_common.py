@@ -326,3 +326,130 @@ def test_load_data_sets_logging_up(clean_logging):
     Table().load_data()
 
     assert len(root.handlers) == 1
+
+
+# ------------------------------------------------------------------------------
+# Function models
+# ------------------------------------------------------------------------------
+
+
+def cubic_power(x, p):
+    return p["k"] * x["stw"] ** 3 + p["c"] * x["tws"]
+
+
+def power_and_components(x, p):
+    calm = p["k"] * x["stw"] ** 3
+    wind = p["c"] * x["tws"]
+    return calm + wind, {"calm_water": calm, "wind": wind}
+
+
+PARAMETERS = {"k": 1.2, "c": 2.0}
+
+
+def test_function_model_passes_its_inputs_and_args():
+    model = common.FunctionModel(cubic_power, ["stw", "tws"], {"p": PARAMETERS})
+
+    assert model.input_names() == ["stw", "tws"]
+    assert model({"stw": 10.0, "tws": 5.0, "other": 1.0}) == pytest.approx(1210.0)
+
+
+def test_function_model_reports_a_missing_input():
+    model = common.FunctionModel(cubic_power, ["stw", "tws"], {"p": PARAMETERS})
+
+    with pytest.raises(KeyError, match="tws"):
+        model({"stw": 10.0})
+
+
+@pytest.mark.parametrize(
+    "output, expected",
+    [
+        (None, 1210.0),
+        (0, 1210.0),
+        ("calm_water", 1200.0),
+        ("wind", 10.0),
+        (lambda result: result[1]["calm_water"] / 2.0, 600.0),
+    ],
+)
+def test_function_model_selects_its_output(output, expected):
+    model = common.FunctionModel(
+        power_and_components,
+        ["stw", "tws"],
+        {"p": PARAMETERS},
+        output=output,
+    )
+
+    assert model({"stw": 10.0, "tws": 5.0}) == pytest.approx(expected)
+
+
+def test_function_model_reports_an_unknown_output():
+    model = common.FunctionModel(power_and_components, ["stw", "tws"], {"p": PARAMETERS}, output="waves")
+
+    with pytest.raises(KeyError, match="waves"):
+        model({"stw": 10.0, "tws": 5.0})
+
+
+def test_add_function_registers_a_model_queried_like_a_table():
+    table = Table()
+    table.add_function("power", cubic_power, inputs=["stw", "tws"], args={"p": PARAMETERS})
+
+    result = table("power", {"stw": np.array([1.0, 2.0]), "tws": 5.0, "unused": np.zeros(3)})
+
+    assert isinstance(result, ca.DM)
+    assert np.asarray(result).ravel() == pytest.approx([11.2, 19.6])
+    assert table.input_names("power") == ["stw", "tws"]
+    assert table.var_keys == {"power"}
+    assert table.interpolators is table.models
+
+
+def test_function_model_takes_array_queries():
+    table = Table()
+    table.add_function("power", cubic_power, inputs=["stw", "tws"], args={"p": PARAMETERS})
+
+    result = table("power", np.array([[1.0, 5.0], [2.0, 0.0]]))
+
+    assert np.asarray(result).ravel() == pytest.approx([11.2, 9.6])
+
+
+def test_function_model_is_differentiable():
+    table = Table()
+    table.add_function("power", cubic_power, inputs=["stw", "tws"], args={"p": PARAMETERS})
+    stw = ca.MX.sym("stw")
+
+    power = table("power", {"stw": stw, "tws": 5.0})
+    gradient = ca.Function("gradient", [stw], [ca.gradient(power, stw)])
+
+    assert float(gradient(10.0)) == pytest.approx(3.0 * 1.2 * 100.0)
+
+
+def test_query_missing_an_input_names_it():
+    table = Table()
+    table.add_function("power", cubic_power, inputs=["stw", "tws"], args={"p": PARAMETERS})
+
+    with pytest.raises(KeyError, match="tws"):
+        table("power", {"stw": 10.0})
+
+
+def test_table_queries_ignore_other_keys():
+    table = Table()
+    table.add()
+
+    result = table("value", {"x": 1.0, "y": 1.0, "z": np.zeros(4)})
+
+    assert float(result) == pytest.approx(11.0)
+
+
+def test_interpolators_and_functions_share_the_models():
+    table = Table()
+    table.add()
+    table.add_function("power", cubic_power, inputs=["stw", "tws"], args={"p": PARAMETERS})
+    table.add_function("power", lambda x: 0.0, inputs=["stw"])
+
+    assert set(table.models) == {"value", "power"}
+    assert isinstance(table.models["value"], HybridInterpolatedModel)
+    assert isinstance(table.models["power"], common.FunctionModel)
+
+    table.remove_model("power")
+    table.remove_interpolator("value")
+
+    assert table.models == {}
+    assert table.var_keys == set()

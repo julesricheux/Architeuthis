@@ -50,7 +50,7 @@ def route_to_geojson(route: dict, valid_time: float | None = None, color: str = 
     max_bhp = route["max_bhp"]
     sc = route["sails_contribution"]
     fuel = route["fuel"]
-    member = route["member"]
+    member = route.get("member", 0)
     
     model = route['model']
     fac= route['init_fac']

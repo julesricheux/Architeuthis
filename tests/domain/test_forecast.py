@@ -221,15 +221,8 @@ def test_herbie_conversion_pads_two_zero_filled_time_steps():
     assert np.all(forecast.data["u10"].values[:2] > 0.0)
 
 
-@pytest.mark.parametrize(
-    "forecast_class, expected_filter",
-    [
-        (DeterministicHerbieForecast, None),
-        (EnsembleHerbieForecast, {"dataType": "pf"}),
-    ],
-)
-def test_herbie_read_uses_cfgrib_with_the_right_filter(forecast_class, expected_filter):
-    forecast = forecast_class("read", model="ifs", product="oper", date=BASE_DATE)
+def test_ensemble_read_uses_cfgrib_with_the_perturbed_members():
+    forecast = EnsembleHerbieForecast("read", model="ifs", product="enfo", date=BASE_DATE)
     forecast.path = ["dummy.grib"]
 
     with patch("architeuthis.forecast.xr.open_mfdataset") as open_mfdataset:
@@ -238,8 +231,61 @@ def test_herbie_read_uses_cfgrib_with_the_right_filter(forecast_class, expected_
     args, kwargs = open_mfdataset.call_args
     assert args == (["dummy.grib"],)
     assert kwargs["engine"] == "cfgrib"
-    assert kwargs.get("filter_by_keys") == expected_filter
+    assert kwargs.get("filter_by_keys") == {"dataType": "pf"}
     assert forecast.data is open_mfdataset.return_value
+
+
+def write_grib(path, fields, step):
+    """
+    Write GRIB2 fields at heights above ground, as one file of a Herbie download.
+
+    Written with ecCodes directly: the writer of cfgrib relies on a private
+    function that recent xarray versions removed.
+    """
+    import eccodes
+
+    with open(path, "wb") as stream:
+        for param_id, height, value in fields:
+            message = eccodes.codes_grib_new_from_samples("regular_ll_sfc_grib2")
+            keys = {
+                "Ni": 4,
+                "Nj": 3,
+                "latitudeOfFirstGridPointInDegrees": 50.0,
+                "longitudeOfFirstGridPointInDegrees": -20.0,
+                "latitudeOfLastGridPointInDegrees": 48.0,
+                "longitudeOfLastGridPointInDegrees": -17.0,
+                "iDirectionIncrementInDegrees": 1.0,
+                "jDirectionIncrementInDegrees": 1.0,
+                "dataDate": int(BASE_DATE.strftime("%Y%m%d")),
+                "dataTime": 0,
+                "step": step,
+                "typeOfLevel": "heightAboveGround",
+                "level": height,
+                "paramId": param_id,
+            }
+            for key, key_value in keys.items():
+                eccodes.codes_set(message, key, key_value)
+            eccodes.codes_set_values(message, np.full(12, value))
+            eccodes.codes_write(message, stream)
+            eccodes.codes_release(message)
+    return str(path)
+
+
+def test_deterministic_read_merges_fields_at_different_heights(tmp_path):
+    # As the IFS 10 m wind with the 2 m temperature, which cfgrib alone cannot merge.
+    forecast = DeterministicHerbieForecast("read", model="ifs", product="oper", date=BASE_DATE)
+    forecast.path = [
+        write_grib(tmp_path / f"step_{step}.grib2", [(165, 10, 4.0 + step), (167, 2, 285.0 + step)], step)  # 10u, 2t
+        for step in (0, 3)
+    ]
+
+    forecast._read_data()
+
+    assert set(forecast.data.data_vars) == {"u10", "t2m"}
+    assert "heightAboveGround" not in forecast.data.coords
+    assert forecast.data.sizes["valid_time"] == 2
+    assert forecast.data["u10"].mean(["latitude", "longitude"]).values == pytest.approx([4.0, 7.0])
+    assert forecast.data["t2m"].mean(["latitude", "longitude"]).values == pytest.approx([285.0, 288.0])
 
 
 def test_ensemble_interpolator_has_four_dimensions():
