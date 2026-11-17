@@ -135,7 +135,7 @@ for i, vessel_data in enumerate(vessel_files):
     
     vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa", method="bspline")
     vessel.add_interpolator("max_bhp", "stw", "tws", "twa", "hs", "wa", method="bspline")
-    # vessel.add_interpolator("leeway", "stw", "tws", "twa", "hs", "wa", method="bspline")
+    vessel.add_interpolator("leeway", "stw", "tws", "twa", "hs", "wa", method="bspline")
     vessel.add_interpolator("sails_contribution", "stw", "tws", "twa", "hs", "wa", method="bspline")
     
     vessels.append(vessel)
@@ -192,7 +192,7 @@ for model, atmos in ATMOS.items():
     atmos.add_interpolator("u10", "valid_time", "latitude", "longitude", fac=global_corr_fac, method="bspline")
     atmos.add_interpolator("v10", "valid_time", "latitude", "longitude", fac=global_corr_fac, method="bspline")
 
-    atmos.add_interpolator(gust_var, "valid_time", "latitude", "longitude", var_key="gust", fac=global_corr_fac, method="bspline")
+    atmos.add_interpolator(gust_var, "valid_time", "latitude", "longitude", var_key="pres", fac=global_corr_fac, method="bspline")
     
     atmos.add_interpolator(gust_var, "valid_time", "latitude", "longitude", var_key="gust", fac=global_corr_fac, method="bspline")
 
@@ -615,8 +615,8 @@ plans = [] # PassagePlan of each routing (timed positions)
 
 zero_fac = 0.
 
-models = ["ifs", "gfs"]
-# models = ["ifs",]
+# models = ["ifs", "gfs"]
+models = ["ifs",]
 # facs = np.asarray([0., 1.]) + zero_fac
 # facs = np.asarray([-1., 0., 1.]) + zero_fac
 # facs = np.asarray([-1., 0., 1.]) + zero_fac
@@ -643,9 +643,9 @@ timeframes = [
 for solve, tf, model, vessel, fac, m, tpg in (
         list(
             # product([0], timeframes, models, vessels, [zero_fac], [1], [topo0]) # NOT SOLVED ortho cst speed refs
-            product([0], timeframes, models[:1], vessels[:1], [zero_fac], [1], [topo0]) # NOT SOLVED ortho cst speed refs
-        ) + list(
-            product([1], timeframes, models, vessels[1:], facs, members, topos) # SOLVED
+        #     product([0], timeframes, models[:1], vessels[:1], [zero_fac], [1], [topo0]) # NOT SOLVED ortho cst speed refs
+        # ) + list(
+            product([1], timeframes, models, vessels[1:2], facs, members, topos) # SOLVED
         )
     ):
                 
@@ -711,7 +711,9 @@ for solve, tf, model, vessel, fac, m, tpg in (
         # constraints=custom_constraints,
         variables=["gust"],  # tws_gust and aws_gust, in kt
         # verbose=False,
-        verbose=True,
+        # options=dict(include_gusts=True),
+        # verbose=True,
+        verbose=False,
     )
     
     report = analysis.run(

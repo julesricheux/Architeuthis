@@ -78,7 +78,7 @@ def dummy_polar(x, p):
     # The engine cannot absorb power: smooth floor at 10 % of the calm water power
     bhp = np.softmax(calm + waves - sails, 0.1 * calm, softness=10.)
 
-    return bhp, {"calm": calm, "waves": waves, "sails": sails}
+    return bhp, {"calm": calm, "waves": waves, "sails": sails, "leeway": 0*sails}
 
 
 # tws100 and twa100: the routing computes them from u100 and v100, as tws and twa from u10 and v10
@@ -88,6 +88,7 @@ vessel = Vessel("dummy_vessel", sfc=196., hotel_load=172., max_power=4100.)  # n
 vessel.add_function("bhp", dummy_polar, polar_inputs, args={"p": parameters})
 vessel.add_function("max_bhp", dummy_polar, polar_inputs, args={"p": parameters})
 vessel.add_function("sails_contribution", dummy_polar, polar_inputs, args={"p": parameters}, output="sails")
+vessel.add_function("leeway", dummy_polar, polar_inputs, args={"p": parameters}, output="leeway")
 
 print(vessel("bhp", {
     "stw": 11., "tws": 20., "twa": 90., "tws100": 25., "twa100": 85.,
@@ -163,7 +164,8 @@ voyage = Voyage(
 def constraints(ctx):
     return [
         ctx["max_bhp"] < ctx["vessel"].max_power,
-        ctx["z"] < 0.,
+        ctx["leeway"] < 1.,
+        # ctx["z"] < 0.,
         # ctx["tws_gust"] < 45.,  # no gust over 45 kt
         # ctx["gust_excess"] < 15.,  # nor gusts 15 kt above the mean wind
         # ctx["slope"] < 0.5,  # nor steep seas
@@ -183,6 +185,7 @@ analysis = RoutingAnalysis(
         "slope",
         "tws100",
         "air_temperature",
+        "leeway",
         {"gust_excess": lambda ctx: ctx["tws_gust"] - ctx["tws"]},
     ],
 )
