@@ -105,13 +105,14 @@ and this project follows Semantic Versioning https://semver.org
 - The latest HRDPS run could not be found, because `HerbieLatest` only looks on AWS and NOMADS by default. `HRDPSForecast` looks on the MSC Datamart.
 ---
 
-## [Unreleased]
+## v0.3.0 - 2026-11-17
 
 ### Fixed
 - The UI showed only an error with dash-mantine-components 3, which needs React 19. The app requires Dash 4.5 and DMC 3, and `ui.py` selects React 19.
 - `RoutingAnalysis.run(solve=False)` no longer calls IPOPT, whose empty problem crashed the kernel with `spral` on Windows. The baseline is evaluated directly.
 - B-spline interpolators on 2-point axes (degree 1) broke the CasADi Hessian, so solves failed. These axes are now raised to the requested degree, with the same values.
 - `DeterministicHerbieForecast` could not read fields at different heights in one download, such as the IFS 10 m wind with the 2 m temperature: cfgrib skipped `t2m` and the files failed to concatenate on `heightAboveGround`. Each file is now read level by level (`forecast.open_grib`) and merged, without cfgrib index files, which Herbie's rewritten subsets made incompatible and which logged a warning per file at each read.
+- The UI failed to open reports without a `member` entry: `json_wrapper.route_to_geojson` takes member 0 by default.
 
 ### Security
 - Credentials can be saved once, encrypted in the credential store of the operating system (Windows Credential Manager, macOS Keychain, Secret Service), with `python -m architeuthis.credentials set` or `credentials.save_credential`. Environment variables still work and take precedence.
@@ -128,7 +129,7 @@ and this project follows Semantic Versioning https://semver.org
 - `input_names(var_key)` on data objects, and the `coord_keys` argument of `add_interpolator`.
 - Data objects hold general models, not only lookup tables: `add_function(var_key, function, inputs, args, output)` registers a function of a dict of inputs and of fixed arguments, such as a semi-empirical polar with fitted parameters, and `add_model` any object called like a table. `common.FunctionModel` wraps the functions; `output` picks a part of their result, such as a component of a `(value, components)` tuple.
 - A `Vessel` without a polar file: `filepath` is optional, for vessels whose polars are functions.
-- `examples/function_polar_routing.py`: a routing with a dummy function-based polar that depends on the IFS air temperature.
+- `examples/function_polar_routing.py`: a routing with a dummy function-based polar, without a polar file, whose sails take the wind averaged between 10 m and 100 m and the IFS air temperature.
 - Vessel models can take more inputs than the polar axes: `sog`, `swh`, `mwa`, `aws`, `awa`, `twd`, and any forecast variable, such as a water temperature or a wave period, which `RoutingAnalysis` reads from the first of `atmosphere`, `wave` and `current` that has a model of it. The wind at any other height, such as `tws100`, `twd100`, `twa100`, `aws100` and `awa100`, is computed relative to the vessel from the forecast variables `u100` and `v100`, as the 10 m wind is.
 
 ### Changed
@@ -136,6 +137,7 @@ and this project follows Semantic Versioning https://semver.org
 - A missing credential stops the download at once, with a ⚠️ status and a `MissingCredentialError` naming it and the command that saves it. The startup log no longer lists missing credentials.
 - The version is written only in `architeuthis/__init__.py`: `pyproject.toml` reads it (`dynamic`), and so does the release check of the tag.
 - `common._USER` renamed `common._USER_HOME`, as it holds the home directory.
+- README rewritten to be shorter, around the two ways of modelling a vessel (polar table or functions) and the inputs the routing provides on its own.
 - `add_interpolator` builds a HybridInterpolatedModel instead of a CasADi interpolant: B-spline tables are built hundreds of times faster, with the same values, and numeric queries are computed with NumPy.
 - `HybridInterpolatedModel` extrapolates by default (`fill_value=None`), where InterpolatedModel returns NaN.
 - The wave direction is interpolated through its east and north components weighted by the wave energy, `uw` and `vw`, added by the new `Forecast.add_wave_components`, instead of `mwd`, whose jump from 360 to 0 deg made the routing unstable. RoutingAnalysis needs the wave interpolators `swh`, `uw` and `vw`; reports still give `mwd`.
