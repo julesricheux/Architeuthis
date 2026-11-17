@@ -72,6 +72,7 @@ ui.py          Dash/Leaflet viewer of forecast fields and saved route reports
 
 toolbox/       geo_utils (route geometry), plot_utils (figures, documented in docs/user_guide.md),
                json_utils (report JSON codec), inspect_tools, string_formatting...
+data/          package data: cloud_genera.json (the 10 WMO genera, étages, precipitation)
 wrappers/      json_wrapper (GeoJSON), leaflet_wrapper (zone layers), legacy provider wrappers
 examples/      simple_routing, long_term_routing, ensemble_routing, post_leg_rewind,
                passage_planning, ifs_route_tested_with_gfs, short_term_routing, comparison_ascat_models,
