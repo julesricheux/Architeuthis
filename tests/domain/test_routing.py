@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
+import architeuthis.numpy as anp
 from architeuthis.common import GUST_DEFAULT_RATIO
 from architeuthis.core import Leg, RoutingAnalysis, Schedule, Voyage
 from architeuthis.toolbox.geo_utils import distances, poly_deviated_route
@@ -572,4 +573,62 @@ def test_missing_forecast_variable_is_reported(atmosphere, wave, current, open_s
     )
 
     with pytest.raises(KeyError, match="water_temperature"):
+        analysis.run(solve=False, solver_options=MUMPS)
+
+
+# ------------------------------------------------------------------------------
+# Wind at other heights
+# ------------------------------------------------------------------------------
+
+
+def wind_polar(suffix):
+    """A polar whose power depends on the true and apparent wind named with `suffix`."""
+
+    def power(x):
+        sails = x[f"aws{suffix}"] * (1.0 + anp.cosd(x[f"awa{suffix}"])) + x[f"tws{suffix}"] * (1.0 + anp.cosd(x[f"twa{suffix}"]))
+        return 1.2 * x["stw"] ** 3 + 5.0 * sails + 0.0 * x[f"twd{suffix}"]
+
+    return power
+
+
+def wind_vessel(suffix):
+    from architeuthis.vessel import Vessel
+
+    vessel = Vessel(f"wind{suffix}", sfc=SFC, hotel_load=HOTEL_LOAD, max_power=1e6, verbose=False)
+    inputs = ["stw"] + [f"{name}{suffix}" for name in ("tws", "twd", "twa", "aws", "awa")]
+    for key in ("bhp", "max_bhp"):
+        vessel.add_function(key, wind_polar(suffix), inputs)
+    vessel.add_function("sails_contribution", lambda x: 0.0 * x["stw"], ["stw"])
+    return vessel
+
+
+def atmosphere_with_wind_at_100_m(factor):
+    from .conftest import uniform_forecast
+
+    return uniform_forecast("atmosphere", u10=5.0, v10=2.0, u100=5.0 * factor, v100=2.0 * factor)
+
+
+@pytest.mark.integration
+def test_wind_at_another_height_is_relative_to_the_vessel(wave, current, open_sea):
+    def baseline(vessel, atmosphere):
+        analysis = RoutingAnalysis(
+            "analysis", vessel, make_voyage(), atmosphere, wave, current, open_sea, verbose=False,
+        )
+        return analysis.run(solve=False, solver_options=MUMPS)
+
+    with_ten = baseline(wind_vessel(""), atmosphere_with_wind_at_100_m(1.0))
+    same_wind = baseline(wind_vessel("100"), atmosphere_with_wind_at_100_m(1.0))
+    stronger_wind = baseline(wind_vessel("100"), atmosphere_with_wind_at_100_m(1.5))
+
+    # Same wind at 100 m as at 10 m: the same quantities, so the same power.
+    assert np.ravel(same_wind["avg_bhp"]) == pytest.approx(np.ravel(with_ten["avg_bhp"]), rel=1e-9)
+    assert not np.allclose(np.ravel(stronger_wind["avg_bhp"]), np.ravel(same_wind["avg_bhp"]))
+
+
+def test_wind_at_a_height_without_its_components_is_reported(atmosphere, wave, current, open_sea):
+    analysis = RoutingAnalysis(
+        "analysis", wind_vessel("100"), make_voyage(), atmosphere, wave, current, open_sea, verbose=False,
+    )
+
+    with pytest.raises(KeyError, match="u100"):
         analysis.run(solve=False, solver_options=MUMPS)

@@ -129,7 +129,7 @@ and this project follows Semantic Versioning https://semver.org
 - Data objects hold general models, not only lookup tables: `add_function(var_key, function, inputs, args, output)` registers a function of a dict of inputs and of fixed arguments, such as a semi-empirical polar with fitted parameters, and `add_model` any object called like a table. `common.FunctionModel` wraps the functions; `output` picks a part of their result, such as a component of a `(value, components)` tuple.
 - A `Vessel` without a polar file: `filepath` is optional, for vessels whose polars are functions.
 - `examples/function_polar_routing.py`: a routing with a dummy function-based polar that depends on the IFS air temperature.
-- Vessel models can take more inputs than the polar axes: `sog`, `swh`, `mwa`, `aws`, `awa`, and any forecast variable, such as a water temperature or a wave period, which `RoutingAnalysis` reads from the first of `atmosphere`, `wave` and `current` that has a model of it.
+- Vessel models can take more inputs than the polar axes: `sog`, `swh`, `mwa`, `aws`, `awa`, `twd`, and any forecast variable, such as a water temperature or a wave period, which `RoutingAnalysis` reads from the first of `atmosphere`, `wave` and `current` that has a model of it. The wind at any other height, such as `tws100`, `twd100`, `twa100`, `aws100` and `awa100`, is computed relative to the vessel from the forecast variables `u100` and `v100`, as the 10 m wind is.
 
 ### Changed
 - Credentials are read when a download needs them rather than at import, so a variable set during a session is used.

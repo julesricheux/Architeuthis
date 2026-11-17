@@ -11,6 +11,7 @@ Created on Mon Jan 19 15:54:06 2026
 
 
 import json
+import re
 
 import casadi as ca
 import numpy as onp
@@ -155,6 +156,10 @@ _REPORT_QUANTITIES = (
 )
 _GUST_QUANTITIES = ("tws_gust", "aws_gust")
 
+# Vessel inputs of the wind at a height, `twa100` for example: computed from the
+# forecast variables `u100` and `v100`, as the 10 m wind is from `u10` and `v10`.
+_WIND_AT_HEIGHT = re.compile(r"^(tws|twd|twa|aws|awa)(\d+)$")
+
 
 def _evaluate_at(opti, expression, parameter_values):
     """
@@ -245,7 +250,10 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
     `awa` (angles in absolute value). Any other input, a water
     temperature or a wave period for example, is a forecast variable:
     it is read from the first of `atmosphere`, `wave` and `current`
-    that has a model with that key.
+    that has a model with that key. The wind at another height,
+    `tws100`, `twd100`, `twa100`, `aws100` or `awa100` for example, is
+    computed from the forecast variables `u100` and `v100`, relative to
+    the vessel as the 10 m wind is.
     """
 
     def __init__(
@@ -427,17 +435,25 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             "mwa": np.abs(mwa),
             "aws": aws,
             "awa": np.abs(awa),
+            "twd": twd,
         }
 
-        # Other inputs (water temperature, wave period...) are forecast
-        # variables, read from the first forecast that has a model of them.
+        # Other inputs are forecast variables, read from the first forecast that
+        # has a model of them: a water temperature, a wave period... The wind at
+        # another height (tws100, twa100, awa100...) is computed from u100 and
+        # v100, relative to the vessel as the 10 m wind is.
         forecast_queries = (
             (self.atmosphere, atmosphere_query),
             (self.wave, wave_query),
             (self.current, environment_query),
         )
         for key in self._vessel_inputs():
-            if key not in vessel_query:
+            if key in vessel_query:
+                continue
+            wind = _WIND_AT_HEIGHT.match(key)
+            if wind is not None:
+                vessel_query |= self._wind_at_height(wind.group(2), cog, sog, forecast_queries)
+            else:
                 vessel_query[key] = self._forecast_variable(key, forecast_queries)
 
         avg_bhp = self.vessel("bhp", vessel_query)
@@ -516,6 +532,35 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             f"{self.vessel.name} needs {key!r}, which no forecast ({names}) "
             "has. Add a model of it, with add_interpolator or add_function."
         )
+
+    def _wind_at_height(self, height, cog, sog, forecast_queries) -> dict:
+        """
+        The wind at a height, relative to the vessel, as vessel inputs.
+
+        `u{height}` and `v{height}` (m/s) are read from the forecasts
+        and give the same quantities as `u10` and `v10`: `tws`, `twd`,
+        `twa`, `aws` and `awa` suffixed with the height, in kt and
+        degrees, angles relative to the COG in absolute value.
+        """
+        u = self._forecast_variable(f"u{height}", forecast_queries) * 3600./1852.
+        v = self._forecast_variable(f"v{height}", forecast_queries) * 3600./1852.
+
+        tws = np.sqrt(u**2. + v**2.)
+        twd = np.mod(np.arctan2d(u, v) + 180., 360.)
+        twa = np.mod(twd - cog + 180., 360.) - 180
+
+        u_aw = tws * np.sind(twa)
+        v_aw = tws * np.cosd(twa) + sog
+        aws = np.sqrt(u_aw**2. + v_aw**2.)
+        awa = np.arctan2d(u_aw, v_aw)
+
+        return {
+            f"tws{height}": tws,
+            f"twd{height}": twd,
+            f"twa{height}": np.abs(twa),
+            f"aws{height}": aws,
+            f"awa{height}": np.abs(awa),
+        }
 
     def _resolve_constraints(self, constraints, ctx) -> list:
         active_constraints = constraints if constraints is not None else self.constraints

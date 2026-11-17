@@ -3,10 +3,12 @@
 Route a voyage with a vessel whose polar is a function, not a NetCDF table.
 
 A minimal version of simple_routing.py: one IFS run, calm water and a dummy
-semi-empirical polar with fitted parameters. The polar depends on stw, tws, twa,
-swh and mwa, and slightly on the air temperature. The routing computes the first
-five; the air temperature is not a routing quantity, so it is read from the
-atmospheric forecast, which has a model of that name.
+semi-empirical polar with fitted parameters. The polar depends on stw, swh, mwa,
+the true wind averaged between 10 m and 100 m, and slightly on the air temperature.
+The routing computes stw, swh and mwa, and the wind at both heights relative to the
+vessel: tws and twa from u10 and v10, tws100 and twa100 from u100 and v100, which the
+atmospheric forecast provides. The air temperature is not a routing quantity, so it
+is read from that forecast too, which has a model of that name.
 
 Needs no polar file and no credentials: IFS comes through Herbie, and the current
 is calm. Run from the repository root, cell by cell (#%%) or as a script.
@@ -51,7 +53,8 @@ def dummy_polar(x, p):
     that the routing differentiates through it.
 
     Args:
-        x: Dict with stw, tws, twa, swh, mwa and air_temperature.
+        x: Dict with stw, tws, twa, tws100, twa100, swh, mwa and
+            air_temperature.
         p: Fitted parameters.
 
     Returns:
@@ -60,9 +63,13 @@ def dummy_polar(x, p):
     calm = p["c_calm"] * x["stw"] ** 3
     # Head seas (mwa = 0) cost the most, following seas nothing
     waves = p["c_wave"] * x["swh"] ** 2 * x["stw"] * (1. + np.cosd(x["mwa"])) / 2.
+    # The sails see the wind between 10 m and 100 m: average of both heights.
+    # The angles are absolute, in [0, 180], so their plain mean has no wrap
+    tws = (x["tws"] + x["tws100"]) / 2.
+    twa = (x["twa"] + x["twa100"]) / 2.
     # Sails pull most on a beam reach, a little more in cold air
     air_density = 1. - p["k_air"] * (x["air_temperature"] - p["t_ref"])
-    sails = p["c_sail"] * air_density * x["tws"] ** 2 * x["stw"] * np.sind(x["twa"]) ** 2
+    sails = p["c_sail"] * air_density * tws ** 2 * x["stw"] * np.sind(twa) ** 2
 
     # The engine cannot absorb power: smooth floor at 10 % of the calm water power
     bhp = np.softmax(calm + waves - sails, 0.1 * calm, softness=10.)
@@ -70,26 +77,29 @@ def dummy_polar(x, p):
     return bhp, {"calm": calm, "waves": waves, "sails": sails}
 
 
-polar_inputs = ["stw", "tws", "twa", "swh", "mwa", "air_temperature"]
+# tws100 and twa100: the routing computes them from u100 and v100, as tws and twa from u10 and v10
+polar_inputs = ["stw", "tws", "twa", "tws100", "twa100", "swh", "mwa", "air_temperature"]
 
 vessel = Vessel("dummy_vessel", sfc=196., hotel_load=172., max_power=4100.)  # no file, no load_data
 vessel.add_function("bhp", dummy_polar, polar_inputs, args={"p": parameters})
 vessel.add_function("max_bhp", dummy_polar, polar_inputs, args={"p": parameters})
 vessel.add_function("sails_contribution", dummy_polar, polar_inputs, args={"p": parameters}, output="sails")
 
-print(vessel("bhp", {"stw": 11., "tws": 20., "twa": 90., "swh": 2., "mwa": 30., "air_temperature": 10.}))
+print(vessel("bhp", {
+    "stw": 11., "tws": 20., "twa": 90., "tws100": 25., "twa100": 85.,
+    "swh": 2., "mwa": 30., "air_temperature": 10.,
+}))
 
 #%% FORECASTS AND TOPOGRAPHY
 
-# IFS 10 m wind and 2 m air temperature
+# IFS 10 m and 100 m wind and 2 m air temperature
 atmosphere = DeterministicHerbieForecast(
-    "wind_ifs", model="ifs", product="oper", regex=r":(?:10[uv]|2t):",
+    "wind_ifs", model="ifs", product="oper", regex=r":(?:10[uv]|100[uv]|2t):",
     fxx=steps, date=recent, **domain,
 )
 atmosphere.load_data()
-atmosphere.add_interpolator("u10", "valid_time", "latitude", "longitude", method="bspline")
-atmosphere.add_interpolator("v10", "valid_time", "latitude", "longitude", method="bspline")
-atmosphere.add_interpolator("t2m", "valid_time", "latitude", "longitude", method="bspline")
+for key in ("u10", "v10", "u100", "v100", "t2m"):
+    atmosphere.add_interpolator(key, "valid_time", "latitude", "longitude", method="bspline")
 
 # The routing reads the inputs of the polar from the atmosphere, wave and current
 # forecasts: the atmosphere gets an air_temperature model, in °C as the polar takes it

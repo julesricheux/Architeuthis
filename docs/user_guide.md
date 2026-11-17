@@ -98,7 +98,7 @@ vessel.add_function(
 )
 ```
 
-The routing gives each vessel model the inputs it names. It computes `stw`, `sog`, `tws`, `twa`, `hs` (or `swh`), `wa` (or `mwa`), `aws` and `awa`, angles in absolute value. Any other input is a forecast variable, read at the middle of each segment from the first of `atmosphere`, `wave` and `current` that has a model with that key, so register it there under the name the vessel uses. A conversion is a function of the forecast itself:
+The routing gives each vessel model the inputs it names. It computes `stw`, `sog`, `tws`, `twd`, `twa`, `hs` (or `swh`), `wa` (or `mwa`), `aws` and `awa`, angles relative to the COG in absolute value. The wind at another height is computed the same way from its components: an input `tws100`, `twd100`, `twa100`, `aws100` or `awa100` makes the routing read `u100` and `v100` (m/s) from the forecasts, so `atmosphere.add_interpolator("u100", ...)` and `"v100"` are all it takes; any height works. Any other input is a forecast variable, read at the middle of each segment from the first of `atmosphere`, `wave` and `current` that has a model with that key, so register it there under the name the vessel uses. A conversion is a function of the forecast itself:
 
 ```python
 wave.add_interpolator("mwp", "valid_time", "latitude", "longitude")
