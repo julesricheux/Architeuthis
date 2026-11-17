@@ -20,7 +20,7 @@ import pandas as pd
 import architeuthis.numpy as np
 
 from abc import abstractmethod
-from typing import Callable, Optional, Union
+from typing import Callable, Mapping, Optional, Sequence, Union
 from architeuthis.vessel import POLAR_KEYS, Vessel
 from architeuthis.common import _banner, status
 from architeuthis.optimization import Opti
@@ -155,10 +155,108 @@ _REPORT_QUANTITIES = (
     "tim", "lat", "lon", "ctim", "clat", "clon", "d",
 )
 _GUST_QUANTITIES = ("tws_gust", "aws_gust")
+# Every quantity of `_passage`, which a variable may only name as itself.
+_PASSAGE_QUANTITIES = frozenset(_REPORT_QUANTITIES)
 
 # Vessel inputs of the wind at a height, `twa100` for example: computed from the
 # forecast variables `u100` and `v100`, as the 10 m wind is from `u10` and `v10`.
 _WIND_AT_HEIGHT = re.compile(r"^(tws|twd|twa|aws|awa)(\d+)$")
+
+# Where a variable named by a model key is looked for, in this order, unless
+# its specification names the source: "wave.slope".
+VARIABLE_SOURCES = ("atmosphere", "wave", "current", "vessel")
+
+# Report entries and context keys that are not passage quantities, which an
+# additional variable cannot be named.
+_RESERVED_NAMES = frozenset((
+    "etd", "eta", "transit_sog", "transit_time", "init_fac", "pos", "cpos",
+    "dist", "dist_rel", "status", "constraint_violations",
+    "max_constraint_violation", "plan", "vessel", "opti",
+    # default tags, which would replace them in the report
+    "solve", "model", "member",
+))
+
+KNOTS_PER_METER_PER_SECOND = 3600. / 1852.
+
+# A variable: a name, a model key or callable, or a list or dict of them.
+VariableSpecification = Union[str, Callable[[dict], object]]
+Variables = Union[
+    None,
+    str,
+    Mapping[str, Optional[VariableSpecification]],
+    Sequence[Union[str, Mapping[str, Optional[VariableSpecification]]]],
+]
+
+
+def normalize_variables(variables: Variables) -> dict:
+    """
+    Additional variables as a dict of names and specifications.
+
+    A name alone is its own specification: `"gust"` is
+    `{"gust": "gust"}`, and so is `{"gust": None}`. Its source prefix
+    is not part of the name: `"wave.slope"` is
+    `{"slope": "wave.slope"}`.
+
+    Args:
+        variables: None, a name, a dict of names and specifications,
+            or a list of names and of such dicts. A specification is a
+            model key, optionally prefixed by its source as in
+            `"wave.slope"`, or a callable of the context.
+
+    Returns:
+        A new dict of names and specifications, in the given order.
+
+    Example:
+        >>> normalize_variables(["tws_gust", "wave.slope"])
+        {'tws_gust': 'tws_gust', 'slope': 'wave.slope'}
+    """
+    if variables is None:
+        return {}
+    if isinstance(variables, str):
+        entries = [(variables, None)]
+    elif isinstance(variables, Mapping):
+        entries = list(variables.items())
+    else:
+        entries = []
+        for entry in variables:
+            if isinstance(entry, str):
+                entries.append((entry, None))
+            elif isinstance(entry, Mapping):
+                entries.extend(entry.items())
+            else:
+                raise TypeError(
+                    "variables are names, or dicts of names and specifications, "
+                    f"not {entry!r}."
+                )
+
+    normalized = {}
+    for name, specification in entries:
+        if not isinstance(name, str) or not name:
+            raise TypeError(f"A variable name must be a non-empty string, not {name!r}.")
+        if specification is None:
+            specification = name
+            prefix, dot, key = name.partition(".")
+            if dot and prefix in VARIABLE_SOURCES and key:
+                name = key
+        if not (isinstance(specification, str) or callable(specification)):
+            raise TypeError(
+                f"Variable {name!r}: a specification is a model key, such as "
+                f"'wave.slope', or a callable of the context, not {specification!r}."
+            )
+        normalized[name] = specification
+    return normalized
+
+
+def _describe_variables(variables: dict) -> dict:
+    """
+    JSON-friendly copy of normalized variables.
+
+    Callables are given by their name.
+    """
+    return {
+        name: specification if isinstance(specification, str) else getattr(specification, "__name__", "function")
+        for name, specification in variables.items()
+    }
 
 
 def _evaluate_at(opti, expression, parameter_values):
@@ -254,6 +352,51 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
     `tws100`, `twd100`, `twa100`, `aws100` or `awa100` for example, is
     computed from the forecast variables `u100` and `v100`, relative to
     the vessel as the 10 m wind is.
+
+    `variables` asks for more quantities along the passage, which the
+    vessel models need not use: they are computed at segment midpoints,
+    passed to the constraints in `ctx` and stored in the report, under
+    their name. It is a name, a list of names, or a dict of names and
+    specifications, and `run` and `evaluate` can add more. A
+    specification is:
+
+    - A model key, such as `"gust"` or `"slope"`: the first of
+      `atmosphere`, `wave`, `current` and `vessel` with a model of that
+      key is queried, in the units of the model. A prefix picks the
+      source: `"atmosphere.gust"`, `"vessel.leeway"`. Forecasts are
+      queried at the time and position of the segments, the vessel
+      with the inputs its models name, as for the polars.
+    - A quantity that the routing computes: `tws_gust` (kt, from the
+      atmospheric model `gust` in m/s, or `tws * GUST_DEFAULT_RATIO`
+      without it) and `aws_gust` (kt), the wind at another height
+      (`tws100`, `twd100`, `twa100`, `aws100`, `awa100`, angles signed
+      as `twa`), or any quantity of the report, such as `tws`.
+    - A callable `ctx -> expression`, given the quantities of the
+      passage and the variables listed before it, with `vessel`.
+
+    `options={"include_gusts": True}`, the default, still adds
+    `tws_gust` and `aws_gust`.
+
+    Example:
+        >>> wave.add_function(
+        ...     "slope",
+        ...     lambda x: wave("swh", x) / wave("mwp", x),
+        ...     inputs=["valid_time", "latitude", "longitude"],
+        ... )
+        >>> analysis = RoutingAnalysis(
+        ...     "analysis", vessel, voyage, atmosphere, wave, current,
+        ...     topography,
+        ...     variables=[
+        ...         "tws_gust",
+        ...         "slope",
+        ...         {"excess": lambda c: c["tws_gust"] - c["tws"]},
+        ...     ],
+        ...     constraints=lambda ctx: [
+        ...         ctx["max_bhp"] < ctx["vessel"].max_power,
+        ...         ctx["z"] < 0.,
+        ...         ctx["excess"] < 15.,
+        ...     ],
+        ... )
     """
 
     def __init__(
@@ -269,6 +412,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         wave_member: float = None,
         constraints: Optional[Callable[[dict], list]] = default_routing_constraints,
         options: Optional[dict] = None,
+        variables: Variables = None,
         verbose: bool = True,
     ):
         self.vessel = vessel
@@ -282,6 +426,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         self.wave_member = wave_member
         self.constraints = constraints
         self.options = options if options is not None else {"include_gusts": True}
+        self.variables = normalize_variables(variables)
 
         self.report = None
         self.passage_plan = None
@@ -312,22 +457,71 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             if eta > f99:
                 status(f"⚠️ Warning: ETA later than furthest {forecast.name.upper()} forecast valid time.")
 
-    def _gust_options(self):
-        include_gusts = ("include_gusts" in self.options.keys() and self.options["include_gusts"])
-        interpolate_gust = include_gusts and "gust" in self.atmosphere.interpolators.keys()
+    def _variables(self, variables: Variables = None) -> dict:
+        """
+        Additional variables of a run or an evaluation.
 
-        if include_gusts and not interpolate_gust:
-            status("🌪️ Info: gust not found in interpolators. Defaulting to the standard ratio.")
+        These are the gusts of `options["include_gusts"]`, then the
+        variables of this analysis, then `variables`.
+        """
+        gusts = {key: key for key in _GUST_QUANTITIES} if self.options.get("include_gusts", False) else {}
+        return gusts | normalize_variables(self.variables) | normalize_variables(variables)
 
-        return include_gusts, interpolate_gust
+    def _resolve_variable(self, name: str, specification) -> tuple:
+        """
+        How a variable is computed: `(kind, source, key)`.
 
-    def _passage(self, tim, ctim, lat, lon, include_gusts, interpolate_gust) -> dict:
+        `kind` is "function", "quantity" (of the passage), "derived"
+        (gusts, wind at a height) or "model" (of `source`).
+        """
+        if name in _RESERVED_NAMES:
+            raise ValueError(f"{name!r} is a reserved report entry: give this variable another name.")
+
+        if callable(specification):
+            resolved = ("function", None, specification)
+        else:
+            prefix, dot, rest = specification.partition(".")
+            source, key = (prefix, rest) if dot and prefix in VARIABLE_SOURCES else (None, specification)
+            if source is not None:
+                if key not in getattr(self, source).models:
+                    raise KeyError(
+                        f"Variable {name!r}: {getattr(self, source).name} ({source}) has no "
+                        f"model {key!r}. Add it with add_interpolator or add_function."
+                    )
+                resolved = ("model", source, key)
+            elif key in _PASSAGE_QUANTITIES:
+                resolved = ("quantity", None, key)
+            elif key in _GUST_QUANTITIES or _WIND_AT_HEIGHT.match(key):
+                resolved = ("derived", None, key)
+            else:
+                source = next((source for source in VARIABLE_SOURCES if key in getattr(self, source).models), None)
+                if source is None:
+                    names = ", ".join(f"{getattr(self, source).name} ({source})" for source in VARIABLE_SOURCES)
+                    raise KeyError(
+                        f"Variable {name!r}: {key!r} is not a routing quantity, and no "
+                        f"model of {names} has this key. Add it with add_interpolator "
+                        "or add_function."
+                    )
+                resolved = ("model", source, key)
+
+        if name in _PASSAGE_QUANTITIES and resolved != ("quantity", None, name):
+            raise ValueError(
+                f"{name!r} is already computed by the routing: give the variable "
+                f"{specification!r} another name."
+            )
+        return resolved
+
+    def _passage(self, tim, ctim, lat, lon, variables: Optional[dict] = None) -> dict:
         """
         Symbolic model of a passage through nodes `tim`, `lat`, `lon`.
 
         The weather is sampled at segment midpoints at times `ctim`. All
-        inputs are column vectors.
+        inputs are column vectors. `variables`, normalized, are added
+        to the quantities, in their order.
         """
+        variables = {} if variables is None else variables
+        plan = [(name, *self._resolve_variable(name, specification)) for name, specification in variables.items()]
+
         clon = midpoints(lon)
         clat = midpoints(lat)
 
@@ -381,11 +575,6 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
 
         tws = np.sqrt(u10**2. + v10**2.) * 3600./1852.
         twd = np.mod(np.arctan2d(u10, v10)+180., 360.)
-
-        if include_gusts and interpolate_gust:
-            tws_gust = self.atmosphere("gust", atmosphere_query) * 3600./1852.
-        else:
-            tws_gust = tws * GUST_DEFAULT_RATIO
 
         # Direction the waves come from, as twd. The components weigh swh**2, and
         # the small offset keeps arctan2 differentiable where they vanish: land,
@@ -447,7 +636,11 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             (self.wave, wave_query),
             (self.current, environment_query),
         )
-        for key in self._vessel_inputs():
+        vessel_keys = list(POLAR_KEYS) + [
+            key for _, kind, source, key in plan
+            if kind == "model" and source == "vessel" and key not in POLAR_KEYS
+        ]
+        for key in self._vessel_inputs(vessel_keys):
             if key in vessel_query:
                 continue
             wind = _WIND_AT_HEIGHT.match(key)
@@ -497,22 +690,65 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             "clon": clon,
         }
 
-        if include_gusts:
-            u_aw_gust = tws_gust * np.sind(twa)
-            v_aw_gust = tws_gust * np.cosd(twa) + sog
-            passage |= {
-                "tws_gust": tws_gust,
-                "aws_gust": np.sqrt(u_aw_gust**2. + v_aw_gust**2.),
-            }
+        # Additional variables, in their order: a callable sees those before it
+        model_queries = {
+            "atmosphere": atmosphere_query,
+            "wave": wave_query,
+            "current": environment_query,
+            "vessel": vessel_query,
+        }
+        derived = {}
+        for name, kind, source, key in plan:
+            if kind == "model":
+                passage[name] = getattr(self, source)(key, model_queries[source])
+            elif kind == "quantity":
+                passage[name] = passage[key]
+            elif kind == "derived":
+                passage[name] = self._derived_variable(key, passage, derived, atmosphere_query, forecast_queries)
+            else:
+                passage[name] = key({"vessel": self.vessel} | passage)
 
         return passage
 
-    def _vessel_inputs(self) -> list:
+    def _derived_variable(self, key, passage, derived, atmosphere_query, forecast_queries):
+        """
+        A quantity that the routing computes on request.
+
+        `derived` caches them for one passage, so that `aws_gust` and
+        `tws_gust` read the gust once and in kt, whatever the names of
+        the variables.
+        """
+        if key in derived:
+            return derived[key]
+
+        if key == "tws_gust":
+            if "gust" in self.atmosphere.models:
+                value = self.atmosphere("gust", atmosphere_query) * KNOTS_PER_METER_PER_SECOND
+            else:
+                status("🌪️ Info: gust not found in interpolators. Defaulting to the standard ratio.")
+                value = passage["tws"] * GUST_DEFAULT_RATIO
+        elif key == "aws_gust":
+            tws_gust = self._derived_variable("tws_gust", passage, derived, atmosphere_query, forecast_queries)
+            u_aw_gust = tws_gust * np.sind(passage["twa"])
+            v_aw_gust = tws_gust * np.cosd(passage["twa"]) + passage["sog"]
+            value = np.sqrt(u_aw_gust**2. + v_aw_gust**2.)
+        else:
+            height = _WIND_AT_HEIGHT.match(key).group(2)
+            wind = self._wind_at_height(
+                height, passage["cog"], passage["sog"], forecast_queries, absolute=False,
+            )
+            derived |= wind
+            value = wind[key]
+
+        derived[key] = value
+        return value
+
+    def _vessel_inputs(self, var_keys: Sequence[str] = POLAR_KEYS) -> list:
         """
         Inputs of the vessel models that routing queries, in order.
         """
         inputs = []
-        for var_key in POLAR_KEYS:
+        for var_key in var_keys:
             for name in self.vessel.input_names(var_key):
                 if name not in inputs:
                     inputs.append(name)
@@ -533,14 +769,15 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             "has. Add a model of it, with add_interpolator or add_function."
         )
 
-    def _wind_at_height(self, height, cog, sog, forecast_queries) -> dict:
+    def _wind_at_height(self, height, cog, sog, forecast_queries, absolute: bool = True) -> dict:
         """
         The wind at a height, relative to the vessel, as vessel inputs.
 
         `u{height}` and `v{height}` (m/s) are read from the forecasts
         and give the same quantities as `u10` and `v10`: `tws`, `twd`,
         `twa`, `aws` and `awa` suffixed with the height, in kt and
-        degrees, angles relative to the COG in absolute value.
+        degrees, angles relative to the COG in absolute value, or
+        signed as in reports if `absolute` is False.
         """
         u = self._forecast_variable(f"u{height}", forecast_queries) * 3600./1852.
         v = self._forecast_variable(f"v{height}", forecast_queries) * 3600./1852.
@@ -557,9 +794,9 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         return {
             f"tws{height}": tws,
             f"twd{height}": twd,
-            f"twa{height}": np.abs(twa),
+            f"twa{height}": np.abs(twa) if absolute else twa,
             f"aws{height}": aws,
-            f"awa{height}": np.abs(awa),
+            f"awa{height}": np.abs(awa) if absolute else awa,
         }
 
     def _resolve_constraints(self, constraints, ctx) -> list:
@@ -572,7 +809,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         return []
 
     @staticmethod
-    def _report(values: dict, etd, eta, init_fac, reference_distance, status, include_gusts) -> RoutingReport:
+    def _report(values: dict, etd, eta, init_fac, reference_distance, status, variables=()) -> RoutingReport:
         transit_time = (eta - etd) / 3600.
         dist = float(onp.sum(values["d"]))
 
@@ -598,8 +835,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             "status": status,
         }
 
-        if include_gusts:
-            report |= {key: values[key] for key in _GUST_QUANTITIES}
+        report |= {name: values[name] for name in variables}
 
         return report
 
@@ -636,6 +872,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
                 for zone in getattr(self.topography, "exclusion_zones", [])
             ],
             "options": dict(self.options),
+            "variables": _describe_variables(self.variables),
         }
 
     def _time_grid(self, skip_tim: int):
@@ -697,6 +934,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         constraints: Optional[Union[Callable[[dict], list], list]] = None,
         tags: Optional[dict] = None,
         callback: Optional[Callable[[int], object]] = None,
+        variables: Variables = None,
     ) -> RoutingReport:
         """
         Optimize the positions of the voyage.
@@ -723,6 +961,9 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             callback: Called at each IPOPT iteration with the iteration
                 number, for example to report progress in a GUI. See
                 `Opti.solve`.
+            variables: Additional variables of this run, added to those
+                of the analysis (see the class): computed along the
+                passage, in `ctx` and in the report.
 
         Returns:
             A `RoutingReport`, a dict of numeric arrays and scalars,
@@ -732,7 +973,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         if self.voyage is None:
             raise ValueError("RoutingAnalysis.run needs a voyage. To evaluate a passage plan without one, use evaluate.")
 
-        include_gusts, interpolate_gust = self._gust_options()
+        run_variables = self._variables(variables)
 
         etd = self.voyage.etd
         eta = self.voyage.eta
@@ -771,7 +1012,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         lon = np.concatenate((lon0[:1], lon0[1:-1] + vlon, lon0[-1:]))
         lat = np.concatenate((lat0[:1], lat0[1:-1] + vlat, lat0[-1:]))
 
-        passage = self._passage(tim, ctim, lat, lon, include_gusts, interpolate_gust)
+        passage = self._passage(tim, ctim, lat, lon, run_variables)
 
         # --- Dynamic Constraints Context ---
         ctx = {"vessel": self.vessel, "opti": opti} | passage
@@ -817,7 +1058,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             init_fac=init_fac,
             reference_distance=self.voyage.distance,
             status=solve_status,
-            include_gusts=include_gusts,
+            variables=run_variables,
         )
 
         run_tags = self._default_tags(solve) | (tags or {})
@@ -832,6 +1073,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
                 "skip_tim": skip_tim,
                 "max_iter": max_iter,
                 "solve": solve,
+                "variables": _describe_variables(normalize_variables(variables)),
             },
         )
 
@@ -842,6 +1084,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         plan: Union[PassagePlan, dict],
         constraints: Optional[Union[Callable[[dict], list], list]] = None,
         tags: Optional[dict] = None,
+        variables: Variables = None,
     ) -> RoutingReport:
         """
         Open-loop evaluation of a passage plan.
@@ -865,6 +1108,8 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             tags: Entries added to the report, as in `run`. `plan`, the
                 name of the plan, is also set by default when `plan` is
                 a `PassagePlan`.
+            variables: Additional variables of this evaluation, added
+                to those of the analysis, as in `run`.
 
         Returns:
             A report with the keys of `run`, `status` 0 (not solved) and
@@ -879,7 +1124,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             etd, eta = plan.etd, plan.eta
             reference_distance = plan.route.distance
 
-        include_gusts, interpolate_gust = self._gust_options()
+        evaluation_variables = self._variables(variables)
         self.check_valid_time(etd, eta)
 
         npts = len(plan_tim)
@@ -888,7 +1133,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         lat = ca.MX.sym("lat", npts, 1)
         lon = ca.MX.sym("lon", npts, 1)
 
-        passage = self._passage(tim, ctim, lat, lon, include_gusts, interpolate_gust)
+        passage = self._passage(tim, ctim, lat, lon, evaluation_variables)
 
         ctx = {"vessel": self.vessel, "opti": None} | passage
         violations = [
@@ -917,7 +1162,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             init_fac=None,
             reference_distance=reference_distance,
             status=0,
-            include_gusts=include_gusts,
+            variables=evaluation_variables,
         )
         report["constraint_violations"] = constraint_violations
         report["max_constraint_violation"] = max(constraint_violations, default=0.)

@@ -66,7 +66,7 @@ LONGITUDE = np.arange(-100.0, 12.0, 3.0)
 FIELDS = {
     "u10": 4.0, "v10": 1.0, "fg10": 11.0, "gust": 10.0, "msl": 101000.0, "prmsl": 101000.0,
     "swh": 2.5, "mwd": 250.0, "dirpw": 240.0, "uo": 0.1, "vo": 0.05,
-    "t2m": 285.0, "u100": 5.0, "v100": 1.5,
+    "t2m": 285.0, "u100": 5.0, "v100": 1.5, "mwp": 8.0,
 }
 
 
@@ -86,7 +86,7 @@ def deterministic_names(forecast):
     """The fields that the `regex` of a forecast asks of its provider."""
     regex = forecast.regex or ""
     if forecast.model == "ifs":
-        tokens = {"u10": ":10u:", "v10": ":10v:", "fg10": ":10fg:", "msl": ":msl:", "u100": ":100u:", "v100": ":100v:", "t2m": ":2t:", "swh": ":swh:", "mwd": ":mwd:"}
+        tokens = {"u10": ":10u:", "v10": ":10v:", "fg10": ":10fg:", "msl": ":msl:", "u100": ":100u:", "v100": ":100v:", "t2m": ":2t:", "swh": ":swh:", "mwd": ":mwd:", "mwp": ":mwp:"}
         return [name for name, token in tokens.items() if re.search(regex, token)]
     if forecast.model == "gfs":
         return ["u10", "v10"] + (["gust"] if "GUST" in regex else [])
@@ -288,6 +288,12 @@ def test_function_polar_routing_reads_the_air_temperature(example):
     assert {report["vessel"] for report in reports} == {"dummy_vessel"}
     assert variables["vessel"].path is None
     assert "air_temperature" in variables["atmosphere"].models
+
+    # Variables that the polar does not use are computed and reported all the same.
+    for report in reports:
+        assert np.all(np.asarray(report["slope"]) > 0.0)
+        assert report["gust_excess"] == pytest.approx(np.asarray(report["tws_gust"]) - np.asarray(report["tws"]))
+        assert {"aws_gust", "tws100", "air_temperature"} <= set(report)
 
     # Colder air, more sail power, less brake power.
     query = {"stw": 11.0, "tws": 20.0, "twa": 90.0, "tws100": 25.0, "twa100": 85.0, "swh": 2.0, "mwa": 30.0}
