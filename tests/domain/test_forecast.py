@@ -19,6 +19,7 @@ from architeuthis.forecast import (
     EnsembleHerbieForecast,
     Forecast,
     HerbieForecast,
+    open_grib,
 )
 
 BASE_DATE = dt.datetime(2025, 1, 15)
@@ -286,6 +287,24 @@ def test_deterministic_read_merges_fields_at_different_heights(tmp_path):
     assert forecast.data.sizes["valid_time"] == 2
     assert forecast.data["u10"].mean(["latitude", "longitude"]).values == pytest.approx([4.0, 7.0])
     assert forecast.data["t2m"].mean(["latitude", "longitude"]).values == pytest.approx([285.0, 288.0])
+
+
+def test_reading_the_gust_with_the_wind_gives_no_xarray_warning(tmp_path):
+    # The IFS 10 m wind and gust: cfgrib merges them with a default of xarray that
+    # is about to change, which warned once per field and file.
+    import warnings
+
+    path = write_grib(tmp_path / "step_3.grib2", [(165, 10, 4.0), (166, 10, 1.0), (49, 10, 11.0), (167, 2, 285.0)], 3)
+
+    # Recorded, not raised: cfgrib catches any error of its merges.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        data = open_grib(path, backend_kwargs={"indexpath": ""}, decode_timedelta=False)
+
+    assert not [warning for warning in caught if "future version of xarray" in str(warning.message)]
+    assert set(data.data_vars) == {"u10", "v10", "fg10", "t2m"}
+    assert float(data["fg10"].mean()) == pytest.approx(11.0)
+    assert float(data["u10"].mean()) == pytest.approx(4.0)
 
 
 def test_ensemble_interpolator_has_four_dimensions():

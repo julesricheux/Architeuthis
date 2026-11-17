@@ -398,7 +398,7 @@ def plot_report(report, save_as=None, show=True, figsize=A4_PORTRAIT, dpi=300, y
     Values are per segment and drawn as steps centered on `ctim`. The
     time axis runs from the first to the last node of `tim`. The gust
     lines are left out if the report has no gust, which happens with
-    `options={"include_gusts": False}`.
+    `options={}` without `"gust"` in `variables`.
 
     Args:
         report: A report of `RoutingAnalysis.run` or `evaluate`, or the
@@ -798,9 +798,9 @@ def plot_fuel_quantiles(reports, daily=False, converged_only=True, figsize=(8, 4
         frame = frame[frame["status"] == 1]
 
     quantity = "daily_fuel" if daily else "fuel"
-    quantiles = frame.groupby("eta")[quantity].quantile(
-        [0.01, 0.05, 0.25, 0.50, 0.75, 0.95, 0.99]
-    ).unstack()
+    levels = [0.01, 0.05, 0.25, 0.50, 0.75, 0.95, 0.99]
+    # Every column even without reports, when none converged for example: the axes stay empty.
+    quantiles = frame.groupby("eta")[quantity].quantile(levels).unstack().reindex(columns=levels)
     x = _times(quantiles.index.values)
 
     with plot_style():

@@ -632,3 +632,197 @@ def test_wind_at_a_height_without_its_components_is_reported(atmosphere, wave, c
 
     with pytest.raises(KeyError, match="u100"):
         analysis.run(solve=False, solver_options=MUMPS)
+
+
+# ------------------------------------------------------------------------------
+# Additional variables
+# ------------------------------------------------------------------------------
+
+KNOTS = 3600.0 / 1852.0
+
+
+def wave_with_period(period):
+    """The wave fixture plus a mean wave period, and a wave slope computed from it."""
+    from .conftest import uniform_forecast
+
+    forecast = uniform_forecast("wave", swh=1.5, mwd=270.0, mwp=period)
+    forecast.add_wave_components()
+    for key in ("uw", "vw"):
+        forecast.add_interpolator(key, "valid_time", "latitude", "longitude")
+    forecast.add_function(
+        "slope",
+        lambda x: forecast("swh", x) / forecast("mwp", x),
+        inputs=["valid_time", "latitude", "longitude"],
+    )
+    return forecast
+
+
+def test_variables_take_names_lists_and_dicts():
+    from architeuthis.core import normalize_variables
+
+    def excess(ctx):
+        return ctx["tws_gust"] - ctx["tws"]
+
+    assert normalize_variables(None) == {}
+    assert normalize_variables("slope") == {"slope": "slope"}
+    assert normalize_variables({"pres": None, "slope": "wave.slope"}) == {"pres": "pres", "slope": "wave.slope"}
+    # "gust" asks for the gusts in kt, the gust model itself is named otherwise
+    assert normalize_variables("gust") == {"tws_gust": "tws_gust", "aws_gust": "aws_gust"}
+    assert normalize_variables({"gust_ms": "atmosphere.gust"}) == {"gust_ms": "atmosphere.gust"}
+    assert normalize_variables(["tws_gust", {"excess": excess}]) == {"tws_gust": "tws_gust", "excess": excess}
+    # A source prefix picks where the model is read, and is not part of the name
+    assert normalize_variables(["wave.slope"]) == {"slope": "wave.slope"}
+    assert normalize_variables({"wave_slope": "wave.slope"}) == {"wave_slope": "wave.slope"}
+
+    with pytest.raises(TypeError):
+        normalize_variables([3])
+    with pytest.raises(TypeError):
+        normalize_variables({"gust": 3})
+
+
+class TestAdditionalVariables:
+    def test_gusts_can_be_asked_without_the_option(self, route, open_sea):
+        report = route(open_sea, solve=False, analysis_options={"options": {}, "variables": ["tws_gust"]})
+
+        assert report["tws_gust"] == pytest.approx(report["tws"] * GUST_DEFAULT_RATIO)
+        assert "aws_gust" not in report
+
+    def test_apparent_gusts_alone_still_come_from_the_gust(self, route, open_sea):
+        report = route(open_sea, solve=False, analysis_options={"options": {}, "variables": ["aws_gust"]})
+        reference = route(open_sea, solve=False)
+
+        assert "tws_gust" not in report
+        assert report["aws_gust"] == pytest.approx(reference["aws_gust"])
+
+    def test_gust_of_the_forecast_is_read_in_knots(self, analyse, open_sea):
+        from .conftest import uniform_forecast
+
+        analysis = analyse(open_sea, options={}, variables=["tws_gust", {"gust_ms": "atmosphere.gust"}])
+        analysis.atmosphere = uniform_forecast("atmosphere", u10=5.0, v10=2.0, gust=10.0)
+        report = analysis.run(solve=False, solver_options=MUMPS)
+
+        assert np.ravel(report["tws_gust"]) == pytest.approx(10.0 * KNOTS)
+        # Asked by its model key, a forecast variable keeps the units of its model
+        assert np.ravel(report["gust_ms"]) == pytest.approx(10.0)
+
+    def test_gust_asks_for_the_true_and_apparent_gusts(self, route, open_sea):
+        report = route(open_sea, solve=False, analysis_options={"options": {}, "variables": ["gust"]})
+        reference = route(open_sea, solve=False)
+
+        assert "gust" not in report
+        assert report["tws_gust"] == pytest.approx(reference["tws_gust"])
+        assert report["aws_gust"] == pytest.approx(reference["aws_gust"])
+
+    @pytest.mark.parametrize("include_gusts", [True, False])
+    def test_the_gust_option_is_deprecated(self, analyse, open_sea, include_gusts):
+        with pytest.warns(DeprecationWarning, match=r"variables=\['gust'\]"):
+            analyse(open_sea, options={"include_gusts": include_gusts})
+
+    def test_without_the_gust_option_nothing_is_deprecated(self, analyse, open_sea):
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            analyse(open_sea)
+            analyse(open_sea, options={}, variables=["gust"])
+
+    def test_a_forecast_function_is_computed_and_reported(self, analyse, open_sea):
+        analysis = analyse(open_sea, variables=["slope", {"period": "wave.mwp"}])
+        analysis.wave = wave_with_period(6.0)
+        report = analysis.run(solve=False, solver_options=MUMPS)
+
+        assert np.ravel(report["slope"]) == pytest.approx(1.5 / 6.0)
+        assert np.ravel(report["period"]) == pytest.approx(6.0)
+        assert len(np.ravel(report["slope"])) == len(np.ravel(report["ctim"]))
+        # The gusts of the default options are still there
+        assert "tws_gust" in report and "aws_gust" in report
+
+    def test_a_callable_sees_the_variables_before_it(self, route, open_sea):
+        report = route(open_sea, solve=False, analysis_options={
+            "variables": {"tws_gust": None, "excess": lambda ctx: ctx["tws_gust"] - ctx["tws"]},
+        })
+
+        assert report["excess"] == pytest.approx(report["tws"] * (GUST_DEFAULT_RATIO - 1.0))
+
+    def test_variables_are_in_the_constraint_context(self, analyse, open_sea):
+        analysis = analyse(open_sea, variables=["slope"])
+        analysis.wave = wave_with_period(6.0)
+        baseline = analysis.run(solve=False, solver_options=MUMPS)
+
+        report = analysis.evaluate(baseline, constraints=lambda ctx: [ctx["slope"] < 0.1])
+
+        assert report["max_constraint_violation"] == pytest.approx(0.25 - 0.1)
+        assert report["slope"] == pytest.approx(baseline["slope"])
+
+    @pytest.mark.integration
+    def test_a_constraint_on_a_variable_is_enforced(self, analyse, island):
+        def keep_clear(ctx):
+            return [ctx["max_bhp"] < ctx["vessel"].max_power, ctx["clearance"] < 0.0]
+
+        analysis = analyse(island, constraints=keep_clear, variables={"clearance": lambda ctx: ctx["z"]})
+        report = analysis.run(max_iter=500, solver_options=MUMPS)
+
+        assert report["status"] in (0, 1)
+        assert np.max(report["z"]) < 1e-2
+        assert report["clearance"] == pytest.approx(report["z"])
+
+    def test_a_vessel_model_gets_its_inputs_from_the_forecasts(self, analyse, vessel, current, open_sea):
+        ship = copy.deepcopy(vessel)
+        ship.add_function(
+            "comfort",
+            lambda x: x["tws"] + x["water_temperature"],
+            inputs=["tws", "water_temperature"],
+        )
+        analysis = analyse(open_sea, vessel=ship, variables=["vessel.comfort"])
+        analysis.current = current_with_temperature(current, 12.0)
+        report = analysis.run(solve=False, solver_options=MUMPS)
+
+        assert np.ravel(report["comfort"]) == pytest.approx(np.ravel(report["tws"]) + 12.0)
+
+    def test_wind_at_another_height_is_reported_signed(self, analyse, open_sea):
+        analysis = analyse(open_sea, variables=["tws100", "twa100", "awa100"])
+        analysis.atmosphere = atmosphere_with_wind_at_100_m(1.0)
+        report = analysis.run(solve=False, solver_options=MUMPS)
+
+        assert report["tws100"] == pytest.approx(report["tws"])
+        assert report["twa100"] == pytest.approx(report["twa"])
+        assert report["awa100"] == pytest.approx(report["awa"])
+
+    def test_run_and_evaluate_add_their_own_variables(self, analyse, open_sea):
+        analysis = analyse(open_sea, options={}, variables=["tws_gust"])
+        report = analysis.run(solve=False, solver_options=MUMPS, variables={"wind": "tws"})
+        evaluation = analysis.evaluate(report, variables=["aws_gust"])
+
+        assert {"tws_gust", "wind"} <= set(report) and "aws_gust" not in report
+        assert report["wind"] == pytest.approx(report["tws"])
+        assert {"tws_gust", "aws_gust"} <= set(evaluation) and "wind" not in evaluation
+        assert analysis.variables == {"tws_gust": "tws_gust"}
+
+    def test_variables_are_described_in_the_passage_plan(self, analyse, open_sea):
+        import json
+
+        def excess(ctx):
+            return ctx["tws_gust"] - ctx["tws"]
+
+        analysis = analyse(open_sea, variables={"tws_gust": None, "excess": excess})
+        analysis.run(solve=False, solver_options=MUMPS, variables=["swh"])
+
+        metadata = analysis.passage_plan.metadata
+        assert metadata["variables"] == {"tws_gust": "tws_gust", "excess": "excess"}
+        assert metadata["run"]["variables"] == {"swh": "swh"}
+        json.dumps(metadata)
+
+    @pytest.mark.parametrize(
+        "variables, error, match",
+        [
+            (["unknown"], KeyError, "unknown"),
+            (["wave.unknown"], KeyError, "unknown"),
+            ({"tws": "tws_gust"}, ValueError, "already computed"),
+            ({"status": "swh"}, ValueError, "reserved"),
+        ],
+    )
+    def test_wrong_variables_are_reported(self, analyse, open_sea, variables, error, match):
+        analysis = analyse(open_sea, variables=variables)
+
+        with pytest.raises(error, match=match):
+            analysis.run(solve=False, solver_options=MUMPS)

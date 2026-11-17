@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import os
 import logging
+import warnings
+import contextlib
 
 import cdsapi
 import requests
@@ -43,6 +45,33 @@ def preprocess(ds):
     return ds.drop_vars("step", errors="ignore")
 
 
+@contextlib.contextmanager
+def _cfgrib_merge_defaults():
+    """
+    Keep the xarray merge defaults that cfgrib relies on, quietly.
+
+    `cfgrib.open_datasets` groups the fields of a file by merging them
+    with the default `compat`, and keeps apart those that conflict.
+    xarray will change this default from "no_conflicts" to "override",
+    which would merge conflicting fields, and warns at each such merge
+    meanwhile: for the IFS 10 m gust with the 10 m wind, for example.
+    The current default is pinned and this warning silenced, inside
+    this context only.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="In a future version of xarray the default value for compat",
+            category=FutureWarning,
+        )
+        try:
+            pinned = xr.set_options(use_new_combine_kwarg_defaults=False)
+        except ValueError:  # xarray before this option: nothing to pin
+            pinned = contextlib.nullcontext()
+        with pinned:
+            yield
+
+
 def open_grib(path: str, **kwargs) -> xr.Dataset:
     """
     Open a GRIB file as one dataset, whatever the levels of its fields.
@@ -62,8 +91,11 @@ def open_grib(path: str, **kwargs) -> xr.Dataset:
     """
     import cfgrib  # loads ecCodes: on first use, not at import
 
+    with _cfgrib_merge_defaults():
+        grouped = cfgrib.open_datasets(path, **kwargs)
+
     datasets = []
-    for dataset in cfgrib.open_datasets(path, **kwargs):
+    for dataset in grouped:
         levels = {variable.attrs.get("GRIB_typeOfLevel") for variable in dataset.data_vars.values()}
         scalar_levels = [name for name in levels if name in dataset.coords and dataset[name].ndim == 0]
         datasets.append(preprocess(dataset.drop_vars(scalar_levels)))

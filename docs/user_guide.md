@@ -117,6 +117,57 @@ A Herbie forecast may mix fields at different levels in one download, such as th
 
 The three vessel models are evaluated separately, so a function that computes all components is computed three times when the problem is built.
 
+### Additional variables
+
+The routing computes only what the objective and the vessel models need. `variables` asks for more quantities, which nothing has to use: they are computed at the middle of each segment, handed to the constraints in `ctx` and stored in the report under their name, so they can be limited, tabulated and plotted like `tws` or `swh`. The wind gust and the wave slope are typical: they do not enter the polar, but they measure comfort and safety.
+
+```python
+wave.add_interpolator("mwp", "valid_time", "latitude", "longitude")
+wave.add_function(
+    "slope",
+    lambda x: wave("swh", x) / np.softmax(wave("mwp", x), 1., softness=0.1),
+    inputs=["valid_time", "latitude", "longitude"],
+)
+
+analysis = RoutingAnalysis(
+    "analysis", vessel, voyage, atmosphere, wave, current, topography,
+    variables=[
+        "gust",                                                   # tws_gust and aws_gust, kt
+        "slope",                                                  # read from the wave forecast
+        {"gust_excess": lambda ctx: ctx["tws_gust"] - ctx["tws"]},
+    ],
+    constraints=lambda ctx: [
+        ctx["max_bhp"] < ctx["vessel"].max_power,
+        ctx["z"] < 0.,
+        ctx["tws_gust"] < 45.,                                    # no gust over 45 kt
+        ctx["gust_excess"] < 15.,                                 # nor 15 kt above the mean wind
+        ctx["slope"] < 0.5,
+    ],
+)
+report = analysis.run()
+report.table(["tws", "tws_gust", "slope"])
+```
+
+`variables` is a name, a list of names, or a dict of names and specifications; a list may also hold such dicts. A name alone is its own specification. A specification is:
+
+| Specification | Gives | Units |
+| --- | --- | --- |
+| `"gust"` | `tws_gust` and `aws_gust`, below | kt |
+| a model key, such as `"slope"` or `"pres"` | the model of the first of `atmosphere`, `wave`, `current` and `vessel` that has this key | those of the model |
+| a model key with its source, such as `"wave.slope"` or `"vessel.leeway"` | the model of that source; in a list, the variable is named without the prefix, `slope` | those of the model |
+| `"tws_gust"` | the atmospheric model `gust` (m/s) converted to kt, or `tws * GUST_DEFAULT_RATIO` (1.23) when there is none | kt |
+| `"aws_gust"` | the apparent wind of `tws_gust` | kt |
+| a model key under another name, such as `{"gust_ms": "atmosphere.gust"}` | the model itself, the gust in m/s here | those of the model |
+| `"tws100"`, `"twd100"`, `"twa100"`, `"aws100"`, `"awa100"`, at any height | the wind at that height from `u100` and `v100`, angles signed as `twa` | kt, deg |
+| a routing quantity, such as `"tws"` | a copy of it, under another name in a dict | as reported |
+| a callable `ctx -> expression` | any function of the quantities of the passage and of the variables listed before it; `ctx["vessel"]` is the vessel | yours |
+
+Forecasts are queried at the time and position of each segment, with the ensemble member of the analysis, and vessel models with the inputs they name, found as for the polars. A model of a variable may thus be an interpolator or a function, of any data object. Write functions with `architeuthis.numpy`, and keep them smooth when a constraint uses them: the period above is kept away from zero, its value on land and past the forecast horizon.
+
+`run(variables=...)` and `evaluate(variables=...)` add variables for one run or one evaluation to those of the analysis. `options={"include_gusts": ...}` is deprecated, with a `DeprecationWarning`, and will be removed in 0.4.0: list `"gust"` instead. Until then, an analysis without `options` still computes the gusts, and `options={}` leaves them out unless they are listed; from 0.4.0, they are computed only when listed. A variable cannot take the name of a routing quantity or of a report entry such as `status`, and an unknown key raises a `KeyError` that names it. The variables are recorded in the metadata of the passage plan, callables by their name.
+
+`examples/function_polar_routing.py` computes the IFS gusts, the wave slope and the wind at 100 m this way.
+
 ### Credentials and the data folder
 
 The [README](../README.md#-credentials-and-settings) explains how to get each credential and save it once. `architeuthis.credentials` holds the functions behind `python -m architeuthis.credentials`:
@@ -188,7 +239,7 @@ Six stacked panels share a time axis in UTC, which runs from the first to the la
 | 5 | `tws` | `tws`, `tws_gust` | True wind, kt: average, and gust as a dashed line with a band | From 0 |
 | 6 | `aws` | `aws`, `aws_gust` | Apparent wind, kt: average, and gust as a dashed line with a band | From 0 |
 
-The gust lines are left out when the report has no gust, which happens with `RoutingAnalysis(..., options={})`.
+The gust lines are left out when the report has no gust, which happens with `RoutingAnalysis(..., options={})` unless `variables` lists `"gust"`.
 
 | Argument | Default | Meaning |
 | --- | --- | --- |

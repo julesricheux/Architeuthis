@@ -154,6 +154,8 @@ current.add_interpolator("thetao", "valid_time", "latitude", "longitude", var_ke
 
 A forecast can hold functions too, to convert a unit or combine fields: `atmosphere.add_function("air_temperature", lambda x: atmosphere("t2m", x) - 273.15, inputs=["valid_time", "latitude", "longitude"])`.
 
+Quantities your model does not use can be computed all the same, to constrain them or see them in the reports: `RoutingAnalysis(..., variables=["tws_gust", "wave.slope"])` puts the gusts and a wave slope in `ctx` and in every report.
+
 **💡 Good practice**
 
 - **Stay differentiable:** write with `architeuthis.numpy`, and use `np.where`, `np.softmax` or `np.sigmoid` rather than `if` on values.
@@ -215,7 +217,7 @@ Only when a download needs them, never at import, taking the first value found:
 2. **The credential store**, where `set` saves them.
 3. **The provider's own file**: `copernicusmarine login`, or `~/.cdsapirc`.
 
-Environment variables suit servers, CI jobs and containers, where there is no credential store, and override the store for a while. Give them as secrets of the platform; saved in a profile (`setx`, `~/.bashrc`, `conda env config vars`) they sit in plain text.
+Environment variables suit servers, CI jobs and containers, where there is no credential store, and override the store for a while. Saving a credential removes its variables from the current session, with a ⚠️ message naming them: delete them where they are defined too, or new sessions keep reading the old value. Give them as secrets of the platform; saved in a profile (`setx`, `~/.bashrc`, `conda env config vars`) they sit in plain text.
 
 ### > The Data Folder
 
@@ -273,7 +275,7 @@ print(eumdac.AccessToken((get_credential("EUMDAC_KEY"), get_credential("EUMDAC_S
 - **Objective:** total fuel, `sum((bhp + hotel_load) * dt * sfc) / 1e6`, in tonnes.
 - **Fixed:** departure, arrival, ETD and ETA. The schedule is a requirement, the speed an outcome.
 - **Variables:** the positions along the route, and optionally a factor blending the reference route towards two alternatives.
-- **Constraints:** brake power below `max_power` and every position at sea, or your own.
+- **Constraints:** brake power below `max_power` and every position at sea, or your own, on any quantity of the route or any additional variable (`variables=`).
 
 ---
 

@@ -108,7 +108,7 @@ vessel_files = [
     r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_28up_28down_7buff_5m_eff45.nc",
     r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_28up_28down_7buff_5m_eff60.nc",
     # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff75.nc",
-    # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff90.nc",
+    r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff90.nc",
     # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff100.nc",
     # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff60.nc",
 ]
@@ -135,7 +135,7 @@ for i, vessel_data in enumerate(vessel_files):
     
     vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa", method="bspline")
     vessel.add_interpolator("max_bhp", "stw", "tws", "twa", "hs", "wa", method="bspline")
-    # vessel.add_interpolator("leeway", "stw", "tws", "twa", "hs", "wa", method="bspline")
+    vessel.add_interpolator("leeway", "stw", "tws", "twa", "hs", "wa", method="bspline")
     vessel.add_interpolator("sails_contribution", "stw", "tws", "twa", "hs", "wa", method="bspline")
     
     vessels.append(vessel)
@@ -145,7 +145,7 @@ for i, vessel_data in enumerate(vessel_files):
 # global_corr_fac = 1.10 # global models speed correction (120% @ 10m, 105% @ 100m)
 global_corr_fac = 1.20 # global models speed correction (120% @ 10m, 105% @ 100m)
 
-recent = pd.Timestamp("now").floor("1d8h")
+recent = pd.Timestamp("now").floor("1d8h").floor("1d")
 # recent = pd.Timestamp('2026-05-30 00:00')
 # mirror_end = pd.Timestamp('2025-12-21 12:00')
 
@@ -173,6 +173,10 @@ GUST_VAR = {
     "ifs": "fg10",
     "gfs": "gust",
 }
+PRES_VAR = {
+    "ifs": "msl",
+    "gfs": "sp",
+}
 
 gust_default_factor = 1.23 # (https://cimmse.wordpress.com/2013/09/20/a-wind-gust-factor-database-of-marine-observations-from-10-tropical-cyclones-2/)
 
@@ -188,6 +192,8 @@ for model, atmos in ATMOS.items():
     atmos.add_interpolator("u10", "valid_time", "latitude", "longitude", fac=global_corr_fac, method="bspline")
     atmos.add_interpolator("v10", "valid_time", "latitude", "longitude", fac=global_corr_fac, method="bspline")
 
+    atmos.add_interpolator(gust_var, "valid_time", "latitude", "longitude", var_key="pres", fac=global_corr_fac, method="bspline")
+    
     atmos.add_interpolator(gust_var, "valid_time", "latitude", "longitude", var_key="gust", fac=global_corr_fac, method="bspline")
 
 # atmos = DeterministicHerbieForecast(
@@ -609,8 +615,8 @@ plans = [] # PassagePlan of each routing (timed positions)
 
 zero_fac = 0.
 
-models = ["ifs", "gfs"]
-# models = ["ifs",]
+# models = ["ifs", "gfs"]
+models = ["ifs",]
 # facs = np.asarray([0., 1.]) + zero_fac
 # facs = np.asarray([-1., 0., 1.]) + zero_fac
 # facs = np.asarray([-1., 0., 1.]) + zero_fac
@@ -637,9 +643,9 @@ timeframes = [
 for solve, tf, model, vessel, fac, m, tpg in (
         list(
             # product([0], timeframes, models, vessels, [zero_fac], [1], [topo0]) # NOT SOLVED ortho cst speed refs
-            product([0], timeframes, models[:1], vessels[:1], [zero_fac], [1], [topo0]) # NOT SOLVED ortho cst speed refs
-        ) + list(
-            product([1], timeframes, models, vessels[1:], facs, members, topos) # SOLVED
+        #     product([0], timeframes, models[:1], vessels[:1], [zero_fac], [1], [topo0]) # NOT SOLVED ortho cst speed refs
+        # ) + list(
+            product([1], timeframes, models, vessels[1:2], facs, members, topos) # SOLVED
         )
     ):
                 
@@ -703,9 +709,11 @@ for solve, tf, model, vessel, fac, m, tpg in (
         # atmosphere_member=m,
         # wave_member=m,
         # constraints=custom_constraints,
-        options={"include_gusts": True},
+        variables=["gust"],  # tws_gust and aws_gust, in kt
         # verbose=False,
-        verbose=True,
+        # options=dict(include_gusts=True),
+        # verbose=True,
+        verbose=False,
     )
     
     report = analysis.run(
@@ -862,7 +870,7 @@ plot_fuel_vs_etd(reports)
 plot_variable(selected, "sog", unit="kts", labels=options)
 plot_power_and_weather(selected, labels=options)
 plot_variable(reports[1:], "tws", unit="kts", figsize=(9, 3), dpi=100)
-plot_variable([reports[-3]], "sails_contribution", unit="%", ylim=(-1., 101.), figsize=(10, 3), dpi=100)
+plot_variable(reports[-1:], "sails_contribution", unit="%", ylim=(-1., 101.), figsize=(10, 3), dpi=100)
 plot_fuel_distribution({f"Eff. {efficiency}%": reports.select(vessel=f"eff{efficiency}") for efficiency in [45, 60]})
 
 #%% FIGURES: SPREAD OF SEVERAL RUNS

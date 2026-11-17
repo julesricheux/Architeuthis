@@ -487,6 +487,13 @@ def test_fuel_quantiles_leave_out_what_did_not_converge(eta_sweep):
     assert list(ax.lines[0].get_ydata()) == pytest.approx([77.0, 53.0])
 
 
+def test_fuel_quantiles_are_empty_when_nothing_converged(eta_sweep):
+    failed = [report | {"status": 2} for report in eta_sweep]
+    ax = plot_fuel_quantiles(failed, show=False).axes[0]
+
+    assert len(ax.lines[0].get_ydata()) == 0
+
+
 def test_fuel_quantiles_can_keep_everything_and_show_a_daily_rate(eta_sweep):
     ax = plot_fuel_quantiles(eta_sweep, daily=True, converged_only=False, show=False).axes[0]
 
