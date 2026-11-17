@@ -236,30 +236,38 @@ def test_ensemble_read_uses_cfgrib_with_the_perturbed_members():
 
 
 def write_grib(path, fields, step):
-    """Write GRIB2 fields at heights above ground, as one file of a Herbie download."""
-    from cfgrib.xarray_to_grib import to_grib
+    """
+    Write GRIB2 fields at heights above ground, as one file of a Herbie download.
 
-    latitude = np.array([50.0, 49.0, 48.0])
-    longitude = np.array([-20.0, -19.0, -18.0, -17.0])
-    content = b""
-    for name, (short_name, height, value) in fields.items():
-        field = xr.DataArray(
-            np.full((latitude.size, longitude.size), value),
-            dims=("latitude", "longitude"),
-            coords={
-                "latitude": latitude,
-                "longitude": longitude,
-                "time": pd.Timestamp(BASE_DATE),
-                "step": pd.Timedelta(hours=step),
-                "heightAboveGround": float(height),
-            },
-            name=name,
-            attrs={"GRIB_shortName": short_name, "GRIB_typeOfLevel": "heightAboveGround", "GRIB_gridType": "regular_ll"},
-        )
-        part = path.with_name(f"{name}_{path.name}")
-        to_grib(field.to_dataset(), str(part), grib_keys={"edition": 2})
-        content += part.read_bytes()
-    path.write_bytes(content)
+    Written with ecCodes directly: the writer of cfgrib relies on a private
+    function that recent xarray versions removed.
+    """
+    import eccodes
+
+    with open(path, "wb") as stream:
+        for param_id, height, value in fields:
+            message = eccodes.codes_grib_new_from_samples("regular_ll_sfc_grib2")
+            keys = {
+                "Ni": 4,
+                "Nj": 3,
+                "latitudeOfFirstGridPointInDegrees": 50.0,
+                "longitudeOfFirstGridPointInDegrees": -20.0,
+                "latitudeOfLastGridPointInDegrees": 48.0,
+                "longitudeOfLastGridPointInDegrees": -17.0,
+                "iDirectionIncrementInDegrees": 1.0,
+                "jDirectionIncrementInDegrees": 1.0,
+                "dataDate": int(BASE_DATE.strftime("%Y%m%d")),
+                "dataTime": 0,
+                "step": step,
+                "typeOfLevel": "heightAboveGround",
+                "level": height,
+                "paramId": param_id,
+            }
+            for key, key_value in keys.items():
+                eccodes.codes_set(message, key, key_value)
+            eccodes.codes_set_values(message, np.full(12, value))
+            eccodes.codes_write(message, stream)
+            eccodes.codes_release(message)
     return str(path)
 
 
@@ -267,7 +275,7 @@ def test_deterministic_read_merges_fields_at_different_heights(tmp_path):
     # As the IFS 10 m wind with the 2 m temperature, which cfgrib alone cannot merge.
     forecast = DeterministicHerbieForecast("read", model="ifs", product="oper", date=BASE_DATE)
     forecast.path = [
-        write_grib(tmp_path / f"step_{step}.grib2", {"u10": ("10u", 10, 4.0 + step), "t2m": ("2t", 2, 285.0 + step)}, step)
+        write_grib(tmp_path / f"step_{step}.grib2", [(165, 10, 4.0 + step), (167, 2, 285.0 + step)], step)  # 10u, 2t
         for step in (0, 3)
     ]
 
