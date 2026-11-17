@@ -111,7 +111,7 @@ and this project follows Semantic Versioning https://semver.org
 - The UI showed only an error with dash-mantine-components 3, which needs React 19. The app requires Dash 4.5 and DMC 3, and `ui.py` selects React 19.
 - `RoutingAnalysis.run(solve=False)` no longer calls IPOPT, whose empty problem crashed the kernel with `spral` on Windows. The baseline is evaluated directly.
 - B-spline interpolators on 2-point axes (degree 1) broke the CasADi Hessian, so solves failed. These axes are now raised to the requested degree, with the same values.
-- `DeterministicHerbieForecast` could not read fields at different heights in one download, such as the IFS 10 m wind with the 2 m temperature: cfgrib skipped `t2m` and the files failed to concatenate on `heightAboveGround`. Each file is now read level by level (`forecast.open_grib`) and merged.
+- `DeterministicHerbieForecast` could not read fields at different heights in one download, such as the IFS 10 m wind with the 2 m temperature: cfgrib skipped `t2m` and the files failed to concatenate on `heightAboveGround`. Each file is now read level by level (`forecast.open_grib`) and merged, without cfgrib index files, which Herbie's rewritten subsets made incompatible and which logged a warning per file at each read.
 
 ### Security
 - Credentials can be saved once, encrypted in the credential store of the operating system (Windows Credential Manager, macOS Keychain, Secret Service), with `python -m architeuthis.credentials set` or `credentials.save_credential`. Environment variables still work and take precedence.

@@ -579,9 +579,16 @@ class DeterministicHerbieForecast(HerbieForecast):
         
     def _read_data(self):
         # One dataset per file, whatever the levels of its fields (10 m wind and
-        # 2 m temperature, for example), then concatenated along valid_time
+        # 2 m temperature, for example), then concatenated along valid_time.
+        # No .idx files: Herbie rewrites the subsets at each download, so cfgrib
+        # found its index files incompatible and warned at every read.
         datasets = [
-            open_grib(path, decode_timedelta=False, decode_times=True)
+            open_grib(
+                path,
+                backend_kwargs={"indexpath": ""},
+                decode_timedelta=False,
+                decode_times=True,
+            )
             for path in self.path
         ]
         self.data = xr.combine_nested(
