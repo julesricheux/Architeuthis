@@ -237,16 +237,31 @@ def test_every_example_is_run_by_these_tests():
     assert scripts == set(WINDOWS)
 
 
+def simple_routing_runs(variables):
+    """
+    The numbers of reference and optimized runs of simple_routing.py.
+
+    They follow its settings, which change as polars, models or members are
+    tried: one reference per timeframe, then every model, sail efficiency
+    (all vessels but the first), deviation factor, member and topography.
+    """
+    timeframes = len(variables["timeframes"])
+    optimized = timeframes * len(variables["models"]) * (len(variables["vessels"]) - 1) * len(variables["facs"]) * len(variables["members"]) * len(variables["topos"])
+    return timeframes, optimized
+
+
 def test_simple_routing_gives_what_ui_displays(example):
     run = example("simple_routing.py")
-    reports = run.variables["reports"]
+    variables = run.variables
+    reports = variables["reports"]
+    references, optimized = simple_routing_runs(variables)
 
-    # A reference, then two models with two sail efficiencies.
-    assert [report["solve"] for report in reports] == [0, 1, 1, 1, 1]
-    assert {report["model"] for report in reports} == {"ifs", "gfs"}
-    assert {report["vessel"] for report in reports} == {"eff1", "eff45", "eff60"}
+    # The references, then the models with the sail efficiencies.
+    assert [report["solve"] for report in reports] == [0] * references + [1] * optimized
+    assert {report["model"] for report in reports} == set(variables["models"])
+    assert {report["vessel"] for report in reports} == {vessel.label for vessel in variables["vessels"]}
 
-    assert len(run.latest) == 5
+    assert len(run.latest) == references + optimized
     assert all("init_fac" in report and "member" in report for report in run.latest)
 
 
@@ -259,12 +274,16 @@ def test_simple_routing_stores_its_routes_and_plans(example):
         assert PassagePlanLibrary().load(plan.name).name == plan.name
 
     # Every optimized plan is tested with each model and vessel.
-    assert sum(1 for plan in variables["plans"] if plan.metadata["solve"]) == 4
-    assert len(variables["evaluations"]) == 4 * 2 * 3
+    _, optimized = simple_routing_runs(variables)
+    assert sum(1 for plan in variables["plans"] if plan.metadata["solve"]) == optimized
+    assert len(variables["evaluations"]) == optimized * len(variables["models"]) * len(variables["vessels"])
 
 
 def test_simple_routing_writes_gpx_tracks(example):
-    assert len(list(example("simple_routing.py").folder.glob("track_*.gpx"))) == 4
+    run = example("simple_routing.py")
+    _, optimized = simple_routing_runs(run.variables)
+
+    assert len(list(run.folder.glob("track_*.gpx"))) == optimized
 
 
 def test_simple_routing_stores_its_zones_for_the_ui(example):

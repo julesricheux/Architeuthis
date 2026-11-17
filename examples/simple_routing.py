@@ -908,7 +908,7 @@ print("Table copied to clipboard. Paste directly into Word.")
 #%% GPX TRACKS
 
 # track_<MODEL>_<vessel>_<ETD date>.gpx in the working directory, or give report.to_gpx a file name.
-# reports.select(solve=1).to_gpx()
+reports.select(solve=1).to_gpx()
 
 #%% A4 PAGE OF EACH ROUTE
 

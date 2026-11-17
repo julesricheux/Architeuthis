@@ -384,7 +384,8 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         ...     inputs=["valid_time", "latitude", "longitude"],
         ... )
         >>> analysis = RoutingAnalysis(
-        ...     "analysis",vessel, voyage, atmosphere, wave, current, topography,
+        ...     "analysis", vessel, voyage, atmosphere, wave, current,
+        ...     topography,
         ...     variables=[
         ...         "tws_gust",
         ...         "slope",
