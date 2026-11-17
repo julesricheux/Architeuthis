@@ -174,12 +174,12 @@ analysis = RoutingAnalysis(
     "ifs", vessel, voyage, atmosphere, wave, current, topography,
     constraints=constraints,
     # Computed along the route, in ctx for the constraints and in the reports:
-    # gusts in kt (from the forecast "gust", else tws * GUST_DEFAULT_RATIO), any model
-    # of the forecasts or vessel by its key ("wave.slope" to name the source), the
-    # wind at 100 m, and functions of the variables before them.
+    # "gust" gives tws_gust and aws_gust in kt (from the forecast "gust", else
+    # tws * GUST_DEFAULT_RATIO), then any model of the forecasts or vessel by its key
+    # ("wave.slope" to name the source), the wind at 100 m, and functions of the
+    # variables before them.
     variables=[
-        "tws_gust",
-        "aws_gust",
+        "gust",
         "slope",
         "tws100",
         "air_temperature",

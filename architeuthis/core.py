@@ -12,6 +12,7 @@ Created on Mon Jan 19 15:54:06 2026
 
 import json
 import re
+import warnings
 
 import casadi as ca
 import numpy as onp
@@ -162,6 +163,9 @@ _PASSAGE_QUANTITIES = frozenset(_REPORT_QUANTITIES)
 # forecast variables `u100` and `v100`, as the 10 m wind is from `u10` and `v10`.
 _WIND_AT_HEIGHT = re.compile(r"^(tws|twd|twa|aws|awa)(\d+)$")
 
+# The variable that asks for the gusts, in kt: the true and apparent wind gusts.
+GUST_VARIABLE = "gust"
+
 # Where a variable named by a model key is looked for, in this order, unless
 # its specification names the source: "wave.slope".
 VARIABLE_SOURCES = ("atmosphere", "wave", "current", "vessel")
@@ -192,10 +196,12 @@ def normalize_variables(variables: Variables) -> dict:
     """
     Additional variables as a dict of names and specifications.
 
-    A name alone is its own specification: `"gust"` is
-    `{"gust": "gust"}`, and so is `{"gust": None}`. Its source prefix
-    is not part of the name: `"wave.slope"` is
-    `{"slope": "wave.slope"}`.
+    A name alone is its own specification: `"slope"` is
+    `{"slope": "slope"}`, and so is `{"slope": None}`. Its source
+    prefix is not part of the name: `"wave.slope"` is
+    `{"slope": "wave.slope"}`. `"gust"` alone asks for the gusts, and
+    becomes `tws_gust` and `aws_gust`; the gust model itself, in m/s,
+    is named otherwise, as in `{"gust_ms": "atmosphere.gust"}`.
 
     Args:
         variables: None, a name, a dict of names and specifications,
@@ -207,8 +213,9 @@ def normalize_variables(variables: Variables) -> dict:
         A new dict of names and specifications, in the given order.
 
     Example:
-        >>> normalize_variables(["tws_gust", "wave.slope"])
-        {'tws_gust': 'tws_gust', 'slope': 'wave.slope'}
+        >>> list(normalize_variables(["gust", "wave.slope"]).items())
+        [('tws_gust', 'tws_gust'), ('aws_gust', 'aws_gust'),
+         ('slope', 'wave.slope')]
     """
     if variables is None:
         return {}
@@ -238,6 +245,9 @@ def normalize_variables(variables: Variables) -> dict:
             prefix, dot, key = name.partition(".")
             if dot and prefix in VARIABLE_SOURCES and key:
                 name = key
+        if name == GUST_VARIABLE and specification == GUST_VARIABLE:
+            normalized |= {key: key for key in _GUST_QUANTITIES}
+            continue
         if not (isinstance(specification, str) or callable(specification)):
             raise TypeError(
                 f"Variable {name!r}: a specification is a model key, such as "
@@ -360,22 +370,25 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
     specifications, and `run` and `evaluate` can add more. A
     specification is:
 
-    - A model key, such as `"gust"` or `"slope"`: the first of
+    - `"gust"`: the gusts, `tws_gust` and `aws_gust` (kt), from the
+      atmospheric model `gust` in m/s, or `tws * GUST_DEFAULT_RATIO`
+      without it.
+    - A model key, such as `"slope"` or `"pres"`: the first of
       `atmosphere`, `wave`, `current` and `vessel` with a model of that
       key is queried, in the units of the model. A prefix picks the
       source: `"atmosphere.gust"`, `"vessel.leeway"`. Forecasts are
       queried at the time and position of the segments, the vessel
       with the inputs its models name, as for the polars.
-    - A quantity that the routing computes: `tws_gust` (kt, from the
-      atmospheric model `gust` in m/s, or `tws * GUST_DEFAULT_RATIO`
-      without it) and `aws_gust` (kt), the wind at another height
+    - A quantity that the routing computes: `tws_gust` or `aws_gust`
+      alone, the wind at another height
       (`tws100`, `twd100`, `twa100`, `aws100`, `awa100`, angles signed
       as `twa`), or any quantity of the report, such as `tws`.
     - A callable `ctx -> expression`, given the quantities of the
       passage and the variables listed before it, with `vessel`.
 
-    `options={"include_gusts": True}`, the default, still adds
-    `tws_gust` and `aws_gust`.
+    `options={"include_gusts": True}` is deprecated, and will be
+    removed in 0.4.0: give `variables=["gust"]`. Until then, the gusts
+    are still computed by default, without `options`.
 
     Example:
         >>> wave.add_function(
@@ -387,7 +400,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         ...     "analysis", vessel, voyage, atmosphere, wave, current,
         ...     topography,
         ...     variables=[
-        ...         "tws_gust",
+        ...         "gust",
         ...         "slope",
         ...         {"excess": lambda c: c["tws_gust"] - c["tws"]},
         ...     ],
@@ -425,6 +438,14 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         self.atmosphere_member = atmosphere_member
         self.wave_member = wave_member
         self.constraints = constraints
+        if options is not None and "include_gusts" in options:
+            warnings.warn(
+                "RoutingAnalysis(options={'include_gusts': ...}) is deprecated and will "
+                "be removed in 0.4.0. Give variables=['gust'] to compute tws_gust and "
+                "aws_gust; from 0.4.0, they are computed only then.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.options = options if options is not None else {"include_gusts": True}
         self.variables = normalize_variables(variables)
 
@@ -461,8 +482,8 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         """
         Additional variables of a run or an evaluation.
 
-        These are the gusts of `options["include_gusts"]`, then the
-        variables of this analysis, then `variables`.
+        These are the gusts of `options["include_gusts"]` (deprecated),
+        then the variables of this analysis, then `variables`.
         """
         gusts = {key: key for key in _GUST_QUANTITIES} if self.options.get("include_gusts", False) else {}
         return gusts | normalize_variables(self.variables) | normalize_variables(variables)

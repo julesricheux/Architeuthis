@@ -664,8 +664,11 @@ def test_variables_take_names_lists_and_dicts():
         return ctx["tws_gust"] - ctx["tws"]
 
     assert normalize_variables(None) == {}
-    assert normalize_variables("gust") == {"gust": "gust"}
-    assert normalize_variables({"gust": None, "slope": "wave.slope"}) == {"gust": "gust", "slope": "wave.slope"}
+    assert normalize_variables("slope") == {"slope": "slope"}
+    assert normalize_variables({"pres": None, "slope": "wave.slope"}) == {"pres": "pres", "slope": "wave.slope"}
+    # "gust" asks for the gusts in kt, the gust model itself is named otherwise
+    assert normalize_variables("gust") == {"tws_gust": "tws_gust", "aws_gust": "aws_gust"}
+    assert normalize_variables({"gust_ms": "atmosphere.gust"}) == {"gust_ms": "atmosphere.gust"}
     assert normalize_variables(["tws_gust", {"excess": excess}]) == {"tws_gust": "tws_gust", "excess": excess}
     # A source prefix picks where the model is read, and is not part of the name
     assert normalize_variables(["wave.slope"]) == {"slope": "wave.slope"}
@@ -694,13 +697,34 @@ class TestAdditionalVariables:
     def test_gust_of_the_forecast_is_read_in_knots(self, analyse, open_sea):
         from .conftest import uniform_forecast
 
-        analysis = analyse(open_sea, options={}, variables=["tws_gust", "gust"])
+        analysis = analyse(open_sea, options={}, variables=["tws_gust", {"gust_ms": "atmosphere.gust"}])
         analysis.atmosphere = uniform_forecast("atmosphere", u10=5.0, v10=2.0, gust=10.0)
         report = analysis.run(solve=False, solver_options=MUMPS)
 
         assert np.ravel(report["tws_gust"]) == pytest.approx(10.0 * KNOTS)
         # Asked by its model key, a forecast variable keeps the units of its model
-        assert np.ravel(report["gust"]) == pytest.approx(10.0)
+        assert np.ravel(report["gust_ms"]) == pytest.approx(10.0)
+
+    def test_gust_asks_for_the_true_and_apparent_gusts(self, route, open_sea):
+        report = route(open_sea, solve=False, analysis_options={"options": {}, "variables": ["gust"]})
+        reference = route(open_sea, solve=False)
+
+        assert "gust" not in report
+        assert report["tws_gust"] == pytest.approx(reference["tws_gust"])
+        assert report["aws_gust"] == pytest.approx(reference["aws_gust"])
+
+    @pytest.mark.parametrize("include_gusts", [True, False])
+    def test_the_gust_option_is_deprecated(self, analyse, open_sea, include_gusts):
+        with pytest.warns(DeprecationWarning, match=r"variables=\['gust'\]"):
+            analyse(open_sea, options={"include_gusts": include_gusts})
+
+    def test_without_the_gust_option_nothing_is_deprecated(self, analyse, open_sea):
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            analyse(open_sea)
+            analyse(open_sea, options={}, variables=["gust"])
 
     def test_a_forecast_function_is_computed_and_reported(self, analyse, open_sea):
         analysis = analyse(open_sea, variables=["slope", {"period": "wave.mwp"}])

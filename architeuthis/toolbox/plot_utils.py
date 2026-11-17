@@ -398,7 +398,7 @@ def plot_report(report, save_as=None, show=True, figsize=A4_PORTRAIT, dpi=300, y
     Values are per segment and drawn as steps centered on `ctim`. The
     time axis runs from the first to the last node of `tim`. The gust
     lines are left out if the report has no gust, which happens with
-    `options={"include_gusts": False}`.
+    `options={}` without `"gust"` in `variables`.
 
     Args:
         report: A report of `RoutingAnalysis.run` or `evaluate`, or the

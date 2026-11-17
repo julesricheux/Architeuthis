@@ -173,6 +173,10 @@ GUST_VAR = {
     "ifs": "fg10",
     "gfs": "gust",
 }
+PRES_VAR = {
+    "ifs": "msl",
+    "gfs": "sp",
+}
 
 gust_default_factor = 1.23 # (https://cimmse.wordpress.com/2013/09/20/a-wind-gust-factor-database-of-marine-observations-from-10-tropical-cyclones-2/)
 
@@ -188,6 +192,8 @@ for model, atmos in ATMOS.items():
     atmos.add_interpolator("u10", "valid_time", "latitude", "longitude", fac=global_corr_fac, method="bspline")
     atmos.add_interpolator("v10", "valid_time", "latitude", "longitude", fac=global_corr_fac, method="bspline")
 
+    atmos.add_interpolator(gust_var, "valid_time", "latitude", "longitude", var_key="gust", fac=global_corr_fac, method="bspline")
+    
     atmos.add_interpolator(gust_var, "valid_time", "latitude", "longitude", var_key="gust", fac=global_corr_fac, method="bspline")
 
 # atmos = DeterministicHerbieForecast(
@@ -703,7 +709,7 @@ for solve, tf, model, vessel, fac, m, tpg in (
         # atmosphere_member=m,
         # wave_member=m,
         # constraints=custom_constraints,
-        options={"include_gusts": True},
+        variables=["gust"],  # tws_gust and aws_gust, in kt
         # verbose=False,
         verbose=True,
     )

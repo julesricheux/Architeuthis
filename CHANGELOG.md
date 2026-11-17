@@ -103,20 +103,6 @@ and this project follows Semantic Versioning https://semver.org
 - Latest HRDPS run not found: HRDPSForecast now looks on the MSC Datamart.
 - `pyproject.toml` declared the MIT license, while the project is distributed under GPL v3 as in `LICENSE`.
 - The latest HRDPS run could not be found, because `HerbieLatest` only looks on AWS and NOMADS by default. `HRDPSForecast` looks on the MSC Datamart.
----
-
-## v0.3.1 - Unreleased
-
-### Added
-- Additional variables: `RoutingAnalysis(variables=...)`, and `run(variables=...)` and `evaluate(variables=...)` for one run, compute quantities that the objective and the vessel models do not need, at the middle of each segment, and put them in the constraint context `ctx` and in the report. A variable is a model key of the atmosphere, wave, current or vessel (`"gust"`, `"slope"`, or `"wave.slope"` to name the source), a derived quantity (`tws_gust` and `aws_gust` in kt, from the forecast `gust` or the standard ratio; the wind at any height, such as `tws100`), a routing quantity, or a callable of `ctx`. For example, gust thresholds and a wave slope (`swh / mwp`) can be constrained and reported. `core.normalize_variables` reads the accepted forms, and the variables are recorded in the passage plan metadata.
-- `examples/function_polar_routing.py` downloads the IFS 10 m gust and mean wave period, and reports the gusts, the wave slope, the wind at 100 m and the air temperature as additional variables.
-
-### Changed
-- `options={"include_gusts": True}` is now a shorthand for `variables=["tws_gust", "aws_gust"]`, with the same results. It stays the default.
-
-### Fixed
-- Reading Herbie GRIB files flooded the console with xarray `FutureWarning`s about the default of `compat`, for example with the IFS 10 m gust next to the 10 m wind. `cfgrib.open_datasets` groups fields through merges that rely on the current default, `"no_conflicts"`: `forecast.open_grib` now pins it during the read and silences that warning there only, so the grouping stays the same when xarray changes the default.
-- `save_credential` seemed to have no effect when an environment variable of the same credential was set, such as `CMEMS_PWD` or `COPERNICUSMARINE_SERVICE_PASSWORD` from before 0.3.0: that variable kept being read first. Saving now removes these variables from the current session and names them in a ⚠️ status, so the saved value is used at once. It also reads the value back from the credential store and raises an error if the save did not take.
 
 ---
 
@@ -161,3 +147,28 @@ and this project follows Semantic Versioning https://semver.org
 
 ### Removed
 - `common.ensure_cdsapirc`, `common.file_path` and the credential constants of `common` (`_CDS_API_KEY`, `_CMEMS_USER`, `_CMEMS_PWD`, `_EUMDAC_USER`, `_EUMDAC_PWD`, `_EUMDAC_CREDENTIALS`).
+
+---
+
+## v0.3.1 - Unreleased
+
+### Added
+- Additional variables: `RoutingAnalysis(variables=...)`, and `run(variables=...)` and `evaluate(variables=...)` for one run, compute quantities that the objective and the vessel models do not need, at the middle of each segment, and put them in the constraint context `ctx` and in the report. A variable is a model key of the atmosphere, wave, current or vessel (`"gust"`, `"slope"`, or `"wave.slope"` to name the source), a derived quantity (`tws_gust` and `aws_gust` in kt, from the forecast `gust` or the standard ratio; the wind at any height, such as `tws100`), a routing quantity, or a callable of `ctx`. For example, gust thresholds and a wave slope (`swh / mwp`) can be constrained and reported. `core.normalize_variables` reads the accepted forms, and the variables are recorded in the passage plan metadata.
+- `examples/function_polar_routing.py` downloads the IFS 10 m gust and mean wave period, and reports the gusts, the wave slope, the wind at 100 m and the air temperature as additional variables.
+
+### Changed
+- `variables=["gust"]` computes the true and apparent wind gusts, `tws_gust` and `aws_gust`, in kt. The gust model itself is reached under another name, as in `{"gust_ms": "atmosphere.gust"}`.
+
+### Deprecated
+- `RoutingAnalysis(options={"include_gusts": ...})` raises a `DeprecationWarning` and will be removed in 0.4.0: give `variables=["gust"]`. Until then, an analysis without `options` still computes the gusts; from 0.4.0, they are computed only when `"gust"` is in the variables.
+
+### Fixed
+- Reading Herbie GRIB files flooded the console with xarray `FutureWarning`s about the default of `compat`, for example with the IFS 10 m gust next to the 10 m wind. `cfgrib.open_datasets` groups fields through merges that rely on the current default, `"no_conflicts"`: `forecast.open_grib` now pins it during the read and silences that warning there only, so the grouping stays the same when xarray changes the default.
+- `save_credential` seemed to have no effect when an environment variable of the same credential was set, such as `CMEMS_PWD` or `COPERNICUSMARINE_SERVICE_PASSWORD` from before 0.3.0: that variable kept being read first. Saving now removes these variables from the current session and names them in a ⚠️ status, so the saved value is used at once. It also reads the value back from the credential store and raises an error if the save did not take.
+
+---
+
+## v0.4.0 - Planned
+
+### Removed
+- `RoutingAnalysis(options={"include_gusts": ...})`, deprecated since 0.3.1: give `variables=["gust"]`. An analysis then computes `tws_gust` and `aws_gust` only when `"gust"` is in its variables, no longer by default.
