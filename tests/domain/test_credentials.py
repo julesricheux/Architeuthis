@@ -88,6 +88,42 @@ def test_the_environment_overrides_the_store(store, monkeypatch):
     assert credential_sources()["CMEMS_PWD"] == "environment variable CMEMS_PWD"
 
 
+@pytest.mark.parametrize("variable", ["CMEMS_PWD", "COPERNICUSMARINE_SERVICE_PASSWORD"])
+def test_saving_replaces_a_value_that_the_environment_held(store, monkeypatch, capsys, variable):
+    # A variable set before the credential store, as in 0.2: it hid every saved value.
+    monkeypatch.setenv(variable, "old-password")
+
+    save_credential("CMEMS_PWD", "new-password")
+
+    assert get_credential("CMEMS_PWD") == "new-password"
+    assert credential_sources()["CMEMS_PWD"] == "credential store"
+    output = capsys.readouterr().out
+    assert variable in output
+    assert "old-password" not in output and "new-password" not in output
+
+
+def test_saving_leaves_the_variables_of_other_credentials(store, monkeypatch):
+    monkeypatch.setenv("CMEMS_USER", "me")
+
+    save_credential("CMEMS_PWD", "new-password")
+
+    assert get_credential("CMEMS_USER") == "me"
+
+
+def test_a_save_that_does_not_take_is_reported(monkeypatch):
+    class ForgetfulKeyring(MemoryKeyring):
+        def set_password(self, service, username, password):
+            pass
+
+    previous = keyring.get_keyring()
+    keyring.set_keyring(ForgetfulKeyring())
+    try:
+        with pytest.raises(RuntimeError, match="was not saved"):
+            save_credential("CMEMS_PWD", "new-password")
+    finally:
+        keyring.set_keyring(previous)
+
+
 def test_the_environment_is_read_on_each_call(store, monkeypatch):
     assert get_credential("CDS_API_KEY") is None
 

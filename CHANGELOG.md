@@ -114,6 +114,10 @@ and this project follows Semantic Versioning https://semver.org
 ### Changed
 - `options={"include_gusts": True}` is now a shorthand for `variables=["tws_gust", "aws_gust"]`, with the same results. It stays the default.
 
+### Fixed
+- Reading Herbie GRIB files flooded the console with xarray `FutureWarning`s about the default of `compat`, for example with the IFS 10 m gust next to the 10 m wind. `cfgrib.open_datasets` groups fields through merges that rely on the current default, `"no_conflicts"`: `forecast.open_grib` now pins it during the read and silences that warning there only, so the grouping stays the same when xarray changes the default.
+- `save_credential` seemed to have no effect when an environment variable of the same credential was set, such as `CMEMS_PWD` or `COPERNICUSMARINE_SERVICE_PASSWORD` from before 0.3.0: that variable kept being read first. Saving now removes these variables from the current session and names them in a ⚠️ status, so the saved value is used at once. It also reads the value back from the credential store and raises an error if the save did not take.
+
 ---
 
 ## v0.3.0 - 2026-11-17

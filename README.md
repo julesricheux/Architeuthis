@@ -217,7 +217,7 @@ Only when a download needs them, never at import, taking the first value found:
 2. **The credential store**, where `set` saves them.
 3. **The provider's own file**: `copernicusmarine login`, or `~/.cdsapirc`.
 
-Environment variables suit servers, CI jobs and containers, where there is no credential store, and override the store for a while. Give them as secrets of the platform; saved in a profile (`setx`, `~/.bashrc`, `conda env config vars`) they sit in plain text.
+Environment variables suit servers, CI jobs and containers, where there is no credential store, and override the store for a while. Saving a credential removes its variables from the current session, with a ⚠️ message naming them: delete them where they are defined too, or new sessions keep reading the old value. Give them as secrets of the platform; saved in a profile (`setx`, `~/.bashrc`, `conda env config vars`) they sit in plain text.
 
 ### > The Data Folder
 

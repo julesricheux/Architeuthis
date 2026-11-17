@@ -120,6 +120,15 @@ def _lookup(name: str) -> tuple[Optional[str], Optional[str]]:
     return None, None
 
 
+def _overriding_variables(name: str) -> list[str]:
+    """
+    Environment variables of a credential that are set in this session.
+
+    Any of them is read before the credential store.
+    """
+    return [variable for variable in _credential(name).variables if os.environ.get(variable)]
+
+
 def get_credential(name: str) -> Optional[str]:
     """
     The value of a credential, or None if it is found nowhere.
@@ -157,8 +166,15 @@ def save_credential(name: str, value: Optional[str] = None) -> None:
     Store a credential in the credential store of the operating system.
 
     It is then found by every later session, until it is deleted or
-    saved again. An environment variable of the same credential still
-    takes precedence.
+    saved again. The value is read back from the store, so that a save
+    that did not take raises an error.
+
+    An environment variable of the same credential would still be read
+    first, and hide the saved value. Such variables are removed from
+    this session, with a ⚠️ status naming them: they stay set for new
+    sessions until they are deleted where they were defined (the user
+    environment variables of Windows, `setx`, a shell profile or
+    `conda env config vars`).
 
     Args:
         name: Name of the credential, a key of `CREDENTIALS`.
@@ -181,12 +197,28 @@ def save_credential(name: str, value: Optional[str] = None) -> None:
     keyring = _keyring()
     try:
         keyring.set_password(KEYRING_SERVICE, name, value)
+        stored = keyring.get_password(KEYRING_SERVICE, name)
     except keyring.errors.KeyringError as error:
         raise RuntimeError(
             f"No credential store is available to save {name} ({error}). "
             f"Set the environment variable {credential.variables[0]} instead."
         ) from error
+    if stored != value:
+        raise RuntimeError(
+            f"{name} was not saved: the credential store "
+            f"({type(keyring.get_keyring()).__name__}) still returns another value."
+        )
     status(f"✅ {name} saved in the credential store.")
+
+    # Otherwise the old value, in the environment, would still be the one read.
+    for variable in _overriding_variables(name):
+        del os.environ[variable]
+        status(
+            f"⚠️ The environment variable {variable} held another {name} and hid "
+            "the saved one: removed from this session. Delete it where it is "
+            "defined (Windows user environment variables, setx, shell profile, "
+            "conda env config vars), or new sessions will still read it."
+        )
 
 
 def delete_credential(name: str) -> bool:
