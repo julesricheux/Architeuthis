@@ -39,7 +39,9 @@ from architeuthis.toolbox.plot_utils import (
     plot_report,
     plot_route,
     plot_route_set,
+    plot_sky,
     plot_style,
+    sun_elevation,
     plot_variable,
     set_plot_style,
 )
@@ -549,6 +551,7 @@ def user_guide():
         plot_fuel_distribution,
         plot_fuel_vs_etd,
         plot_ensemble_along_route,
+        plot_sky,
     ],
 )
 def test_guide_gives_the_signature_of_each_figure(user_guide, function):
@@ -696,3 +699,199 @@ def test_fuel_distribution_can_be_horizontal(baseline_report, optimized_report):
     assert ax.get_xlabel() == "Fuel / tons"
     assert [label.get_text() for label in ax.get_yticklabels()] == list(groups)
     plt.close(fig)
+
+
+# ------------------------------------------------------------------------------
+# Sky along a route
+# ------------------------------------------------------------------------------
+
+
+def sky_columns(names, **changes):
+    """Fields and diagnosis of skies of tests/domain/test_sky.py, one point each."""
+    from architeuthis import sky
+
+    from .test_sky import SKIES
+
+    fields = {key: np.array([SKIES[name][key] for name in names]) for key in sky.SKY_VARIABLES}
+    fields |= {key: np.asarray(value, dtype=float) for key, value in changes.items()}
+    return fields | sky.diagnose(fields), 1.8e9 + 10800.0 * np.arange(len(names))
+
+
+def test_sky_shades_each_etage_by_its_cover():
+    columns, times = sky_columns(["clear", "warm_front", "cirrus"])
+
+    ax = plot_sky(columns, times, show=False).axes[0]
+    meshes = [artist for artist in ax.collections if isinstance(artist, mpl.collections.QuadMesh)]
+
+    assert len(meshes) == 3
+    covers = [np.asarray(mesh.get_array()).ravel() for mesh in meshes]
+    assert covers[0] == pytest.approx(columns["lcc"])
+    assert covers[2] == pytest.approx(columns["hcc"])
+    assert ax.get_xlim() == pytest.approx(mdates.date2num(pd.to_datetime([times[0] - 5400.0, times[-1] + 5400.0], unit="s")))
+
+
+def test_sky_writes_each_genus_the_hidden_etages_and_the_oktas():
+    columns, times = sky_columns(["warm_front", "trade_cumulus"])
+
+    texts = [text.get_text() for text in plot_sky(columns, times, show=False).axes[0].texts]
+
+    assert {"St", "Ns", "/", "Cu"} <= set(texts)
+    assert {"8", "3", "N"} <= set(texts)
+    assert not {"St", "Cu"} & {text.get_text() for text in plot_sky(columns, times, labels=False, show=False).axes[0].texts}
+
+
+def test_sky_frames_the_clouds_that_rise_through_every_etage():
+    columns, times = sky_columns(["cumulonimbus", "trade_cumulus", "warm_front"])
+
+    ax = plot_sky(columns, times, show=False).axes[0]
+    frames = [patch for patch in ax.patches if isinstance(patch, mpl.patches.Rectangle) and not patch.get_fill()]
+
+    # The Cb from its base, the Ns from the middle étage, both up to the top.
+    assert len(frames) == 2
+    assert frames[0].get_y() == pytest.approx(columns["cloud_base"][0] / 2000.0)
+    assert frames[1].get_y() == pytest.approx(1.0)
+    assert all(frame.get_y() + frame.get_height() == pytest.approx(3.0) for frame in frames)
+
+
+def test_sky_marks_the_fog_and_the_cloud_base():
+    columns, times = sky_columns(["fog", "trade_cumulus", "clear"])
+
+    ax = plot_sky(columns, times, show=False).axes[0]
+    bases = ax.collections[-1].get_offsets()
+
+    assert any(patch.get_hatch() == "..." for patch in ax.patches)
+    assert len(bases) == 2
+    assert bases[1][1] == pytest.approx(columns["cloud_base"][1] / 2000.0)
+
+
+def test_sky_shows_rain_and_snow_below():
+    columns, times = sky_columns(["warm_front", "warm_front"], t2m=[290.0, 272.0])
+
+    fig = plot_sky(columns, times, show=False)
+    bars = fig.axes[1].patches
+
+    assert len(fig.axes) == 2  # sky and precipitation
+    assert [bar.get_height() for bar in bars] == pytest.approx([3.0, 3.0])
+    assert to_rgba_set(bars) == {mpl.colors.to_rgba("#1e88e5"), mpl.colors.to_rgba("#90caf9")}
+
+
+def to_rgba_set(bars):
+    return {tuple(bar.get_facecolor()) for bar in bars}
+
+
+def test_sky_without_rate_has_no_precipitation_panel():
+    columns, times = sky_columns(["cirrus"])
+    del columns["prate"]
+
+    fig = plot_sky(columns, times, show=False)
+
+    assert len(fig.axes) == 1
+    assert len(fig.axes[0].child_axes) == 1  # the colorbar
+
+
+def test_sky_can_be_saved(tmp_path):
+    columns, times = sky_columns(["cumulonimbus", "fog"])
+    path = tmp_path / "sky.png"
+
+    plot_sky(columns, times, save_as=str(path), show=False)
+
+    assert path.read_bytes().startswith(b"\x89PNG")
+
+
+def test_sky_stacks_the_genera_present_in_a_cell():
+    columns, times = sky_columns(["warm_front", "cumulonimbus"])
+
+    ax = plot_sky(columns, times, show=False).axes[0]
+    low_row = [(text.get_text(), text.get_position()) for text in ax.texts if 0.0 < text.get_position()[1] < 1.0]
+    first = sorted((y, name) for name, (x, y) in low_row if x == pytest.approx(ax.get_xlim()[0] + (ax.get_xlim()[1] - ax.get_xlim()[0]) / 4))
+
+    # The main genus on top.
+    assert [name for y, name in reversed(first)] == ["St", "Sc"]
+    assert {"Cb", "Cu"} <= {name for name, position in low_row}
+
+
+def test_sky_style_must_be_known():
+    columns, times = sky_columns(["clear"])
+
+    with pytest.raises(ValueError, match="watercolor"):
+        plot_sky(columns, times, style="watercolor", show=False)
+
+
+def test_smooth_sky_paints_the_column_as_one_image():
+    columns, times = sky_columns(["clear", "trade_cumulus", "cumulonimbus", "warm_front"])
+
+    ax = plot_sky(columns, times, style="smooth", show=False).axes[0]
+    images = ax.get_images()
+
+    assert len(images) == 1
+    assert images[0].get_extent()[2:] == [0.0, 3.0]
+    # Clouds are whiter than the clear sky beside them, under the Cb anvil darker.
+    pixels = images[0].get_array()
+    assert pixels.shape[2] == 3 and pixels.min() >= 0.0 and pixels.max() <= 1.0
+
+
+def test_smooth_sky_tags_each_genus_where_it_is():
+    columns, times = sky_columns(["trade_cumulus", "trade_cumulus", "cumulonimbus", "cirrus"])
+
+    tags = {text.get_text() for text in plot_sky(columns, times, style="smooth", show=False).axes[0].texts}
+
+    assert {"Cu", "Cb", "Ci"} <= tags
+    assert not {"Cu", "Cb"} & {text.get_text() for text in plot_sky(columns, times, style="smooth", labels=False, show=False).axes[0].texts}
+
+
+def test_smooth_sky_draws_rain_only_under_clouds_and_lightning_in_storms():
+    columns, times = sky_columns(["cumulonimbus", "clear", "clear"], prate=[6.0, 0.0, 2.0])
+
+    ax = plot_sky(columns, times, style="smooth", show=False).axes[0]
+    rain = [
+        collection
+        for collection in ax.collections
+        if isinstance(collection, mpl.collections.LineCollection)
+        and mpl.colors.to_hex(collection.get_colors()[0]) == "#1e88e5"
+    ]
+    streaks = np.concatenate([np.asarray(segment)[:, 0] for collection in rain for segment in collection.get_segments()])
+    bolts = [line for line in ax.get_lines() if mpl.colors.to_hex(line.get_color()) == "#ffd54f"]
+
+    # All the streaks under the Cb, none in the clear sky that has a rate.
+    assert len(streaks) > 0
+    assert streaks.max() < mdates.date2num(pd.to_datetime(times[0] + 5400.0, unit="s"))
+    assert len(bolts) == 1
+
+
+def test_smooth_sky_shows_the_oktas_as_symbols():
+    columns, times = sky_columns(["clear", "warm_front", "fog"])
+
+    ax = plot_sky(columns, times, style="smooth", show=False).axes[0]
+    tops = [collection for collection in ax.collections if np.allclose(collection.get_offsets()[:, 1], 3.15)]
+
+    # A circle per point, a filled part for the clouds, a cross for the fog.
+    assert len(tops) == 3 + 1 + 1
+
+
+def test_smooth_sky_is_darker_at_night():
+    # Equator at the March equinox: noon and midnight at Greenwich.
+    noon = pd.Timestamp("2026-03-20 12:00").timestamp()
+    columns, times = sky_columns(["clear", "clear"])
+    times = np.array([noon - 12 * 3600.0, noon])
+
+    image = plot_sky(columns, times, style="smooth", latitude=[0.0, 0.0], longitude=[0.0, 0.0], show=False).axes[0].get_images()[0]
+    pixels = np.asarray(image.get_array())
+
+    assert pixels[:, : pixels.shape[1] // 4].mean() < 0.5 * pixels[:, -pixels.shape[1] // 4:].mean()
+
+
+def test_sun_elevation_at_noon_and_midnight_on_the_equinox():
+    noon = pd.Timestamp("2026-03-20 12:00").timestamp()
+
+    assert sun_elevation(noon, 0.0, 0.0) > 85.0
+    assert sun_elevation(noon - 12 * 3600.0, 0.0, 0.0) < -85.0
+    assert sun_elevation(noon, 0.0, 90.0) == pytest.approx(0.0, abs=2.0)
+
+
+def test_smooth_sky_can_be_saved(tmp_path):
+    columns, times = sky_columns(["cumulonimbus", "fog", "warm_front"])
+    path = tmp_path / "sky.png"
+
+    plot_sky(columns, times, style="smooth", save_as=str(path), show=False)
+
+    assert path.read_bytes().startswith(b"\x89PNG")

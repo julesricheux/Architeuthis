@@ -11,8 +11,10 @@ Created on Mon Dec 15 22:36:04 2025
 
 import os
 from contextlib import contextmanager
+from types import SimpleNamespace
 
 import matplotlib
+import matplotlib.collections
 
 import numpy as onp
 import pandas as pd
@@ -879,6 +881,746 @@ def plot_fuel_distribution(groups, horizontal=False, figsize=(8, 3), save_as=Non
             ax.set_xticklabels(list(groups.keys()))
             ax.set_ylabel("Fuel / tons")
         return _finish(fig, save_as, show)
+
+
+#%% SKY
+
+# Rows of the étages, of equal heights: the low étage to scale, 2 km
+# for the row, the middle and high ones schematic, since the model
+# covers give no heights.
+SKY_ETAGE_ROWS = {"low": (0.0, 1.0), "middle": (1.0, 2.0), "high": (2.0, 3.0)}
+SKY_STYLES = ("cells", "smooth")
+_LOW_ETAGE_KM = 2.0
+# Heights (km) at the bounds of the rows, for the smooth style.
+_ROW_KM = (0.0, 2.0, 6.0, 12.0)
+# Color of the genus labels, by form of the genus.
+_SKY_FORM_COLORS = {
+    "cumuliform": "#1f4e79",
+    "stratocumuliform": "#2e7d32",
+    "stratiform": "#424242",
+    "cirriform": "#7b1fa2",
+}
+_RAIN_COLOR = "#1e88e5"
+_SNOW_COLOR = "#90caf9"
+_FOG_HEIGHT = 0.15  # part of the low row
+_SKY_CMAP = matplotlib.colors.ListedColormap(plt.get_cmap("Greys")(onp.linspace(0.0, 0.8, 256)))
+
+# Smooth style: sky by day and by night, top and horizon, and clouds lit
+# and in shade.
+_DAY_SKY = ((0.18, 0.44, 0.73), (0.74, 0.87, 0.96))
+_NIGHT_SKY = ((0.07, 0.13, 0.27), (0.24, 0.32, 0.48))
+_CLOUD_LIT = onp.array([1.0, 1.0, 1.0])
+_CLOUD_SHADE = onp.array([0.33, 0.36, 0.42])
+_LIGHTNING_COLOR = "#ffd54f"
+
+# Smooth style, per genus: bottom and top (km, "base" for the cloud
+# base, "cape" for a depth growing with the CAPE), opacity, darkness and
+# texture.
+_SKY_LAYERS = {
+    "St": ("base", 0.45, 0.95, 0.45, "flat"),
+    "Sc": ("base", 0.9, 0.9, 0.35, "rolls"),
+    "Cu": ("base", "cape", 0.95, 0.2, "puffs"),
+    "Cb": ("base", 11.0, 1.0, 0.75, "tower"),
+    "Ns": (0.6, 6.5, 1.0, 0.8, "flat"),
+    "As": (3.0, 6.0, 0.85, 0.5, "flat"),
+    "Ac": (3.2, 4.6, 0.8, 0.15, "rolls"),
+    "Cs": (7.0, 10.0, 0.6, 0.05, "veil"),
+    "Ci": (8.0, 10.5, 0.75, 0.0, "fibres"),
+}
+
+
+def _cell_edges(seconds):
+    """
+    Edges of the columns centered on each time, in epoch seconds.
+    """
+    seconds = onp.asarray(seconds, dtype=float)
+    if seconds.size == 1:
+        return onp.array([seconds[0] - 5400.0, seconds[0] + 5400.0])
+    middles = 0.5 * (seconds[1:] + seconds[:-1])
+    return onp.concatenate((
+        [seconds[0] - (middles[0] - seconds[0])],
+        middles,
+        [seconds[-1] + (seconds[-1] - middles[-1])],
+    ))
+
+
+def _km_to_row(km):
+    """
+    Height in km to the vertical coordinate of the meteogram.
+    """
+    return onp.interp(km, _ROW_KM, [0.0, 1.0, 2.0, 3.0])
+
+
+def _row_to_km(row):
+    """
+    Vertical coordinate of the meteogram to height in km.
+    """
+    return onp.interp(row, [0.0, 1.0, 2.0, 3.0], _ROW_KM)
+
+
+def _smoothstep(edge0, edge1, x):
+    """
+    Smooth step from 0 at `edge0` to 1 at `edge1`.
+    """
+    t = onp.clip((x - edge0) / (edge1 - edge0), 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+
+def sun_elevation(seconds, latitude, longitude):
+    """
+    Elevation of the Sun above the horizon, to shade the nights.
+
+    A low-precision almanac, within a few tenths of a degree.
+
+    Args:
+        seconds: Times in epoch seconds.
+        latitude: Latitudes in degrees.
+        longitude: Longitudes in degrees.
+
+    Returns:
+        The elevation in degrees.
+    """
+    days = onp.asarray(seconds, dtype=float) / 86400.0 - 10957.5  # since J2000
+    anomaly = onp.radians(357.529 + 0.98560028 * days)
+    mean_longitude = 280.459 + 0.98564736 * days
+    ecliptic = onp.radians(mean_longitude + 1.915 * onp.sin(anomaly) + 0.020 * onp.sin(2.0 * anomaly))
+    obliquity = onp.radians(23.439 - 0.00000036 * days)
+    right_ascension = onp.degrees(onp.arctan2(onp.cos(obliquity) * onp.sin(ecliptic), onp.cos(ecliptic)))
+    declination = onp.arcsin(onp.sin(obliquity) * onp.sin(ecliptic))
+    sidereal = (18.697374558 + 24.06570982441908 * days) * 15.0
+    hour_angle = onp.radians(sidereal + onp.asarray(longitude, dtype=float) - right_ascension)
+    latitude = onp.radians(onp.asarray(latitude, dtype=float))
+    return onp.degrees(onp.arcsin(
+        onp.sin(latitude) * onp.sin(declination)
+        + onp.cos(latitude) * onp.cos(declination) * onp.cos(hour_angle)
+    ))
+
+
+def _sky_data(sky, valid_time):
+    """
+    Columns of a sky mapping, with their times and the genera present.
+    """
+    from architeuthis import sky as sky_module
+
+    seconds = onp.atleast_1d(onp.asarray(valid_time, dtype=float)).ravel()
+    count = seconds.size
+
+    def column(key, default=onp.nan):
+        if key not in sky:
+            return onp.full(count, default)
+        return onp.atleast_1d(onp.asarray(sky[key])).ravel()
+
+    codes = {etage: column(f"cloud_{etage}", sky_module.NONE).astype(int) for etage in sky_module.ETAGES}
+    present = {}
+    for etage in sky_module.ETAGES:
+        key = f"cloud_{etage}_genera"
+        if key in sky:
+            masks = column(key, 0).astype(int)
+        else:
+            masks = onp.where(codes[etage] >= 0, onp.left_shift(1, onp.maximum(codes[etage], 0)), 0)
+        present[etage] = [sky_module.genera_present(mask, main) for mask, main in zip(masks, codes[etage])]
+
+    return SimpleNamespace(
+        module=sky_module,
+        genera=sky_module.load_genera()["genera"],
+        limits=sky_module.THRESHOLDS,
+        seconds=seconds,
+        count=count,
+        centers=mdates.date2num(_times(seconds)),
+        edges=mdates.date2num(_times(_cell_edges(seconds))),
+        covers={"low": column("lcc", 0.0), "middle": column("mcc", 0.0), "high": column("hcc", 0.0)},
+        codes=codes,
+        present=present,
+        base=column("cloud_base"),
+        cape=onp.nan_to_num(column("cape", 0.0)),
+        rate=column("prate") if "prate" in sky else None,
+        t2m=column("t2m"),
+        fog=column("fog", False).astype(bool),
+        oktas=column("cloud_oktas", 0).astype(int),
+        column=column,
+    )
+
+
+def plot_sky(sky, valid_time, style="cells", title=None, labels=True, latitude=None, longitude=None, figsize=(12, 6), dpi=300, save_as=None, show=True):
+    """
+    Clouds over the air column along a route, as in a meteogram.
+
+    Two styles. "cells" has one row per étage, shaded by its cloud
+    cover, with the genera of `sky.diagnose` written in each column,
+    colored by their form, and "/" where the clouds below hide them; a
+    frame marks the genera that rise through the three étages (Cb,
+    Ns), dashes the cloud base, dots the fog, and the oktas run along
+    the top. "smooth" paints the sky and its clouds, drawn after their
+    genus: puffs of Cu, towers and anvils of Cb, rolls of Sc and Ac,
+    veils, fibres of Ci, rain and snow under them, lightning in the
+    storms, nights shaded when the positions are given, and the cover
+    in okta symbols along the top. Both have the precipitation rate in
+    a bottom panel, as rain or snow.
+
+    Args:
+        sky: Mapping holding the fields of `sky.SKY_VARIABLES` and the
+            result of `sky.diagnose`, as `fields | diagnose(fields)`.
+            Without `prate`, there is no bottom panel.
+        valid_time: Time of each point, in epoch seconds.
+        style: "cells" or "smooth".
+        title: Title of the figure.
+        labels: Whether to write the genera, and the oktas of "cells".
+        latitude, longitude: Position of each point, in degrees, to
+            shade the nights in the "smooth" style.
+        figsize, dpi: Size in inches and resolution.
+        save_as: File to write. Its extension gives the format, PDF if
+            it has none.
+        show: Whether to call `plt.show()`. Pass False in a GUI.
+
+    Returns:
+        The figure.
+    """
+    if style not in SKY_STYLES:
+        raise ValueError(f"Unknown sky style {style!r}: give one of {SKY_STYLES}.")
+    data = _sky_data(sky, valid_time)
+
+    with plot_style():
+        if data.rate is None:
+            fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+            axes = [ax]
+        else:
+            fig, axes = plt.subplots(
+                2, 1, figsize=figsize, dpi=dpi, sharex=True, gridspec_kw={"height_ratios": [3, 1]},
+            )
+            ax = axes[0]
+        ax.grid(False)
+
+        if style == "cells":
+            handles = _draw_sky_cells(fig, ax, data, labels)
+        else:
+            handles = _draw_sky_smooth(ax, data, labels, latitude, longitude)
+
+        ax.set_xlim(data.edges[0], data.edges[-1])
+        ax.set_ylim(0.0, 3.3)
+        ax.set_facecolor(to_rgba("white"))
+        if title:
+            ax.set_title(title)
+
+        if data.rate is not None:
+            handles += _draw_precipitation(axes[1], data)
+
+        bottom_axis = axes[-1]
+        # Beside the bottom panel, or beyond the colorbar of "cells" without one.
+        anchor = (1.01, 1.0) if data.rate is not None or style == "smooth" else (1.09, 1.0)
+        bottom_axis.legend(handles=handles, loc="upper left", bbox_to_anchor=anchor, fontsize=9, frameon=False)
+        bottom_axis.xaxis.set_major_formatter(mdates.DateFormatter("%d %HZ"))
+        bottom_axis.tick_params(axis="x", rotation=45)
+        bottom_axis.set_xlabel("Time (UTC)")
+        fig.tight_layout()
+        return _finish(fig, save_as, show)
+
+
+def _form_handles():
+    """
+    Legend entries of the colors of the genus forms.
+    """
+    return [
+        plt.Line2D([], [], color=to_rgba(color), marker="s", linestyle="", label=form)
+        for form, color in _SKY_FORM_COLORS.items()
+    ]
+
+
+def _draw_precipitation(ax, data):
+    """
+    Precipitation rate as bars, rain or snow, and their legend entries.
+    """
+    snow = data.t2m < data.limits["snow_temperature"]
+    widths = 0.8 * onp.diff(data.edges)
+    ax.bar(data.centers[~snow], data.rate[~snow], width=widths[~snow], color=to_rgba(_RAIN_COLOR), label="Rain")
+    ax.bar(data.centers[snow], data.rate[snow], width=widths[snow], color=to_rgba(_SNOW_COLOR), label="Snow")
+    ax.set_ylim(0.0, max(1.0, 1.15 * float(onp.nanmax(data.rate, initial=0.0))))
+    ax.set_ylabel("Rate / mm/h")
+    return [
+        plt.Rectangle((0, 0), 1, 1, color=to_rgba(_RAIN_COLOR), label="Rain"),
+        plt.Rectangle((0, 0), 1, 1, color=to_rgba(_SNOW_COLOR), label="Snow"),
+    ]
+
+
+def _draw_sky_cells(fig, ax, data, labels):
+    """
+    The "cells" style: one shaded row per étage and its genera.
+    """
+    genera, edges, centers = data.genera, data.edges, data.centers
+
+    # Cover of each étage, white to dark grey.
+    for etage, (bottom, top) in SKY_ETAGE_ROWS.items():
+        mesh = ax.pcolormesh(
+            edges,
+            [bottom, top],
+            onp.clip(data.covers[etage], 0.0, 1.0)[None, :],
+            cmap=_SKY_CMAP,
+            vmin=0.0,
+            vmax=1.0,
+            shading="flat",
+        )
+    for height in (1.0, 2.0):
+        ax.axhline(height, color=to_rgba("0.6"), linewidth=0.8)
+
+    # Genera rising through every étage, even hidden: a frame from their base up.
+    tall = {i for i, genus in enumerate(genera) if len(genus["spans"]) == len(SKY_ETAGE_ROWS)}
+    # Cloud base in the low row, to scale.
+    base_row = onp.minimum(data.base / 1000.0 / _LOW_ETAGE_KM, 1.0)
+    for i in range(data.count):
+        for etage in ("low", "middle"):
+            rising = [code for code in data.present[etage][i] if code in tall]
+            if rising:
+                bottom = base_row[i] if etage == "low" and onp.isfinite(base_row[i]) else SKY_ETAGE_ROWS[etage][0]
+                ax.add_patch(plt.Rectangle(
+                    (edges[i], bottom),
+                    edges[i + 1] - edges[i],
+                    SKY_ETAGE_ROWS["high"][1] - bottom,
+                    fill=False,
+                    edgecolor=to_rgba(_SKY_FORM_COLORS[genera[rising[0]]["form"]]),
+                    linewidth=1.5,
+                ))
+                break
+
+    # Cloud base of the low clouds, and fog at the surface.
+    low = data.codes["low"] >= 0
+    ax.scatter(centers[low], base_row[low], marker="_", s=120, color=to_rgba("black"), label="Cloud base", zorder=3)
+    for i in onp.flatnonzero(data.fog):
+        ax.add_patch(plt.Rectangle(
+            (edges[i], 0.0),
+            edges[i + 1] - edges[i],
+            _FOG_HEIGHT,
+            facecolor=to_rgba("0.85"),
+            edgecolor=to_rgba("0.4"),
+            hatch="...",
+            linewidth=0.0,
+        ))
+
+    if labels:
+        for etage, (bottom, top) in SKY_ETAGE_ROWS.items():
+            # Above the cloud base in the low row.
+            middle_height = bottom + (0.72 if etage == "low" else 0.5) * (top - bottom)
+            for i in range(data.count):
+                if data.codes[etage][i] == data.module.HIDDEN:
+                    texts = [("/", to_rgba("0.55"), "normal")]
+                else:
+                    texts = [
+                        (genera[code]["abbreviation"], to_rgba(_SKY_FORM_COLORS[genera[code]["form"]]), "bold")
+                        for code in data.present[etage][i]
+                    ]
+                # Several genera stacked in the cell, the main one on top.
+                spacing = 0.24
+                for rank, (text, color, weight) in enumerate(texts):
+                    ax.text(
+                        centers[i],
+                        middle_height + spacing * ((len(texts) - 1) / 2.0 - rank),
+                        text,
+                        ha="center",
+                        va="center",
+                        fontsize=8 if len(texts) == 1 else 7,
+                        fontweight=weight,
+                        bbox={"boxstyle": "round,pad=0.15", "facecolor": to_rgba("white", 0.75), "edgecolor": "none"},
+                        color=color,
+                    )
+        for i, oktas in enumerate(data.oktas):
+            ax.text(centers[i], 3.06, str(oktas), ha="center", va="bottom", fontsize=8)
+        ax.text(1.005, 3.06, "N", transform=ax.get_yaxis_transform(), va="bottom", fontsize=8)
+
+    ax.set_yticks([0.0, 0.5, 1.0, 1.5, 2.5])
+    ax.set_yticklabels(["0", "1", "2 km", "Middle", "High"])
+    ax.set_ylabel("Étage")
+
+    colorbar_axes = ax.inset_axes([1.03, 0.0, 0.015, 0.9])
+    fig.colorbar(mesh, cax=colorbar_axes, label="Cover", ticks=[0.0, 0.5, 1.0])
+    handles = _form_handles()
+    handles.append(plt.Line2D([], [], color=to_rgba("black"), marker="_", linestyle="", markersize=10, label="Cloud base"))
+    if data.fog.any():
+        handles.append(plt.Rectangle((0, 0), 1, 1, facecolor=to_rgba("0.85"), edgecolor=to_rgba("0.4"), hatch="...", label="Fog"))
+    return handles
+
+
+def _genus_layers(data):
+    """
+    Weight, bottom and top in km of each genus of the smooth style.
+
+    The weight is the cover of the étage where the genus is present,
+    else 0. Bottom and top are carried over the points without the
+    genus, so that it fades in and out without jumping in height.
+    """
+    etage_of = {genus["abbreviation"]: genus["etage"] for genus in data.genera}
+    index_of = {genus["abbreviation"]: i for i, genus in enumerate(data.genera)}
+    base_km = onp.clip(onp.nan_to_num(data.base / 1000.0, nan=0.6), 0.05, 2.5)
+    layers = {}
+    for abbreviation, (bottom, top, opacity, darkness, texture) in _SKY_LAYERS.items():
+        etage = etage_of[abbreviation]
+        here = onp.array([index_of[abbreviation] in codes for codes in data.present[etage]])
+        if not here.any():
+            continue
+        bottoms = base_km if bottom == "base" else onp.full(data.count, float(bottom))
+        if top == "cape":
+            # Humilis about 1 km thick, congestus up to the middle étage.
+            tops = bottoms + onp.clip(0.5 + data.cape / 600.0, 0.5, 5.0)
+        elif abbreviation in ("St", "Sc"):
+            tops = bottoms + top
+        else:
+            tops = onp.full(data.count, float(top))
+        cover = data.covers[etage]
+        if abbreviation == "Cb":
+            cover = onp.maximum(cover, 0.6)
+        weight = onp.where(here, onp.clip(cover, 0.0, 1.0), 0.0)
+        # Carry the heights over the gaps, from the nearest point with the genus.
+        nearest = onp.flatnonzero(here)[onp.abs(onp.arange(data.count)[:, None] - onp.flatnonzero(here)[None, :]).argmin(axis=1)]
+        layers[abbreviation] = SimpleNamespace(
+            weight=weight,
+            bottom=bottoms[nearest],
+            top=onp.maximum(tops[nearest], bottoms[nearest] + 0.2),
+            opacity=opacity,
+            darkness=darkness,
+            texture=texture,
+            form=data.genera[index_of[abbreviation]]["form"],
+            here=here,
+        )
+    return layers
+
+
+def _noise(phase, seed, scale=1.0):
+    """
+    Smooth noise in [-1, 1] along the route, from a few random waves.
+    """
+    rng = onp.random.default_rng(seed)
+    noise = onp.zeros_like(phase)
+    for frequency in (0.7, 1.9, 4.3):
+        noise += onp.sin(2.0 * onp.pi * frequency * phase / scale + rng.uniform(0.0, 2.0 * onp.pi)) / frequency
+    return noise / 1.9
+
+
+def _over(field, opacity, darkness):
+    """
+    Lay a cloud of some opacity and darkness over the field.
+    """
+    field.shade += opacity * darkness
+    field.weight += opacity
+    field.transmitted *= 1.0 - onp.clip(opacity, 0.0, 1.0)
+
+
+def _dome(field, phase, rows, center, half_width, base, top, opacity, darkness):
+    """
+    One heaped cloud: flat base, rounded top, darker underneath.
+    """
+    columns = onp.abs(phase - center) < half_width * 1.4
+    if not columns.any():
+        return
+    dx = (phase[columns][None, :] - center) / half_width
+    height = max(top - base, 1e-3)
+    rel = (rows[:, None] - base) / height
+    # A main dome and two lower lobes, as cauliflower.
+    distance = onp.minimum.reduce([
+        onp.hypot(dx, onp.maximum(rel, 0.0)),
+        onp.hypot((dx + 0.55) / 0.6, onp.maximum(rel, 0.0) / 0.75),
+        onp.hypot((dx - 0.5) / 0.65, onp.maximum(rel, 0.0) / 0.8),
+    ])
+    inside = (1.0 - _smoothstep(0.88, 1.0, distance)) * _smoothstep(-0.02, 0.01, rel)
+    sub = SimpleNamespace(shade=field.shade[:, columns], weight=field.weight[:, columns], transmitted=field.transmitted[:, columns])
+    _over(sub, opacity * inside, darkness + 0.4 * (1.0 - onp.clip(rel, 0.0, 1.0)))
+    field.shade[:, columns], field.weight[:, columns], field.transmitted[:, columns] = sub.shade, sub.weight, sub.transmitted
+
+
+def _cloud_field(layers, data, x, rows):
+    """
+    Opacity and darkness of the clouds on the grid of the smooth style.
+
+    Layers of stratiform clouds have bumpy edges and gaps where their
+    cover is broken; Cu are separate domes and Cb towers with an anvil.
+    The genera are laid over each other, each letting through the
+    light the others leave. Ci are drawn apart, as strokes.
+    """
+    from scipy.ndimage import gaussian_filter, gaussian_filter1d
+
+    column_width = float(onp.median(onp.diff(data.edges)))
+    phase = (x - data.edges[0]) / column_width  # in columns
+    centers = (data.centers - data.edges[0]) / column_width
+    shape = (rows.size, x.size)
+    field = SimpleNamespace(shade=onp.zeros(shape), weight=onp.zeros(shape), transmitted=onp.ones(shape))
+    rng = onp.random.default_rng(1)
+
+    for seed, (abbreviation, layer) in enumerate(layers.items()):
+        if layer.texture in ("puffs", "tower", "fibres"):
+            continue
+        weight = onp.interp(x, data.centers, layer.weight)
+        # Ends of the layer rounded and irregular rather than cut.
+        spread = gaussian_filter1d(weight, sigma=0.35 * x.size / max(data.count, 1))
+        present = _smoothstep(0.15, 0.5, spread + 0.15 * _noise(phase, seed + 30, 2.0))
+        bottom = _km_to_row(onp.interp(x, data.centers, layer.bottom))
+        top = _km_to_row(onp.interp(x, data.centers, layer.top))
+        crisp = layer.texture != "veil"
+        if layer.texture == "rolls":
+            # Broken into rolls where the cover is below 1.
+            gaps = _smoothstep(1.0 - 1.5 * weight - 0.1, 1.0 - 1.5 * weight + 0.1, 0.5 + 0.5 * _noise(phase, seed, 2.5))
+            presence = present * gaps
+            top = top + 0.035 * _noise(phase, seed + 10, 1.5)
+            bottom = bottom + 0.01 * _noise(phase, seed + 20, 2.0)
+        else:
+            presence = present
+            top = top + (0.025 if crisp else 0.01) * _noise(phase, seed + 10, 2.0)
+            # Ragged base of the rain clouds.
+            bottom = bottom + (0.035 if abbreviation == "Ns" else 0.008) * _noise(phase, seed + 20, 1.0)
+        # Thinner towards the ends.
+        top = bottom + (top - bottom) * (0.35 + 0.65 * present)
+        edge = 0.02 if crisp else 0.12
+        height = onp.maximum(top - bottom, 1e-3)
+        rel = (rows[:, None] - bottom[None, :]) / height[None, :]
+        profile = _smoothstep(0.0, edge / height, rel)[...] * (1.0 - _smoothstep(1.0 - edge / height, 1.0, rel))
+        opacity = layer.opacity * (0.55 + 0.45 * weight)[None, :] * presence[None, :] * profile
+        darkness = layer.darkness + 0.3 * (1.0 - onp.clip(rel, 0.0, 1.0))
+        _over(field, opacity, darkness)
+
+    for abbreviation, layer in layers.items():
+        if layer.texture == "puffs":
+            for i in onp.flatnonzero(layer.here):
+                cover = layer.weight[i]
+                base = float(_km_to_row(layer.bottom[i]))
+                for _ in range(1 + int(round(2.0 * cover))):
+                    depth_km = (layer.top[i] - layer.bottom[i]) * rng.uniform(0.55, 1.0)
+                    _dome(
+                        field, phase, rows,
+                        center=centers[i] + rng.uniform(-0.4, 0.4),
+                        half_width=rng.uniform(0.35, 0.55) * (0.75 + 0.5 * cover),
+                        base=base,
+                        top=float(_km_to_row(layer.bottom[i] + depth_km)),
+                        opacity=layer.opacity,
+                        darkness=0.08,
+                    )
+        elif layer.texture == "tower":
+            for i in onp.flatnonzero(layer.here):
+                base = float(_km_to_row(layer.bottom[i]))
+                # The tower, with bulging sides, then the anvil spreading downwind.
+                for lobe in range(4):
+                    _dome(
+                        field, phase, rows,
+                        center=centers[i] + rng.uniform(-0.15, 0.15),
+                        half_width=0.7 - 0.08 * lobe,
+                        base=base,
+                        top=float(_km_to_row(9.0 + 0.4 * lobe)),
+                        opacity=layer.opacity,
+                        darkness=0.35,
+                    )
+                anvil_center = centers[i] + 0.5
+                dx = (phase - anvil_center) / 1.5
+                anvil_rows = (rows - float(_km_to_row(10.3))) / 0.13
+                anvil = (1.0 - _smoothstep(0.85, 1.0, onp.hypot(dx[None, :], anvil_rows[:, None])))
+                anvil *= 1.0 - _smoothstep(float(_km_to_row(11.0)) - 0.02, float(_km_to_row(11.0)), rows)[:, None]
+                _over(field, 0.95 * anvil, onp.full(shape, 0.15))
+
+    alpha = 1.0 - field.transmitted
+    darkness = onp.divide(field.shade, field.weight, out=onp.zeros(shape), where=field.weight > 1e-6)
+    sigma = (0.8, 0.8)
+    alpha = gaussian_filter(alpha, sigma)
+    darkness = gaussian_filter(darkness * alpha, sigma) / onp.maximum(alpha, 1e-6)
+    return onp.clip(alpha, 0.0, 1.0), onp.clip(darkness, 0.0, 1.0)
+
+
+def _cirrus_strokes(layers, data, light_at):
+    """
+    Hooked strokes of Cirrus, as line segments with their colors.
+    """
+    layer = layers.get("Ci")
+    if layer is None:
+        return [], []
+    rng = onp.random.default_rng(2)
+    column_width = float(onp.median(onp.diff(data.edges)))
+    lines, colors = [], []
+    for i in onp.flatnonzero(layer.here):
+        for _ in range(2 + int(round(5.0 * layer.weight[i]))):
+            x0 = data.centers[i] + column_width * rng.uniform(-0.5, 0.3)
+            y0 = float(_km_to_row(rng.uniform(layer.bottom[i], layer.top[i] - 0.5)))
+            s = onp.linspace(0.0, 1.0, 12)
+            # A slanted filament ending in a hook.
+            xs = x0 + column_width * 0.55 * s
+            ys = y0 + 0.07 * s + 0.05 * _smoothstep(0.7, 1.0, s) ** 2
+            lines.append(onp.column_stack((xs, ys)))
+            colors.append(to_rgba("white", 0.75 * (0.5 + 0.5 * light_at(x0))))
+    return lines, colors
+
+
+def _okta_marker(oktas):
+    """
+    Vertices of the filled part of a WMO sky cover symbol.
+    """
+    if oktas <= 0:
+        return None
+    angles = onp.linspace(onp.pi / 2.0, onp.pi / 2.0 - 2.0 * onp.pi * min(oktas, 8) / 8.0, 40)
+    return [(0.0, 0.0)] + [(onp.cos(a), onp.sin(a)) for a in angles] + [(0.0, 0.0)]
+
+
+def _draw_oktas(ax, data):
+    """
+    WMO sky cover symbols along the top of the smooth style.
+
+    A circle filled by eighths, crossed when fog hides the sky.
+    """
+    step = max(1, int(onp.ceil(data.count / 40)))
+    for i in range(0, data.count, step):
+        x, oktas = data.centers[i], int(data.oktas[i])
+        ax.scatter([x], [3.15], s=60, marker="o", facecolor=to_rgba("white"), edgecolor=to_rgba("0.2"), linewidth=0.8, zorder=5, clip_on=False)
+        if oktas == 9:
+            ax.scatter([x], [3.15], s=40, marker="x", color=to_rgba("0.2"), linewidth=1.0, zorder=6, clip_on=False)
+        elif oktas > 0:
+            ax.scatter([x], [3.15], s=60, marker=_okta_marker(oktas), color=to_rgba("0.2"), linewidth=0.0, zorder=6, clip_on=False)
+    ax.text(1.005, 3.15, "N", transform=ax.get_yaxis_transform(), va="center", fontsize=8)
+
+
+def _draw_sky_smooth(ax, data, labels, latitude, longitude):
+    """
+    The "smooth" style: the sky and its clouds painted along the route.
+    """
+    width = max(400, min(1600, 16 * data.count))
+    x = onp.linspace(data.edges[0], data.edges[-1], width)
+    rows = onp.linspace(0.0, 3.0, 300)
+    km = _row_to_km(rows)
+
+    # Sky: day or night, darker towards the top.
+    if latitude is not None and longitude is not None:
+        seconds = onp.interp(x, data.centers, data.seconds)
+        elevation = sun_elevation(
+            seconds,
+            onp.interp(x, data.centers, onp.ravel(latitude)),
+            onp.interp(x, data.centers, onp.ravel(longitude)),
+        )
+        from scipy.ndimage import gaussian_filter1d
+
+        daylight = gaussian_filter1d(_smoothstep(-10.0, 4.0, elevation), sigma=width / max(data.count, 1) * 0.4)
+    else:
+        daylight = onp.ones(width)
+    vertical = (rows / 3.0)[:, None, None]
+    day = onp.array(_DAY_SKY[1]) * (1.0 - vertical) + onp.array(_DAY_SKY[0]) * vertical
+    night = onp.array(_NIGHT_SKY[1]) * (1.0 - vertical) + onp.array(_NIGHT_SKY[0]) * vertical
+    light = daylight[None, :, None]
+    background = night * (1.0 - light) + day * light
+
+    layers = _genus_layers(data)
+    alpha, darkness = _cloud_field(layers, data, x, rows)
+    color = _CLOUD_LIT * (1.0 - darkness[..., None]) + _CLOUD_SHADE * darkness[..., None]
+    color = color * (0.5 + 0.5 * light)
+    opacity = (alpha ** 0.85)[..., None]
+    image = background * (1.0 - opacity) + color * opacity
+
+    # Fog: haze rising from the sea.
+    fog = onp.interp(x, data.centers, data.fog.astype(float))
+    haze = (fog[None, :] * (1.0 - _smoothstep(0.0, 0.25, rows))[:, None])[..., None]
+    image = image * (1.0 - 0.85 * haze) + onp.array([0.86, 0.87, 0.88]) * (0.5 + 0.5 * light) * 0.85 * haze
+
+    ax.imshow(
+        onp.clip(image, 0.0, 1.0),
+        extent=(x[0], x[-1], 0.0, 3.0),
+        origin="lower",
+        aspect="auto",
+        interpolation="bilinear",
+        zorder=0,
+    )
+
+    lines, colors = _cirrus_strokes(layers, data, lambda x_: float(onp.interp(x_, x, daylight)))
+    if lines:
+        ax.add_collection(matplotlib.collections.LineCollection(lines, colors=colors, linewidths=1.1, capstyle="round", zorder=1))
+
+    handles = []
+    rng = onp.random.default_rng(0)
+    rate = data.rate if data.rate is not None else onp.zeros(data.count)
+    snowing = data.t2m < data.limits["snow_temperature"]
+    base_km = onp.clip(onp.nan_to_num(data.base / 1000.0, nan=1.0), 0.1, 2.5)
+    rain_lines, snow_points = [], []
+    column_width = float(onp.median(onp.diff(data.edges)))
+    # Only under a column with clouds: a light rate under a clear sky is left to the bottom panel.
+    clouded = onp.array([any(data.present[etage][i] for etage in data.module.ETAGES) for i in range(data.count)])
+    for i in onp.flatnonzero((rate >= data.limits["rain_rate"]) & clouded):
+        count = int(min(40, 4 + 6 * rate[i]))
+        xs = data.centers[i] + column_width * rng.uniform(-0.5, 0.5, count)
+        top = _km_to_row(base_km[i])
+        if snowing[i]:
+            snow_points += [(x_, rng.uniform(0.02, top)) for x_ in xs]
+        else:
+            for x_ in xs:
+                start = rng.uniform(0.15 * top, top)
+                length = rng.uniform(0.08, 0.2)
+                rain_lines.append([(x_, start), (x_ - 0.12 * column_width, start - length)])
+    if rain_lines:
+        ax.add_collection(matplotlib.collections.LineCollection(rain_lines, colors=[to_rgba(_RAIN_COLOR, 0.75)], linewidths=0.9, zorder=2))
+        handles.append(plt.Line2D([], [], color=to_rgba(_RAIN_COLOR), label="Rain under the clouds"))
+    if snow_points:
+        points = onp.array(snow_points)
+        ax.scatter(points[:, 0], points[:, 1], s=6, marker="*", color=to_rgba("white"), edgecolor=to_rgba(_SNOW_COLOR), linewidth=0.3, zorder=2)
+        handles.append(plt.Line2D([], [], color=to_rgba(_SNOW_COLOR), marker="*", linestyle="", label="Snow under the clouds"))
+
+    # Lightning under the thunderstorms.
+    storms = [i for i in range(data.count) if data.codes["low"][i] == data.module.genus_index("Cb")]
+    for i in storms:
+        top = _km_to_row(base_km[i])
+        xs = data.centers[i] + column_width * onp.array([0.05, -0.12, 0.08, -0.1, 0.02])
+        ys = onp.linspace(top, 0.05, xs.size)
+        ax.plot(xs, ys, color=to_rgba(_LIGHTNING_COLOR), linewidth=1.6, zorder=3, solid_joinstyle="miter")
+    if storms:
+        handles.append(plt.Line2D([], [], color=to_rgba(_LIGHTNING_COLOR), linewidth=1.6, label="Thunderstorm"))
+
+    if labels:
+        _label_genera(ax, data, layers)
+
+    _draw_oktas(ax, data)
+    ticks = [0.0, 0.5, 1.0, 1.5, 2.0, 4.0, 6.0, 9.0, 12.0]
+    ax.set_yticks(_km_to_row(ticks))
+    ax.set_yticklabels([f"{tick:g}" for tick in ticks])
+    ax.set_ylabel("Height / km")
+    for height in (1.0, 2.0):
+        ax.axhline(height, color=to_rgba("white", 0.35), linewidth=0.6, linestyle=(0, (4, 4)), zorder=1)
+    return _form_handles() + handles
+
+
+def _label_genera(ax, data, layers):
+    """
+    Tag each genus of the smooth style where it is.
+
+    One tag per stretch of the route where the genus is present, at
+    its height in the column, repeated on long stretches.
+    """
+    every = 12  # points between two tags of a long stretch
+    column_width = float(onp.median(onp.diff(data.edges)))
+    placed = []
+    for abbreviation, layer in layers.items():
+        here = layer.here
+        starts = onp.flatnonzero(here & ~onp.concatenate(([False], here[:-1])))
+        ends = onp.flatnonzero(here & ~onp.concatenate((here[1:], [False])))
+        for start, end in zip(starts, ends):
+            length = end - start + 1
+            tags = max(1, int(round(length / every)))
+            for k in range(tags):
+                i = int(start + (k + 0.5) * length / tags)
+                bottom, top = layer.bottom[i], layer.top[i]
+                if layer.texture == "tower":
+                    km = 9.9  # on the anvil
+                elif layer.texture == "puffs":
+                    km = bottom + 0.35 * (top - bottom)
+                else:
+                    km = 0.5 * (bottom + top)
+                y = max(0.08, float(_km_to_row(km)))
+                # Away from tags already placed at the same place.
+                for x_other, y_other in placed:
+                    if abs(x_other - i) < 1.5 and abs(y_other - y) < 0.14:
+                        y = y_other - 0.16
+                placed.append((i, y))
+                # Inside the plot at both ends of the route.
+                x_tag = onp.clip(data.centers[i], data.edges[0] + 0.5 * column_width, data.edges[-1] - 0.5 * column_width)
+                ax.text(
+                    x_tag,
+                    y,
+                    abbreviation,
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    fontweight="bold",
+                    color=to_rgba("white"),
+                    bbox={
+                        "boxstyle": "round,pad=0.2",
+                        "facecolor": to_rgba(_SKY_FORM_COLORS[layer.form], 0.85),
+                        "edgecolor": "none",
+                    },
+                    zorder=7,
+                )
 
 
 #%% FORMER FIGURES
