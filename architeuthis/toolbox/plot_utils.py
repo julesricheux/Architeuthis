@@ -798,9 +798,9 @@ def plot_fuel_quantiles(reports, daily=False, converged_only=True, figsize=(8, 4
         frame = frame[frame["status"] == 1]
 
     quantity = "daily_fuel" if daily else "fuel"
-    quantiles = frame.groupby("eta")[quantity].quantile(
-        [0.01, 0.05, 0.25, 0.50, 0.75, 0.95, 0.99]
-    ).unstack()
+    levels = [0.01, 0.05, 0.25, 0.50, 0.75, 0.95, 0.99]
+    # Every column even without reports, when none converged for example: the axes stay empty.
+    quantiles = frame.groupby("eta")[quantity].quantile(levels).unstack().reindex(columns=levels)
     x = _times(quantiles.index.values)
 
     with plot_style():

@@ -870,7 +870,7 @@ plot_fuel_vs_etd(reports)
 plot_variable(selected, "sog", unit="kts", labels=options)
 plot_power_and_weather(selected, labels=options)
 plot_variable(reports[1:], "tws", unit="kts", figsize=(9, 3), dpi=100)
-plot_variable([reports[-3]], "sails_contribution", unit="%", ylim=(-1., 101.), figsize=(10, 3), dpi=100)
+plot_variable(reports[-1:], "sails_contribution", unit="%", ylim=(-1., 101.), figsize=(10, 3), dpi=100)
 plot_fuel_distribution({f"Eff. {efficiency}%": reports.select(vessel=f"eff{efficiency}") for efficiency in [45, 60]})
 
 #%% FIGURES: SPREAD OF SEVERAL RUNS
