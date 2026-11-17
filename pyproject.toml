@@ -4,7 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "architeuthis"
-version = "0.2.0"  # must match the release tag
+# The version is architeuthis.__version__, read without importing the package.
+dynamic = ["version"]
 description = "An open-source, mesh-free and differntiable ocean weather routing and decision-making framework for hybrid sailing ships"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -69,15 +70,17 @@ dependencies = [
     "pyproj",
     "sortedcontainers",
     "tqdm",
+    "keyring",
 ]
 
 [project.optional-dependencies]
 app = [
     "flask",
-    "dash>=3.2,<4",
+    "dash>=4.5,<5",
     "dash-extensions",
     "dash-leaflet",
-    "dash-mantine-components",
+    # 3.x needs React 19, which ui.py selects in Dash 4.5
+    "dash-mantine-components>=3,<4",
     "dash-iconify",
 ]
 test = [
@@ -90,6 +93,9 @@ test = [
 Homepage = "https://github.com/julesricheux/Architeuthis"
 Repository = "https://github.com/julesricheux/Architeuthis"
 Issues = "https://github.com/julesricheux/Architeuthis/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "architeuthis.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["architeuthis*"]

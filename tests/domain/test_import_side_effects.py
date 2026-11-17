@@ -41,7 +41,8 @@ def run(code, tmp_path, **environment):
     work = tmp_path / "work"
     work.mkdir()
 
-    env = {key: value for key, value in os.environ.items() if key not in ("CDS_API_KEY", "CMEMS_USER", "CMEMS_PWD")}
+    # The session environment, already free of credentials (tests/conftest.py).
+    env = dict(os.environ)
     env |= {
         "HOME": str(home),
         "USERPROFILE": str(home),
@@ -170,25 +171,68 @@ print(json.dumps({"before": before, "after": len(calls), "points": len(zone), "n
     assert (home / "data" / "iip" / "IcebergBulletin.txt").exists()
 
 
-@pytest.mark.parametrize("key, written", [("my-key", True), (None, False)])
-def test_cdsapirc_is_written_only_before_a_download_and_only_with_a_key(tmp_path, key, written):
-    environment = {} if key is None else {"CDS_API_KEY": key}
-
-    home, _, result = run(
+def test_importing_the_package_leaves_the_credential_store_alone(tmp_path):
+    _, _, result = run(
         """
-from architeuthis import common
+import architeuthis.core
+import architeuthis.forecast
+import architeuthis.satellite
+import architeuthis.credentials
 
-import os
-
-before = os.path.exists(common.file_path)
-common.ensure_cdsapirc()
-print(json.dumps({"before": before, "after": os.path.exists(common.file_path)}))
+print(json.dumps({"keyring_imported": "keyring" in sys.modules}))
 """,
         tmp_path,
-        **environment,
     )
 
-    assert result["before"] is False
-    assert result["after"] is written
-    if written:
-        assert "my-key" in (home / ".cdsapirc").read_text()
+    assert result["keyring_imported"] is False
+
+
+def test_a_missing_credential_stops_the_download_and_writes_nothing(tmp_path):
+    home, _, result = run(
+        """
+from architeuthis.credentials import MissingCredentialError
+from architeuthis.forecast import CDSForecast
+import pandas as pd
+
+forecast = CDSForecast("cds", "reanalysis-era5-single-levels", products="reanalysis", variables=["2m_temperature"], start=pd.Timestamp("2025-01-01"))
+try:
+    forecast._download_data()
+except MissingCredentialError as error:
+    print(json.dumps({"error": str(error)}))
+""",
+        tmp_path,
+    )
+
+    assert "CDS_API_KEY" in result["error"]
+    assert not (home / ".cdsapirc").exists()
+
+
+def test_architeuthis_home_moves_the_data_folder(tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+
+    _, _, result = run(
+        """
+from architeuthis.common import _HOME
+from architeuthis.report import ROUTES_DIRECTORY
+
+print(json.dumps({"home": _HOME, "routes": ROUTES_DIRECTORY}))
+""",
+        tmp_path,
+        ARCHITEUTHIS_HOME=str(elsewhere),
+    )
+
+    assert result["home"] == str(elsewhere)
+    assert result["routes"] == str(elsewhere / "routes")
+
+
+def test_data_folder_defaults_to_data_in_the_home(tmp_path):
+    home, _, result = run(
+        """
+from architeuthis.common import _HOME
+
+print(json.dumps({"home": _HOME}))
+""",
+        tmp_path,
+    )
+
+    assert result["home"] == str(home / "data")

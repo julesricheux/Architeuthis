@@ -3,9 +3,10 @@
 Base classes of the domain and data objects, and shared helpers.
 
 It defines `ArchiteuthisObject`, `ArchiteuthisData` with its `load_data`
-pipeline and its lookup tables, and `ArchiteuthisSpatialData`.
-It reads the credentials from the environment and holds the `status`
-output.
+pipeline and its models (lookup tables or functions), `FunctionModel`
+and `ArchiteuthisSpatialData`.
+It holds the paths of the package and the `status` output. The
+credentials are in `credentials`.
 
 Created on Thu Jan 15 12:44:25 2026
 
@@ -17,47 +18,25 @@ import logging
 from abc import ABC, abstractmethod
 
 import architeuthis.numpy as np
-from architeuthis.modeling import InterpolatedModel
+from architeuthis.modeling import HybridInterpolatedModel
 
-from casadi import interpolant
+from casadi import DM
 
 from typing import Any, Callable, Literal, Optional, Sequence, Union
 from pandas import Timestamp
 from datetime import datetime
 
-def _get_env_var(key):
-    if key in os.environ:
-        return os.environ[key]
-    else:
-        return None
-
 log = logging.getLogger(__name__)
 
 Datetime = Union[datetime, Timestamp, str]
 
-_USER = os.path.expanduser("~")
+_USER_HOME = os.path.expanduser("~")
 
-#TODO should probably be in __init__
-_HOME = os.path.join(
-    _USER,
-    "data",
-)
+# Where downloads, libraries and reports are kept. ARCHITEUTHIS_HOME moves it,
+# read once at import like the other constants.
+_HOME = os.path.expanduser(os.environ.get("ARCHITEUTHIS_HOME") or os.path.join(_USER_HOME, "data"))
 
 _CDS_URL = "https://cds.climate.copernicus.eu/api"
-_CDS_API_KEY = _get_env_var("CDS_API_KEY")
-
-_CMEMS_USER = _get_env_var("CMEMS_USER")
-_CMEMS_PWD = _get_env_var("CMEMS_PWD")
-
-_EUMDAC_USER = _get_env_var("EUMDAC_USER")
-_EUMDAC_PWD = _get_env_var("EUMDAC_PWD")
-
-_EUMDAC_CREDENTIALS = (_EUMDAC_USER, _EUMDAC_PWD)
-
-file_path = os.path.join(
-    _USER,
-    ".cdsapirc",
-)
 
 
 # ------------------------------------------------------------------------------
@@ -93,59 +72,19 @@ def set_status_sink(sink: Optional[Callable[[str], Any]]) -> None:
 # keeps its own logging and files.
 # ------------------------------------------------------------------------------
 
-_credentials_reported = False
-
-
 def setup_logging(level: int = logging.INFO, force: bool = False) -> None:
     """
-    Log to the console and report data providers without credentials.
+    Log to the console.
 
     `load_data` calls this. It leaves logging alone if the application
     has already configured it, unless `force` is True.
     """
-    global _credentials_reported
-
     logging.basicConfig(
         level=level,
         format="%(asctime)s  %(levelname)-8s  %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         force=force,
     )
-
-    if _credentials_reported:
-        return
-    _credentials_reported = True
-
-    if _CDS_API_KEY is None:
-        log.info("CDS API key was not specified. Copernicus atmosphere data will be unavailable.")
-    if (_CMEMS_USER is None) or (_CMEMS_PWD is None):
-        log.info("CMEMS credentials are incomplete. Copernicus marine service data will be unavailable.")
-    if (_EUMDAC_USER is None) or (_EUMDAC_PWD is None):
-        log.info("EUMDAC credentials are incomplete. Corresponding satellite data will be unavailable.")
-
-
-def ensure_cdsapirc() -> None:
-    """
-    Write `~/.cdsapirc` if it is missing, from `CDS_API_KEY`.
-
-    Called before a CDS download.
-    """
-    if os.path.exists(file_path):
-        return
-
-    if _CDS_API_KEY is None:
-        status(f"⚠️ Warning: {file_path} is missing and CDS_API_KEY is not set. The CDS download may fail.")
-        return
-
-    content = f"""url: {_CDS_URL}
-    key: {_CDS_API_KEY}
-    """
-    try:
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        status(f"Successfully created {file_path}")
-    except OSError as e:
-        status(f"Error: Could not write to {file_path}. {e}")
 
 
 _TOPOGRAPHY_URL = "https://www.ngdc.noaa.gov/thredds/fileServer/global/ETOPO2022/60s/60s_surface_elev_netcdf/ETOPO_2022_v1_60s_N90W180_surface.nc"
@@ -162,7 +101,17 @@ _banner = """
 ===================================================================
 """
 
+# North-going offset added to the wave components before arctan2, in m²
+# (swh**2): it biases the direction by less than 0.6 deg from swh = 1 m.
+WAVE_COMPONENTS_OFFSET = 0.
+
 GUST_DEFAULT_RATIO = 1.23 # (https://cimmse.wordpress.com/2013/09/20/a-wind-gust-factor-database-of-marine-observations-from-10-tropical-cyclones-2/)
+
+# Input names of the lookup tables, the keys of the queries
+TOPOGRAPHY_KEYS = ("latitude", "longitude")
+FORECAST_KEYS = ("valid_time", "latitude", "longitude")
+ENSEMBLE_KEYS = ("valid_time", "member", "latitude", "longitude")
+VESSEL_KEYS = ("stw", "tws", "twa", "hs", "wa")
 
 
 def tall(array):
@@ -197,6 +146,92 @@ def to_timestamp(value: Union[Datetime, float, int]) -> float:
     return float(timestamp.timestamp())
 
 
+class FunctionModel:
+    """
+    A model computed by a function, R^N -> R^1.
+
+    It is called like a HybridInterpolatedModel, with a dict of inputs,
+    and calls `function(x, **args)`, where `x` holds the inputs named
+    in `inputs`. `args` are fixed arguments, such as fitted parameters.
+    Written with `architeuthis.numpy`, the function takes CasADi inputs
+    and the routing differentiates through it.
+
+    Args:
+        function: Function of a dict of inputs, and of `args`.
+        inputs: Names of the inputs, the keys of the queries.
+        args: Fixed keyword arguments of `function`.
+        output: Which part of the result is the value: None for the
+            result itself, or the first item of a tuple result; a key,
+            looked up in a dict result, else in the dicts of a tuple
+            result such as `(value, components)`; an index of a tuple
+            result; or a function of the result.
+        name: Name of this model.
+
+    Example:
+        >>> def power(x, p):
+        ...     return p["k"] * x["stw"]**3
+        >>> model = FunctionModel(power, ["stw"], {"p": {"k": 1.2}})
+        >>> model({"stw": 10.})
+    """
+
+    def __init__(
+        self,
+        function: Callable,
+        inputs: Sequence[str],
+        args: Optional[dict] = None,
+        output: Union[None, str, int, Callable] = None,
+        name: Optional[str] = None,
+    ):
+        self.function = function
+        self.inputs = list(inputs)
+        self.args = dict(args) if args is not None else {}
+        self.output = output
+        self.name = name if name is not None else getattr(function, "__name__", "function")
+
+    def input_names(self) -> list[str]:
+        """
+        Names of the inputs of this model.
+
+        Returns:
+            The keys that a query of this model takes.
+        """
+        return list(self.inputs)
+
+    def __call__(self, x: dict):
+        """
+        Evaluate the function and select its output.
+
+        Args:
+            x: Inputs keyed by name. Keys that are not inputs of this
+                model are not passed to the function.
+
+        Returns:
+            The selected output of the function.
+        """
+        missing = [key for key in self.inputs if key not in x]
+        if missing:
+            raise KeyError(f"{self.name} needs the inputs {missing}.")
+
+        result = self.function({key: x[key] for key in self.inputs}, **self.args)
+        return self._select(result)
+
+    def _select(self, result):
+        output = self.output
+        if output is None:
+            return result[0] if isinstance(result, tuple) else result
+        if callable(output):
+            return output(result)
+        if isinstance(output, int):
+            return result[output]
+        if isinstance(result, dict):
+            return result[output]
+        if isinstance(result, tuple):
+            for item in result:
+                if isinstance(item, dict) and output in item:
+                    return item[output]
+        raise KeyError(f"{self.name} has no output {output!r}.")
+
+
 class ArchiteuthisObject(ABC):
     """
     Base class of the domain objects.
@@ -218,10 +253,13 @@ class ArchiteuthisObject(ABC):
     
 class ArchiteuthisData(ArchiteuthisObject):
     """
-    Base class of the objects backed by a dataset.
+    Base class of the objects backed by data or by models.
 
-    `load_data` fills `data`, and `add_interpolator` builds the lookup
-    tables that calling this object queries.
+    Calling this object queries one of its `models`, by key. A model is
+    any callable taking a dict of inputs, with an `input_names()`
+    method: `add_interpolator` builds a lookup table from `data`, which
+    `load_data` fills, `add_function` wraps a function and its fixed
+    arguments, and `add_model` registers any other.
 
     Args:
         name: Name of this object, used in status messages.
@@ -239,8 +277,17 @@ class ArchiteuthisData(ArchiteuthisObject):
         self.path = None
         self.data = None
         self.var_keys = set()
-        self.interpolators = {}
-        
+        self.models = {}
+
+    @property
+    def interpolators(self) -> dict:
+        """
+        The models of this object, interpolated or not.
+
+        This is the former name of `models`, kept for compatibility.
+        """
+        return self.models
+
     def load_data(self):
         """
         Locate, download, read, convert and extend the data.
@@ -280,18 +327,21 @@ class ArchiteuthisData(ArchiteuthisObject):
         self,
         var_dim: str,
         coord_dims: Sequence[str],
-        coord_slices: Sequence [str],
+        coord_slices: Sequence[slice],
         var_key: str,
-        method: Literal["bspline", "linear", "nearest"] = "linear",
+        method: Literal["bspline", "linear", "nearest"] = "bspline",
         fac: float = 1.0,
+        coord_keys: Optional[Sequence[str]] = None,
     ):
         """
-        Build a CasADi lookup table of a variable of `data`.
+        Build the lookup table of a variable of `data`.
 
-        Dimensions are positional: the array is squeezed, sliced and
-        raveled in Fortran order, so its dimension order must be the one
-        of `coord_dims`. NaN values become 0. A `var_key` that already
-        exists is left as it is.
+        The table is a HybridInterpolatedModel, which takes NumPy and
+        CasADi queries alike. Dimensions are positional: the array is
+        squeezed and sliced, so its dimension order must be the one of
+        `coord_dims`. NaN values become 0. Outside the grid, "linear"
+        extrapolates and "bspline" keeps the value at the boundary. A
+        `var_key` that already exists is left as it is.
 
         Args:
             var_dim: Name of the variable in `data`.
@@ -300,100 +350,219 @@ class ArchiteuthisData(ArchiteuthisObject):
             coord_slices: One slice per coordinate, applied to the
                 coordinates and the data.
             var_key: Key of the lookup table when calling this object.
-            method: CasADi interpolation method, such as "linear" or
-                "bspline".
+            method: Interpolation method, "linear", "bspline" or
+                "nearest" ("nearest" takes numeric queries only).
             fac: Factor applied to the values, to correct or convert
                 them.
+            coord_keys: Names of the inputs of the lookup table, one per
+                coordinate, by default `coord_dims`. Queries are dicts
+                with these keys.
         """
         if var_key in self.var_keys:
-            status(f"🟦 {var_key} already in {self.name} interpolators.")
-        else:
-            # TODO for backup
-            # build interpolator x
-            x = [
-                np.asarray(self.data.coords[dim].values[sel])
-                for dim, sel in zip(coord_dims, coord_slices)
-            ]
-            
-            # build interpolator f
-            f = np.nan_to_num(
-                self.data[var_dim].to_numpy().squeeze()[*coord_slices].ravel(order='F'),
-                nan=0.
-            ) * fac # apply correction factor if specified
-            
-            # build interpolator
-            self.interpolators[var_key] = interpolant(
-                f"LUT_{var_dim}",
-                method,
-                x,
-                f,
-                # jit=True,
+            status(f"🟦 {var_key} already in {self.name} models.")
+            return
+
+        if coord_keys is None:
+            coord_keys = coord_dims
+        if len(coord_keys) != len(coord_dims):
+            raise ValueError(
+                f"{self.name}: {len(coord_keys)} coord_keys "
+                f"for {len(coord_dims)} coord_dims."
             )
-            
-            # TODO get up and running
-            # # build interpolator x
-            # x = {
-            #     dim: np.asarray(self.data.coords[dim].values[sel])
-            #     for dim, sel in zip(coord_dims, coord_slices)
-            # }
-            
-            # # build interpolator f
-            # f = np.nan_to_num(
-            #     self.data[var_dim].to_numpy().squeeze()[*coord_slices],
-            #     nan=0.
-            # ) * fac # apply correction factor if specified
-            
-            # # build interpolator
-            # self.interpolators[var_key] = InterpolatedModel(
-            #     x_data_coordinates=x,
-            #     y_data_structured=f,
-            #     method=method,
-            #     fill_value=np.nan
-            # )
-            self.var_keys.add(var_key)
-            
-            status(f"➕ Added {var_key}: {var_dim} to {self.name} interpolators.")
-    
+
+        x = {
+            key: np.asarray(self.data.coords[dim].values[sel], dtype=float)
+            for key, dim, sel in zip(coord_keys, coord_dims, coord_slices)
+        }
+
+        f = np.nan_to_num(
+            self.data[var_dim].to_numpy().squeeze()[*coord_slices],
+            nan=0.,
+        ) * fac  # apply correction factor if specified
+
+        model = HybridInterpolatedModel(
+            x_data_coordinates=x,
+            y_data_structured=f,
+            method=method,
+            fill_value=None,  # extrapolate, as the former CasADi interpolant
+            name=f"LUT_{var_dim}",
+        )
+        self.add_model(var_key, model, description=var_dim)
+
+    def add_function(
+        self,
+        var_key: str,
+        function: Callable,
+        inputs: Sequence[str],
+        args: Optional[dict] = None,
+        output: Union[None, str, int, Callable] = None,
+    ):
+        """
+        Register a function as the model of a variable.
+
+        It is called as `function(x, **args)`, where `x` is a dict of
+        the `inputs` of the query. Written with `architeuthis.numpy`, it
+        takes CasADi inputs and the routing differentiates through it.
+        A `var_key` that already exists is left as it is.
+
+        Args:
+            var_key: Key of the model when calling this object.
+            function: Function of a dict of inputs, and of `args`.
+            inputs: Names of the inputs, the keys of the queries.
+            args: Fixed keyword arguments, such as fitted parameters.
+            output: Which part of the result is the value, see
+                `FunctionModel`: for example a key of the components
+                of a `(value, components)` result.
+
+        Example:
+            >>> vessel.add_function(
+            ...     "bhp",
+            ...     propulsion_power,
+            ...     inputs=["stw", "tws", "twa", "swh", "mwa"],
+            ...     args={"p": parameters},
+            ... )
+        """
+        model = FunctionModel(
+            function=function,
+            inputs=inputs,
+            args=args,
+            output=output,
+            name=f"{self.name}_{var_key}",
+        )
+        self.add_model(var_key, model, description=getattr(function, "__name__", None))
+
+    def add_model(
+        self,
+        var_key: str,
+        model: Callable,
+        description: Optional[str] = None,
+    ):
+        """
+        Register a model, queried by calling this object.
+
+        A model is called with a dict of inputs, NumPy or CasADi, and
+        its `input_names()` method gives their keys. A `var_key` that
+        already exists is left as it is.
+
+        Args:
+            var_key: Key of the model when calling this object.
+            model: A HybridInterpolatedModel, a FunctionModel or any
+                object with the same interface.
+            description: What the model is, for the status message.
+        """
+        if var_key in self.var_keys:
+            status(f"🟦 {var_key} already in {self.name} models.")
+            return
+
+        self.models[var_key] = model
+        self.var_keys.add(var_key)
+
+        what = f": {description}" if description else ""
+        status(f"➕ Added {var_key}{what} to {self.name} models.")
+
+    def remove_model(
+        self,
+        var_key: str,
+    ):
+        """
+        Remove a model, if it exists.
+
+        Args:
+            var_key: Key of the model.
+        """
+        if var_key in self.var_keys:
+            del self.models[var_key]
+            self.var_keys.remove(var_key)
+            status(f"➖ Removed {var_key} from {self.name} models.")
+        else:
+            status(f"💔 {var_key} not found in {self.name} models.")
+
     def remove_interpolator(
         self,
         var_key: str,
     ):
         """
-        Remove a lookup table, if it exists.
+        Remove a model, if it exists, as `remove_model` does.
 
         Args:
             var_key: Key given to `add_interpolator`.
         """
-        if var_key in self.var_keys:
-            del self.interpolators[var_key]
-            self.var_keys.remove(var_key)
-            status(f"➖ Removed {var_key} from {self.name} interpolators.")
-        else:
-            status(f"💔 {var_key} not found in {self.name} interpolators.")
-            
+        self.remove_model(var_key)
+
     def __call__(
         self,
         var_key,
         X,
     ):
         """
-        Query a lookup table.
+        Query a model: a lookup table, a function or another.
 
         Args:
-            var_key: Key given to `add_interpolator`.
-            X: Query points, of shape (n_queries, n_dims).
+            var_key: Key given to `add_interpolator`, `add_function`
+                or `add_model`.
+            X: Query points, as a dict of floats or arrays keyed by the
+                input names of the model (see `input_names`), broadcast
+                against each other. NumPy or CasADi. Other keys are
+                ignored, so one query can serve several models. An
+                array of shape (n_queries, n_dims), with columns in the
+                order of the inputs, is also accepted.
 
         Returns:
-            A column vector, or None if this object has no lookup table.
+            A CasADi column vector, DM for numeric queries, or None if
+            this object has no model.
+
+        Example:
+            >>> forecast("u10", {
+            ...     "valid_time": t,
+            ...     "latitude": lat,
+            ...     "longitude": lon,
+            ... })
         """
-        if not self.interpolators:
-            status(f"💔 {self.name} has no interpolators and thus cannot be called.")
+        if not self.models:
+            status(f"💔 {self.name} has no models and thus cannot be called.")
             return None
-        
-        # TODO test X size. Should be (q, n)
-            
-        return tall(self.interpolators[var_key](np.transpose(X)))
-        # return self.interpolators[var_key](X)
+
+        model = self.models[var_key]
+        names = model.input_names()
+
+        if not isinstance(X, dict):
+            if np.is_casadi_type(X, recursive=False):
+                if X.shape[1] != len(names):
+                    raise ValueError(
+                        f"{self.name}: queries of {var_key} have "
+                        f"{len(names)} columns {names}, not {X.shape[1]}."
+                    )
+            else:
+                X = np.reshape(np.asarray(X, dtype=float), (-1, len(names)))
+            X = {name: X[:, i] for i, name in enumerate(names)}
+        else:
+            missing = [name for name in names if name not in X]
+            if missing:
+                raise KeyError(f"{self.name}: queries of {var_key} need {missing}.")
+            X = {name: X[name] for name in names}
+
+        result = tall(model(X))
+        # Numeric queries are evaluated with NumPy, but return a DM column
+        # as the former CasADi interpolant did, so float() and casadi
+        # operations keep working on them.
+        if not np.is_casadi_type(result, recursive=False):
+            result = DM(result)
+        return result
+
+    def input_names(
+        self,
+        var_key: str,
+    ) -> list[str]:
+        """
+        Names of the inputs of a model.
+
+        Args:
+            var_key: Key of the model.
+
+        Returns:
+            The keys that a query of this model takes.
+        """
+        return self.models[var_key].input_names()
 
     
 class ArchiteuthisSpatialData(ArchiteuthisData):

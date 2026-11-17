@@ -28,7 +28,8 @@ from typing import Sequence, Union
 from herbie import Herbie, HerbieLatest, FastHerbie
 from scipy.ndimage import distance_transform_edt
 from architeuthis.toolbox.string_formatting import get_request_id
-from architeuthis.common import ArchiteuthisSpatialData, Datetime, _CMEMS_USER, _CMEMS_PWD, _HOME, _TOPOGRAPHY_URL, ensure_cdsapirc, status
+from architeuthis.common import ArchiteuthisData, ArchiteuthisSpatialData, Datetime, ENSEMBLE_KEYS, FORECAST_KEYS, TOPOGRAPHY_KEYS, _CDS_URL, _HOME, _TOPOGRAPHY_URL, _USER_HOME, status
+from architeuthis.credentials import require_credentials
 
 
 logging.getLogger("cdsapi").handlers.clear()
@@ -40,6 +41,34 @@ def preprocess(ds):
     Drop the `step` variable, so that the files can be concatenated.
     """
     return ds.drop_vars("step", errors="ignore")
+
+
+def open_grib(path: str, **kwargs) -> xr.Dataset:
+    """
+    Open a GRIB file as one dataset, whatever the levels of its fields.
+
+    cfgrib reads one hypercube per level: the 10 m wind and the 2 m
+    temperature of IFS, for example, each with its height as a scalar
+    `heightAboveGround` coordinate. These level coordinates are dropped,
+    the names of the variables (`u10`, `t2m`) telling the levels apart,
+    so that the hypercubes merge into one dataset.
+
+    Args:
+        path: Path of the GRIB file.
+        **kwargs: Arguments of `xarray.open_dataset`.
+
+    Returns:
+        The fields of the file, without their level coordinates.
+    """
+    import cfgrib  # loads ecCodes: on first use, not at import
+
+    datasets = []
+    for dataset in cfgrib.open_datasets(path, **kwargs):
+        levels = {variable.attrs.get("GRIB_typeOfLevel") for variable in dataset.data_vars.values()}
+        scalar_levels = [name for name in levels if name in dataset.coords and dataset[name].ndim == 0]
+        datasets.append(preprocess(dataset.drop_vars(scalar_levels)))
+
+    return xr.merge(datasets, compat="override", combine_attrs="drop_conflicts")
 
 
 class Topography(ArchiteuthisSpatialData):
@@ -230,6 +259,9 @@ class Topography(ArchiteuthisSpatialData):
         """
         Build the lookup table of a variable of the topography.
 
+        It is queried with a dict keyed by `latitude` and `longitude`,
+        whatever the names of the coordinates.
+
         Args:
             var_dim: Name of the variable, normally `distance_to_iso0`.
             latitude_dim: Name of the latitude coordinate.
@@ -237,8 +269,8 @@ class Topography(ArchiteuthisSpatialData):
             var_key: Key of the lookup table, by default `var_dim`.
             latitude_slice: Slice of the latitudes.
             longitude_slice: Slice of the longitudes.
-            method: CasADi interpolation method, such as "linear" or
-                "bspline".
+            method: Interpolation method, "linear", "bspline" or
+                "nearest".
         """
         if var_key is None:
             var_key = var_dim
@@ -246,7 +278,14 @@ class Topography(ArchiteuthisSpatialData):
         coord_dims = [latitude_dim, longitude_dim]
         coord_slices = [latitude_slice, longitude_slice]
         
-        super().add_interpolator(var_dim, coord_dims, coord_slices, var_key, method)
+        super().add_interpolator(
+            var_dim,
+            coord_dims,
+            coord_slices,
+            var_key,
+            method,
+            coord_keys=TOPOGRAPHY_KEYS,
+        )
 
 
 class Forecast(ArchiteuthisSpatialData):
@@ -323,6 +362,9 @@ class Forecast(ArchiteuthisSpatialData):
         """
         Build the lookup table of a variable of the forecast.
 
+        It is queried with a dict keyed by `valid_time`, `latitude` and
+        `longitude`, whatever the names of the coordinates.
+
         Args:
             var_dim: Name of the variable in the data.
             time_dim: Name of the time coordinate.
@@ -332,8 +374,8 @@ class Forecast(ArchiteuthisSpatialData):
             time_slice: Slice of the times.
             latitude_slice: Slice of the latitudes.
             longitude_slice: Slice of the longitudes.
-            method: CasADi interpolation method, such as "linear" or
-                "bspline".
+            method: Interpolation method, "linear", "bspline" or
+                "nearest".
             fac: Factor applied to the values, to correct or convert
                 them.
         """
@@ -343,7 +385,67 @@ class Forecast(ArchiteuthisSpatialData):
         coord_dims = [time_dim, latitude_dim, longitude_dim]
         coord_slices = [time_slice, latitude_slice, longitude_slice]
         
-        super().add_interpolator(var_dim, coord_dims, coord_slices, var_key, method, fac)
+        super().add_interpolator(
+            var_dim,
+            coord_dims,
+            coord_slices,
+            var_key,
+            method,
+            fac,
+            coord_keys=FORECAST_KEYS,
+        )
+
+    def add_wave_components(
+        self,
+        swh_dim: str = "swh",
+        mwd_dim: str = "mwd",
+        u_dim: str = "uw",
+        v_dim: str = "vw",
+    ):
+        """
+        Add the east and north components of the waves to the data.
+
+        Interpolating a direction jumps from 360 to 0 deg, so the
+        routing interpolates these components instead and takes the
+        direction back with `arctan2`, as for the wind. They point where
+        the waves go, like `u10` and `v10`, and are weighted by the wave
+        energy:
+
+            uw = -swh**2 * sin(mwd)
+            vw = -swh**2 * cos(mwd)
+
+        in m². With this weight, a large sea sets the direction between
+        grid points rather than a calm cell, and land and missing
+        values, where `swh` is NaN and becomes 0, do not count. `swh` is
+        still interpolated on its own for the height, because the norm
+        of interpolated components underestimates it where directions
+        differ. Call this method after `load_data` and before
+        `add_interpolator`.
+
+        Args:
+            swh_dim: Name of the significant wave height, in m.
+            mwd_dim: Name of the mean wave direction, in degrees, where
+                the waves come from: `mwd` for IFS, `dirpw` for GFS.
+            u_dim: Name given to the east component.
+            v_dim: Name given to the north component.
+
+        Example:
+            >>> wave.load_data()
+            >>> wave.add_wave_components()
+            >>> for key in ("swh", "uw", "vw"):
+            ...     wave.add_interpolator(
+            ...         key, "valid_time", "latitude", "longitude"
+            ...     )
+        """
+        energy = self.data[swh_dim] ** 2
+        direction = self.data[mwd_dim]
+
+        self.data[u_dim] = -energy * np.sind(direction)
+        self.data[v_dim] = -energy * np.cosd(direction)
+        for dim in (u_dim, v_dim):
+            self.data[dim].attrs = {"units": "m**2"}
+
+        status(f"➕ Added {u_dim} and {v_dim}: {swh_dim}² components along {mwd_dim} to {self.name} data.")
     
     
 class HerbieForecast(Forecast):
@@ -476,19 +578,26 @@ class DeterministicHerbieForecast(HerbieForecast):
         super().__init__(name, model, product, regex, date, fxx, min_lon, max_lon, min_lat, max_lat, time_unit, verbose)
         
     def _read_data(self):
-        self.data = xr.open_mfdataset(
-            list(self.path),
-            engine="cfgrib",
-            decode_timedelta=False,
-            decode_times=True,
-            combine="nested",
+        # One dataset per file, whatever the levels of its fields (10 m wind and
+        # 2 m temperature, for example), then concatenated along valid_time.
+        # No .idx files: Herbie rewrites the subsets at each download, so cfgrib
+        # found its index files incompatible and warned at every read.
+        datasets = [
+            open_grib(
+                path,
+                backend_kwargs={"indexpath": ""},
+                decode_timedelta=False,
+                decode_times=True,
+            )
+            for path in self.path
+        ]
+        self.data = xr.combine_nested(
+            datasets,
             concat_dim=["valid_time"],
-            # coords="different",
             coords="minimal", # for concatenation compatibility
             compat="no_conflicts",
-            preprocess=preprocess, # for concatenation compatibility
         )
-        
+
         
 def _regrid_to_lat_lon(data: xr.Dataset, crs, latitude, longitude, skip: int = 5) -> xr.Dataset:
     """
@@ -705,7 +814,6 @@ class EnsembleHerbieForecast(HerbieForecast):
             filter_by_keys={"dataType": "pf"},
         )
     
-    # TODO rewrite to inherit this method correctly
     def add_interpolator(
         self,
         var_dim: str,
@@ -725,7 +833,9 @@ class EnsembleHerbieForecast(HerbieForecast):
         Build the lookup table of a variable of the ensemble.
 
         The array is positional: its order must be (time, member, lat,
-        lon), the one of the queries of `RoutingAnalysis`.
+        lon). It is queried with a dict keyed by `valid_time`, `member`,
+        `latitude` and `longitude`, whatever the names of the
+        coordinates.
 
         Args:
             var_dim: Name of the variable in the data.
@@ -738,50 +848,46 @@ class EnsembleHerbieForecast(HerbieForecast):
             member_slice: Slice of the members.
             latitude_slice: Slice of the latitudes.
             longitude_slice: Slice of the longitudes.
-            method: CasADi interpolation method, such as "linear" or
-                "bspline".
+            method: Interpolation method, "linear", "bspline" or
+                "nearest".
             fac: Factor applied to the values, to correct or convert
                 them.
         """
-        from casadi import interpolant
-        
         if var_key is None:
             var_key = var_dim
-        
-        # The array is positional: this order must be the one of the data, and of the
-        # queries of RoutingAnalysis, (time, member, lat, lon).
+
+        # The array is positional: this order must be the one of the data,
+        # (time, member, lat, lon).
         coord_dims = [time_dim, member_dim, latitude_dim, longitude_dim]
         coord_slices = [time_slice, member_slice, latitude_slice, longitude_slice]
-        
-        if var_key in self.var_keys:
-            status(f"🟦 {var_key} already in {self.name} interpolators.")
-        else:
-            x = [self.data.coords[dim].values[sel] for dim, sel in zip(coord_dims, coord_slices)]
-    
-            # build interpolator f
-            f = np.nan_to_num(
-                self.data[var_dim].to_numpy().squeeze()[*coord_slices].ravel(order='F'),
-                nan=0.
-            ) * fac
-            
-            # build interpolator
-            self.interpolators[var_key] = interpolant(
-                f"LUT_{var_dim}",
-                method,
-                x,
-                f,
-                # jit=True,
-            )
-            self.var_keys.add(var_key)
-            
-            status(f"➕ Added {var_key}: {var_dim} to {self.name} interpolators.")
+
+        ArchiteuthisData.add_interpolator(
+            self,
+            var_dim,
+            coord_dims,
+            coord_slices,
+            var_key,
+            method,
+            fac,
+            coord_keys=ENSEMBLE_KEYS,
+        )
 
           
+def _copernicusmarine_credentials_file() -> str:
+    """
+    The file written by `copernicusmarine login`.
+    """
+    directory = os.environ.get("COPERNICUSMARINE_CREDENTIALS_DIRECTORY") or os.path.join(_USER_HOME, ".copernicusmarine")
+    return os.path.join(directory, ".copernicusmarine-credentials")
+
+
 class CopernicusForecast(Forecast):
     """
     A forecast of the Copernicus Marine Service (CMEMS).
 
-    Credentials come from `CMEMS_USER` and `CMEMS_PWD`.
+    Credentials come from `CMEMS_USER` and `CMEMS_PWD`, read from the
+    environment or the credential store when downloading (see
+    `architeuthis.credentials`), else from `copernicusmarine login`.
 
     Args:
         name: Name of this object, used in status messages.
@@ -816,9 +922,6 @@ class CopernicusForecast(Forecast):
         compression_level: int = 1,
         engine: str = "netcdf4",
     ):
-        self.__USER = _CMEMS_USER
-        self.__PWD = _CMEMS_PWD
-        
         self.dataset = dataset
         self.variables = variables
         
@@ -840,10 +943,18 @@ class CopernicusForecast(Forecast):
         return pd.Timestamp.today().normalize()
         
     def _download_data(self):
-        
+        # Read here and not kept on the object, so that it can be copied,
+        # pickled or inspected without exposing the credentials.
+        username, password = require_credentials(
+            "CMEMS_USER",
+            "CMEMS_PWD",
+            provider="Copernicus Marine",
+            fallback_files=[_copernicusmarine_credentials_file()],
+        )
+
         req = copernicusmarine.subset(
-            username=self.__USER,
-            password=self.__PWD,
+            username=username,
+            password=password,
             dataset_id=self.dataset,
             variables=self.variables,
             minimum_longitude=self.min_lon,
@@ -885,7 +996,9 @@ class CDSForecast(Forecast):
     """
     Data of the Copernicus Climate Data Store (CDS), such as ERA5.
 
-    Credentials come from `CDS_API_KEY` or `~/.cdsapirc`.
+    The key comes from `CDS_API_KEY`, read from the environment or the
+    credential store when downloading (see `architeuthis.credentials`),
+    else from `~/.cdsapirc`.
 
     Args:
         name: Name of this object, used in status messages.
@@ -995,8 +1108,13 @@ class CDSForecast(Forecast):
             # Talk to the server
             os.makedirs(directory, exist_ok=True)
             
-            ensure_cdsapirc()
-            client = cdsapi.Client()
+            (key,) = require_credentials(
+                "CDS_API_KEY",
+                provider="The Climate Data Store",
+                fallback_files=[os.environ.get("CDSAPI_RC") or os.path.join(_USER_HOME, ".cdsapirc")],
+            )
+            # Without a key, cdsapi reads the ~/.cdsapirc of the user.
+            client = cdsapi.Client() if key is None else cdsapi.Client(url=_CDS_URL, key=key)
             client.retrieve(self.dataset, self.request).download(target=path)
             
             status("✅ Download completed.")

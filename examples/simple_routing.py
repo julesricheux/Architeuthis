@@ -133,10 +133,10 @@ for i, vessel_data in enumerate(vessel_files):
     # vessel = Vessel(f"vessel_{i}", filepath=vessel_data, sfc=196., hotel_load=172., max_power=maxBHP)
     vessel.load_data()
     
-    vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
-    vessel.add_interpolator("max_bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
-    # vessel.add_interpolator("leeway", "stw", "tws", "twa", "hs", "wa", method="linear")
-    vessel.add_interpolator("sails_contribution", "stw", "tws", "twa", "hs", "wa", method="linear")
+    vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa", method="bspline")
+    vessel.add_interpolator("max_bhp", "stw", "tws", "twa", "hs", "wa", method="bspline")
+    # vessel.add_interpolator("leeway", "stw", "tws", "twa", "hs", "wa", method="bspline")
+    vessel.add_interpolator("sails_contribution", "stw", "tws", "twa", "hs", "wa", method="bspline")
     
     vessels.append(vessel)
 
@@ -145,7 +145,7 @@ for i, vessel_data in enumerate(vessel_files):
 # global_corr_fac = 1.10 # global models speed correction (120% @ 10m, 105% @ 100m)
 global_corr_fac = 1.20 # global models speed correction (120% @ 10m, 105% @ 100m)
 
-recent = pd.Timestamp("now").floor("1d")
+recent = pd.Timestamp("now").floor("1d8h")
 # recent = pd.Timestamp('2026-05-30 00:00')
 # mirror_end = pd.Timestamp('2025-12-21 12:00')
 
@@ -185,10 +185,10 @@ for model, atmos in ATMOS.items():
     speed = np.hypot(atmos.data.u10, atmos.data.v10)
     ds[gust_var] = ds[gust_var].where(atmos.data[gust_var] >= speed, speed * gust_default_factor)
 
-    atmos.add_interpolator("u10", "valid_time", "latitude", "longitude", fac=global_corr_fac)
-    atmos.add_interpolator("v10", "valid_time", "latitude", "longitude", fac=global_corr_fac)
+    atmos.add_interpolator("u10", "valid_time", "latitude", "longitude", fac=global_corr_fac, method="bspline")
+    atmos.add_interpolator("v10", "valid_time", "latitude", "longitude", fac=global_corr_fac, method="bspline")
 
-    atmos.add_interpolator(gust_var, "valid_time", "latitude", "longitude", var_key="gust", fac=global_corr_fac)
+    atmos.add_interpolator(gust_var, "valid_time", "latitude", "longitude", var_key="gust", fac=global_corr_fac, method="bspline")
 
 # atmos = DeterministicHerbieForecast(
 #     "wind", model="ifs", product="scda", regex=r":10[u|v]:", fxx=steps,
@@ -225,6 +225,8 @@ for model, atmos in ATMOS.items():
 
 #%% BUILD WAVE INTERPOLATORS
 
+wave_corr_fac = 1.
+
 WAVE = {}
 
 # IFS wave data
@@ -235,9 +237,11 @@ WAVE["ifs"] = DeterministicHerbieForecast(
     date=recent
 )
 WAVE["ifs"].load_data()
+WAVE["ifs"].add_wave_components()
 
-WAVE["ifs"].add_interpolator("swh", "valid_time", "latitude", "longitude")
-WAVE["ifs"].add_interpolator("mwd", "valid_time", "latitude", "longitude")
+WAVE["ifs"].add_interpolator("swh", "valid_time", "latitude", "longitude", fac=wave_corr_fac, method="bspline")
+WAVE["ifs"].add_interpolator("uw", "valid_time", "latitude", "longitude", method="bspline")
+WAVE["ifs"].add_interpolator("vw", "valid_time", "latitude", "longitude", method="bspline")
 
 # GFS wave data
 WAVE["gfs"] = DeterministicHerbieForecast(
@@ -247,9 +251,11 @@ WAVE["gfs"] = DeterministicHerbieForecast(
     date=recent
 )
 WAVE["gfs"].load_data()
+WAVE["gfs"].add_wave_components(mwd_dim="dirpw")
 
-WAVE["gfs"].add_interpolator("swh", "valid_time", "latitude", "longitude", var_key="swh")
-WAVE["gfs"].add_interpolator("dirpw", "valid_time", "latitude", "longitude", var_key="mwd")
+WAVE["gfs"].add_interpolator("swh", "valid_time", "latitude", "longitude", var_key="swh", fac=wave_corr_fac, method="bspline")
+WAVE["gfs"].add_interpolator("uw", "valid_time", "latitude", "longitude", method="bspline")
+WAVE["gfs"].add_interpolator("vw", "valid_time", "latitude", "longitude", method="bspline")
 
 # wave_ens = EnsembleHerbieForecast(
 #     "wave_ens", model="ifs", product="waef", regex=r":swh:|:mwd:", fxx=steps,
@@ -258,6 +264,7 @@ WAVE["gfs"].add_interpolator("dirpw", "valid_time", "latitude", "longitude", var
 #     date=recent
 # )
 # wave_ens.load_data()
+# wave_ens.add_wave_components()
 
 # wave_ens.add_interpolator(
 #     "swh", "valid_time", "number", "latitude", "longitude",
@@ -267,7 +274,14 @@ WAVE["gfs"].add_interpolator("dirpw", "valid_time", "latitude", "longitude", var
 #     longitude_slice=slice(None, None,2),
 # )
 # wave_ens.add_interpolator(
-#     "mwd", "valid_time", "number", "latitude", "longitude",
+#     "uw", "valid_time", "number", "latitude", "longitude",
+#     member_slice=slice(None, None,1),
+#     time_slice=slice(None, None,1),
+#     latitude_slice=slice(None, None,2),
+#     longitude_slice=slice(None, None,2),
+# )
+# wave_ens.add_interpolator(
+#     "vw", "valid_time", "number", "latitude", "longitude",
 #     member_slice=slice(None, None,1),
 #     time_slice=slice(None, None,1),
 #     latitude_slice=slice(None, None,2),
@@ -292,12 +306,14 @@ current.add_interpolator(
     latitude_slice=slice(None, None, 3),
     longitude_slice=slice(None, None, 3),
     time_slice=slice(None, None, 3),
+    method="bspline",
 )
 current.add_interpolator(
     "vo", "valid_time", "latitude", "longitude",
     latitude_slice=slice(None, None, 3),
     longitude_slice=slice(None, None, 3),
     time_slice=slice(None, None, 3),
+    method="bspline",
 )
 
 
@@ -309,9 +325,9 @@ north_america = [
     [47.8057761, -52.6574707], [48.7272088, -53.0310059],
     [52.2547088, -55.5688477], [57.0646303, -61.6992188],
     [59.1759282, -64.0283203], [60.5221575, -64.8193359],
-    [62.0833149, -66.2255859], [63.5485522, -70.3125],
-    [64.434892, -73.6083984], [64.8862654, -77.3876953],
-    [66.0715465, -86.4404297], [64.1681069, -92.109375],
+    [62.0833149, -66.2255859], [63.5485522, -70.3125000],
+    [64.4348920, -73.6083984], [64.8862654, -77.3876953],
+    [66.0715465, -86.4404297], [64.1681069, -92.1093750],
     [59.4450751, -96.6796875], [56.2677611, -95.9765625],
     [46.1950421, -92.7246094], [41.0793511, -87.6708984],
     [35.3532161, -75.9814453], [37.7620299, -77.0141602],
@@ -326,10 +342,10 @@ north_america = [
     [41.8347815, -69.9307251], [42.0615286, -70.0708008],
     [42.6440611, -70.5844116], [43.4130287, -70.4553223],
     [43.8345268, -68.8623047], [44.6881828, -67.1539307],
-    [44.2412638, -66.395874], [43.3930737, -66.0305786],
+    [44.2412638, -66.3958740], [43.3930737, -66.0305786],
     [43.3850899, -65.6268311], [43.5007524, -65.2807617],
     [44.4631908, -63.5641479], [45.2555553, -60.9851074],
-    [46.0045933, -59.666748], [47.025206, -60.3918457],
+    [46.0045933, -59.6667480], [47.0252060, -60.3918457],
     [47.5394554, -59.2053223], [47.2549999, -55.9616089],
     [46.9146271, -55.9780884], [46.8414071, -55.8050537],
     [46.8733358, -55.3738403], [46.8188578, -54.1873169],
@@ -412,7 +428,8 @@ topo0.add_interpolator(
     "distance_to_iso0",
     "lat",
     "lon",
-    var_key="z"
+    var_key="z",
+    method="bspline",
 )
 
 # topo = Topography(
@@ -611,7 +628,7 @@ def to_time(s):
 timeframes = [
     # (to_time("2026-11-05T11h00"), to_time("2026-11-15T10:00")),
     # (to_time("2026-11-06T08h40"), to_time("2026-11-15T04:00")),
-    (to_time(recent + pd.Timedelta(hours=9)), to_time(recent + pd.Timedelta(days=8, hours=20))),
+    (to_time(recent + pd.Timedelta(days=0, hours=9)), to_time(recent + pd.Timedelta(days=8+0, hours=20))),
     # (to_time("2026-10-16T00h00"), to_time("2026-10-26T05:00")),
 ]
 
@@ -626,6 +643,8 @@ for solve, tf, model, vessel, fac, m, tpg in (
         )
     ):
                 
+    tol = 1e-3
+                
     etd, eta = tf
     
     if float(vessel.label.removeprefix("eff")) > 5.0:
@@ -634,7 +653,8 @@ for solve, tf, model, vessel, fac, m, tpg in (
                 ctx["max_bhp"] < ctx["vessel"].max_power,
                 # (wide(ctx["z"]) @ tall(ctx["z"])) == 0.,
                 ctx["z"] < 0.,
-                ctx["aws_gust"] < 35.0,
+                # ctx["stw"] < 20.,
+                # ctx["aws_gust"] < 35.0,
                 # ctx["aws_gust"] < 30.0,
                 # ctx["aws"] < 25.0,
                 # ctx["aws"] < 20.0,
@@ -646,6 +666,7 @@ for solve, tf, model, vessel, fac, m, tpg in (
                 ctx["max_bhp"] < ctx["vessel"].max_power,
                 # (wide(ctx["z"]) @ tall(ctx["z"])) == 0.,
                 
+                # ctx["z"] < 0.,
                 ctx["z"] < 0.,
                 # ctx["aws"] < 35.0,
                 # ctx["aws"] > 10.0,
@@ -681,9 +702,10 @@ for solve, tf, model, vessel, fac, m, tpg in (
         tpg,
         # atmosphere_member=m,
         # wave_member=m,
-        constraints=custom_constraints,
+        # constraints=custom_constraints,
         options={"include_gusts": True},
-        verbose=False,
+        # verbose=False,
+        verbose=True,
     )
     
     report = analysis.run(
@@ -702,8 +724,8 @@ for solve, tf, model, vessel, fac, m, tpg in (
         solver_options = {
             "ipopt":{
                 "acceptable_tol": 1e2,
-                # 'linear_solver': 'spral',
-                'linear_solver': 'mumps',
+                'linear_solver': 'spral',
+                # 'linear_solver': 'mumps',
                 "hessian_approximation": "limited-memory",
             },
         },
@@ -893,7 +915,7 @@ reports.select(solve=1).to_gpx()
 # See "Plotting" in docs/user_guide.md for the options, for example:
 # plot_report(report, save_as="report.pdf")  # a true A4 page
 # plot_report(report, ylim={"sog": (6., 13.), "bhp": (0., 3084.)})
-for report in reports.select(vessel="eff60"):
+for report in reports.select(vessel="eff45"):
     plot_report(report)
 
 #%% FIGURE AND TABLE SETTINGS OF EARLIER STUDIES
@@ -1139,7 +1161,7 @@ for report in reports.select(vessel="eff60"):
 #     },
 #     y_data_structured=ds["u10"].data,
 #     # method="bspline",
-#     method="linear",
+#     method="bspline",
 #     # fill_value=0.
 # )
 # n = 100

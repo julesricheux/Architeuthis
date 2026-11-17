@@ -20,7 +20,7 @@ from collections.abc import Callable
 from architeuthis.toolbox.inspect_tools import ensure_callable
 
 # from typing import Sequence
-from architeuthis.common import ArchiteuthisData, status
+from architeuthis.common import ArchiteuthisData, VESSEL_KEYS, status
 
 # Variables required by RoutingAnalysis, and the axes of a polar table, in its order.
 POLAR_KEYS = ("bhp", "max_bhp", "sails_contribution")
@@ -42,15 +42,22 @@ class Vessel(ArchiteuthisData):
     """
     Represents the vessel and its performance characteristics.
 
+    Its polars are models queried by key, as for any data object:
+    tables interpolated from a polar file (`load_data`, then
+    `add_interpolator`), or functions such as semi-empirical models
+    with fitted parameters (`add_function`), without a file. Routing
+    needs `bhp`, `max_bhp` and `sails_contribution`, and gives each
+    model the inputs it names: see `RoutingAnalysis`.
+
     `label` is a short identifier that tags the reports of this vessel
     and appears in the UI, `eff45` for example. By default it is taken
-    from the polar file name.
+    from the polar file name, or is the name without a file.
     """
 
     def __init__(
         self,
         name: str,
-        filepath: str,
+        filepath: Optional[str] = None,
         hotel_load: Union[Callable, float, int] = 0., # kW
         max_power: Union[Callable, float, int] = 1e12, # kW
         sfc: Union[Callable, float, int] = 0., # g/kWh
@@ -60,8 +67,10 @@ class Vessel(ArchiteuthisData):
         super().__init__(name, verbose)
         
         self.path = filepath
-        self.label = label if label is not None else _label_from_path(filepath)
-        
+        if label is None:
+            label = _label_from_path(filepath) if filepath is not None else name
+        self.label = label
+
         self.hotel_load = ensure_callable(hotel_load) # TODO to define with kwargs to be more flexible
         self.sfc = ensure_callable(sfc) # TODO to define with kwargs to be more flexible
         # self.max_power = ensure_callable(max_power)
@@ -71,6 +80,7 @@ class Vessel(ArchiteuthisData):
         self.max_power = max_power
         
     def _locate_data(self):
+        assert self.path is not None, f"💔 {self.name} has no polar file: use add_function."
         assert os.path.exists(self.path), f"💔 '{self.path}' does not exist."
         status(f"✅ {self.name} data found.")
         
@@ -100,6 +110,9 @@ class Vessel(ArchiteuthisData):
         """
         Build the lookup table of a variable of the polars.
 
+        It is queried with a dict keyed by `stw`, `tws`, `twa`, `hs` and
+        `wa`, whatever the names of the coordinates.
+
         Args:
             var_dim: Name of the variable in the data.
             stw_dim: Name of the speed through water coordinate.
@@ -113,8 +126,8 @@ class Vessel(ArchiteuthisData):
             twa_slice: Slice of the true wind angles.
             hs_slice: Slice of the wave heights.
             wa_slice: Slice of the wave angles.
-            method: CasADi interpolation method, such as "linear" or
-                "bspline".
+            method: Interpolation method, "linear", "bspline" or
+                "nearest".
         """
         if var_key is None:
             var_key = var_dim
@@ -122,7 +135,14 @@ class Vessel(ArchiteuthisData):
         coord_dims = [stw_dim, tws_dim, twa_dim, hs_dim, wa_dim]
         coord_slices = [stw_slice, tws_slice, twa_slice, hs_slice, wa_slice]
         
-        super().add_interpolator(var_dim, coord_dims, coord_slices, var_key, method)
+        super().add_interpolator(
+            var_dim,
+            coord_dims,
+            coord_slices,
+            var_key,
+            method,
+            coord_keys=VESSEL_KEYS,
+        )
 
     def add_interpolators(
         self,
@@ -153,18 +173,13 @@ if __name__=="__main__":
     vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
     vessel.add_interpolator("max_bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
     
-    vessel_query = np.array([
-        [6., 15., 60, 4.1, 60],
-        [8., 15., 60, 1, 60],
-    ])
-    
-    # vessel_query = {
-    #     "stw": 12.5,
-    #     "tws": 11,
-    #     "twa": np.abs(62.3),
-    #     "hs": 1.3,
-    #     "wa": np.abs(78.),
-    # }
+    vessel_query = {
+        "stw": np.array([6., 8.]),
+        "tws": 15.,
+        "twa": 60.,
+        "hs": np.array([4.1, 1.]),
+        "wa": 60.,
+    }
     
     bhp = vessel("bhp", vessel_query)
     print(bhp)

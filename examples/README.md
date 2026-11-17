@@ -1,6 +1,6 @@
 # Examples
 
-Each script is self-contained. Its settings are at the top and it runs from the repository root, cell by cell (`#%%`, in Spyder for example) or as a whole with `python examples/simple_routing.py`. The routing examples need your own polar files, in `~/data/polars/` by default, and the docstring of each script gives the data and credentials it needs.
+Each script is self-contained. Its settings are at the top and it runs from the repository root, cell by cell (`#%%`, in Spyder for example) or as a whole with `python examples/simple_routing.py`. The routing examples need your own polar files, except `function_polar_routing.py`, in `~/data/polars/` by default, and the docstring of each script gives the data and credentials it needs.
 
 | To learn | Read |
 | --- | --- |
@@ -12,6 +12,7 @@ Each script is self-contained. Its settings are at the top and it runs from the 
 | One optimization per ensemble member, and a fuel consumption that depends on the power | [`ensemble_routing.py`](ensemble_routing.py) |
 | High-resolution wind on a short leg | [`short_term_routing.py`](short_term_routing.py) |
 | Querying forecasts directly, to compare them with satellite observations | [`comparison_ascat_models.py`](comparison_ascat_models.py) |
+| A polar written as functions, with no file, on the wind at 10 m and 100 m and the air temperature | [`function_polar_routing.py`](function_polar_routing.py) |
 
 Their commented lines are alternatives that were used in past studies: other polars, domains, positions, waypoints, schedules, constraints and figure settings. Each script keeps them next to what they replace, and the settings of the former figures are in a cell of their own. The schedules follow the latest forecasts, with the dates of past studies left as comments.
 
@@ -30,8 +31,10 @@ atmosphere.add_interpolator("v10", "valid_time", "latitude", "longitude")
 
 wave = DeterministicHerbieForecast("wave", model="ifs", product="wave", regex=r":swh:|:mwd:", fxx=steps, date=forecast_date, **domain)
 wave.load_data()
+wave.add_wave_components()  # the direction is interpolated through its components
 wave.add_interpolator("swh", "valid_time", "latitude", "longitude")
-wave.add_interpolator("mwd", "valid_time", "latitude", "longitude")
+wave.add_interpolator("uw", "valid_time", "latitude", "longitude")
+wave.add_interpolator("vw", "valid_time", "latitude", "longitude")
 
 current = CopernicusForecast("current", dataset="cmems_mod_glo_phy_anfc_0.083deg_PT1H-m", variables=["uo", "vo"], date=forecast_date, **domain)
 current.load_data()

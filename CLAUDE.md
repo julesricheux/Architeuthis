@@ -34,13 +34,15 @@ python -m pytest
 
 A single test: `python -m pytest tests/optimization/test_opti_rosenbrock.py::test_2D_rosenbrock`. Only the end-to-end routing tests: `python -m pytest -m integration`. The suite takes under a minute and needs no network or credentials. There is no linter or formatter configuration.
 
-Credentials come from environment variables, and each is only needed for its provider: `CDS_API_KEY`, `CMEMS_USER`, `CMEMS_PWD`, `EUMDAC_USER`, `EUMDAC_PWD`. Herbie sources (IFS, GFS, HRDPS) need none. The README has a tutorial per provider. Never write a real value in a tracked file, including in a comment.
+Credentials are handled by `architeuthis/credentials.py`, and each is only needed for its provider: `CDS_API_KEY`, `CMEMS_USER`, `CMEMS_PWD`, `EUMDAC_KEY`, `EUMDAC_SECRET` (`CREDENTIALS`). Users save them once with `python -m architeuthis.credentials set NAME...`, which stores them in the OS credential store through `keyring` (service `architeuthis`). They are read when a download needs them, never at import: environment variables first (the names above, then aliases: `CDSAPI_KEY`, `COPERNICUSMARINE_SERVICE_USERNAME`/`_PASSWORD`, the former `EUMDAC_USER`/`EUMDAC_PWD`), then the store. Data sources call `require_credentials` in their download hook and keep no secret on the object; a missing one raises `MissingCredentialError` after a ⚠️ status. Herbie sources (IFS, GFS, HRDPS) need none. The README has a tutorial per provider. Never write a real value in a tracked file, including in a comment.
 
-Downloads are cached under `~/data/` (`common._HOME`) in `topo/`, `cmems/`, `cds/`, `eumetsat/` and `iip/`. `RouteLibrary`, `RouteSetLibrary`, `PassagePlanLibrary` and `ExclusionZoneLibrary` store JSON in `route_library/`, `route_sets/`, `passage_plans/` and `exclusion_zones/`. The UI reads route reports from `routes/`, a different format, written by `ReportCollection.save`. Vessel polars are NetCDF files that are not in the repository.
+Downloads are cached under `~/data/` (`common._HOME`, moved by `ARCHITEUTHIS_HOME`, read at import) in `topo/`, `cmems/`, `cds/`, `eumetsat/` and `iip/`. `RouteLibrary`, `RouteSetLibrary`, `PassagePlanLibrary` and `ExclusionZoneLibrary` store JSON in `route_library/`, `route_sets/`, `passage_plans/` and `exclusion_zones/`. The UI reads route reports from `routes/`, a different format, written by `ReportCollection.save`. Vessel polars are NetCDF files that are not in the repository.
 
 Development is Spyder-based: scripts use `#%%` cells and many modules have a `__main__` block used as a manual check.
 
 Branches: work on `develop`, PRs target `main`.
+
+The version is written only in `architeuthis/__init__.py` (`__version__`, a literal): `pyproject.toml` declares it `dynamic` and setuptools reads it with `attr`, and `publish.yml` compares the tag with it through `ast`. Only the `architeuthis/` package is published.
 
 ## Architecture
 
@@ -50,8 +52,9 @@ architeuthis.optimization  Opti (cas.Opti subclass), OptiSol (AeroSandbox)
 architeuthis.modeling      Fitted/interpolated models, black_box (AeroSandbox)
         |
 common.py      ArchiteuthisObject > ArchiteuthisData > ArchiteuthisSpatialData
-        |       load_data() pipeline, add_interpolator(), __call__(), credentials
-        +-- vessel.py     Vessel: polars NetCDF + hotel_load, sfc, max_power
+        |       load_data() pipeline, add_interpolator(), __call__(), _HOME, status
+credentials.py save/get/delete/require credentials: environment, then OS store (keyring)
+        +-- vessel.py     Vessel: polars (NetCDF or functions) + hotel_load, sfc, max_power
         +-- forecast.py   Topography; Forecast > Herbie (deterministic, HRDPS, ensemble),
         |                 Copernicus (CMEMS), CDS (ERA5)
         +-- satellite.py  EUMETSATData > ASCATData, PoseidonData (validation)
@@ -71,7 +74,8 @@ toolbox/       geo_utils (route geometry), plot_utils (figures, documented in do
                json_utils (report JSON codec), inspect_tools, string_formatting...
 wrappers/      json_wrapper (GeoJSON), leaflet_wrapper (zone layers), legacy provider wrappers
 examples/      simple_routing, long_term_routing, ensemble_routing, post_leg_rewind,
-               passage_planning, ifs_route_tested_with_gfs, short_term_routing, comparison_ascat_models;
+               passage_planning, ifs_route_tested_with_gfs, short_term_routing, comparison_ascat_models,
+               function_polar_routing;
                they define their own sources and zones, and keep past settings as commented lines
 tests/         numpy, optimization, modeling (AeroSandbox), domain (Architeuthis)
 ```
@@ -86,12 +90,16 @@ Stubs that are not functional yet: `environment.Environment` (also has a broken 
 - **Time** as a float epoch-seconds coordinate named `valid_time`.
 - **Dimension order** matching the `coord_dims` passed to `add_interpolator`.
 
-`add_interpolator` builds a CasADi `interpolant` from the array. Know these behaviours:
+Each data object holds **models** in `models` (`interpolators` is the same dict, the former name), keyed by `var_key`. A model is any object called with a dict of inputs and having `input_names()`, registered with `add_model`. A table is one kind: `add_function(var_key, function, inputs, args, output)` wraps `function(x, **args)` into a `common.FunctionModel`, for semi-empirical polars with fitted parameters for example (`Vessel` then needs no `filepath`); `output` picks a key, index or function of a result such as `(value, components)`. `__call__` passes each model only its own inputs, so a query may hold more keys.
 
-- Dimensions are **positional**: the array is squeezed, sliced and raveled in Fortran order, so array dimension order must equal `coord_dims` order. The names only select coordinates.
+`add_interpolator` builds a `HybridInterpolatedModel` (`modeling/hybrid_interpolation.py`) from the array, registered through `add_model`. Its NumPy and CasADi evaluators are built once from the same data: SciPy fits the B-spline coefficients, much faster than `casadi.interpolant(..., "bspline")`. Know these behaviours:
+
+- Dimensions are **positional**: the array is squeezed and sliced, so array dimension order must equal `coord_dims` order. The names only select coordinates.
+- **Query keys are standard names**, whatever the names in the data: `valid_time, latitude, longitude` for forecasts, plus `member` for `EnsembleHerbieForecast`, `latitude, longitude` for `Topography`, and `stw, tws, twa, hs, wa` for `Vessel` (`common.FORECAST_KEYS` and the like, passed as `coord_keys`). `obj.input_names(var_key)` gives them.
+- Outside the grid, `fill_value=None`: "linear" extrapolates, "bspline" keeps the boundary value. "nearest" takes no symbolic query.
 - **NaN becomes 0**, so land currents and missing values read as calm conditions.
 - Herbie and Copernicus forecasts append two fake time steps (+1e6 s, +1e7 s) filled with 0, so fields fade to zero past the horizon rather than failing. `RoutingAnalysis.check_valid_time` assumes this by treating `valid_time[-3]` as the last real step; `CDSForecast` does not pad, so the check is off by two steps there.
-- Calling `obj(var_key, X)` takes `X` with shape `(n_queries, n_dims)` and returns a column vector.
+- Calling `obj(var_key, X)` takes a dict keyed by those names, whose values (NumPy or CasADi, scalars or columns) are broadcast, as in `core._passage`. An array of shape `(n_queries, n_dims)` with columns in key order still works. It returns a CasADi column, a DM for numeric queries, which are computed with NumPy.
 
 `Topography` computes `distance_to_iso0`, normally registered with `var_key="z"`: a signed distance to the navigable boundary in **nautical miles**, positive on land or inside exclusion zones and negative at sea. `depth_offset` treats shallow water as land and `z_margin` adds clearance. Its coordinates are `lat` and `lon` (ETOPO 2022), unlike the `latitude` and `longitude` of forecasts. Exclusion zones are `ExclusionZone` objects or plain `[lat, lon]` lists, rasterized into this field; the caller defines them and passes them to `Topography`. The package holds no zone or waypoint of its own: only `iceberg_zone()`, which comes from the IIP bulletin.
 
@@ -101,7 +109,7 @@ Stubs that are not functional yet: `environment.Environment` (also has a broken 
 - **Fixed:** ETD, ETA, departure and arrival, so the schedule is a hard requirement and speed is an outcome (`sog = distance / dt`).
 - **Time grid:** comes from the atmospheric forecast. Segment centers (`ctim`) are the `valid_time` values strictly between ETD and ETA, and nodes (`tim`) are ETD, their midpoints and ETA. `skip_tim` thins them.
 - **Decision variables:** `vlat` and `vlon`, offsets of interior nodes from a reference route. With `vary_fac=True`, also `deviation_fac`, which blends `Voyage.route_minus`, `route_ortho` and `route_plus` (-1, 0, +1).
-- **Evaluation:** weather is sampled at segment midpoints, topography at nodes resampled with `n=3`, and the vessel with `[stw, tws, |twa|, swh, |mwa|]`.
+- **Evaluation:** weather is sampled at segment midpoints, topography at nodes resampled with `n=3`, and the vessel with a query of `stw, tws, |twa|, hs, |wa|` plus `sog, swh, |mwa|, aws, |awa|, twd`, from which each model takes its inputs. An input matching `(tws|twd|twa|aws|awa)<height>` (`_WIND_AT_HEIGHT`, `twa100` for example) is computed by `_wind_at_height` from the forecast variables `u<height>` and `v<height>`, with the formulas of the 10 m wind. Any other vessel input is a forecast variable, read by `_forecast_variable` from the first of `atmosphere`, `wave`, `current` with a model of that key, else `KeyError`.
 - **Constraints:** a callable `ctx -> list` or a plain list, given to the constructor or to `run`. `ctx` exposes the symbolic quantities plus `vessel` and `opti`. The default is `max_bhp < vessel.max_power` and `z < 0`.
 - **`solve=False`:** evaluates the reference route without optimizing it, giving a baseline for comparison.
 - **Shared model:** `_passage(tim, ctim, lat, lon, ...)` builds every symbolic quantity; `run` feeds it Opti variables and `evaluate` plain MX symbols. Change the physics there only.
@@ -116,10 +124,12 @@ Required interpolator keys:
 | Object | Keys | Units |
 | --- | --- | --- |
 | `atmosphere` | `u10`, `v10`, optional `gust` (otherwise `tws * GUST_DEFAULT_RATIO`) | m/s, converted to kt |
-| `wave` | `swh`, `mwd` | m, deg |
+| `wave` | `swh`, `uw`, `vw` (from `Forecast.add_wave_components`) | m, m² |
 | `current` | `uo`, `vo` | m/s, converted to kt |
 | `topography` | `z` | nm |
-| `vessel` | `bhp`, `max_bhp`, `sails_contribution`; axes `stw, tws, twa, hs, wa` | kW; kt, kt, deg, m, deg |
+| `vessel` | `bhp`, `max_bhp`, `sails_contribution`; tables on axes `stw, tws, twa, hs, wa`, functions on any inputs | kW; kt, kt, deg, m, deg |
+
+The wave direction is interpolated through `uw = -swh**2 * sin(mwd)` and `vw = -swh**2 * cos(mwd)`, which `Forecast.add_wave_components` adds to the data (`mwd_dim="dirpw"` for GFS), because `mwd` itself jumps from 360 to 0 deg. `_passage` takes `mwd = arctan2(uw, vw + WAVE_COMPONENTS_OFFSET) + 180`: the energy weight lets large seas rather than calm or land cells (0 after NaN) set the direction, and the offset (`common`, 1e-2 m²) keeps `arctan2` differentiable where both components vanish. `swh` stays a separate interpolator, because the norm of interpolated components underestimates it where directions differ, and `sqrt` is not differentiable at 0. Reports still give `mwd`.
 
 Modelling choices to preserve or change deliberately: wind and wave angles are relative to COG, apparent wind uses SOG rather than STW, and leeway is not modelled.
 
@@ -139,9 +149,10 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 
 **Import side effects**
 
-- Importing the package has none, and `tests/domain/test_import_side_effects.py` checks it. `load_data` calls `common.setup_logging`, which leaves logging alone if the application has configured it, and `ensure_cdsapirc` runs before a CDS download and never writes `key: None`.
+- Importing the package has none, and `tests/domain/test_import_side_effects.py` checks it. `load_data` calls `common.setup_logging`, which leaves logging alone if the application has configured it, and nothing reads credentials or imports `keyring` at import.
 - `architeuthis.icebergs` fetches the IIP bulletin and shapefiles on first use of `berg_zone`, `polygon` or `berg_geojson` (module `__getattr__`, connect timeout 10 s), once per session unless `refresh()` is called. Calling `exclusion.iceberg_zone()` or reading `core.berg_zone` counts as a use, so these can take time. Offline, it falls back to the last downloads in `~/data/iip/` (`IcebergBulletin.txt`, shapefiles), else to an empty `berg_zone` and GeoJSON, with a warning. `Topography` skips exclusion zones with fewer than 3 points, so routing then runs **without the iceberg limit**.
 - `architeuthis/ui.py` is a script, not a library: importing it downloads forecasts and needs a report JSON in `~/data/routes/`. Run it from inside `architeuthis/` because of `./assets/` relative paths; it serves on port 8052. Its first lines remove `architeuthis/` from `sys.path`, where `architeuthis/numpy` would hide numpy, and it selects the Agg backend, because a GUI backend kills the process at the first raster or contour. So when checking the UI, do not set `MPLBACKEND`, which is not what a user has. In debug mode its reloader runs the script twice, and any restart downloads the forecasts again. Layers that do not depend on its data belong in `wrappers/leaflet_wrapper.py`, where they can be tested.
+- `ui.py` needs Dash >= 4.5 and Dash Mantine Components 3, which needs React 19: right after importing Dash it calls `dash._dash_renderer._set_react_version("19.2.4")`, a private function, because Dash still loads React 18 by default. Without it the page shows only "requires React 19".
 - `ui.py` overwrites the tracked `assets/noaa_overlay.png` at every start, so that file often shows as modified. Do not include it in unrelated commits.
 
 **Symbolic code**
@@ -168,11 +179,12 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 - `Schedule` and `Voyage` convert dates with `common.to_timestamp`; naive dates are UTC, so give local times with a timezone.
 - Divergence and spread signs are relative to the travel direction: `Route.reversed()` negates divergences, so the reverse route's `plus` is the forward `minus`.
 - `Route.from_position` restarts with a straight first segment. `Voyage.from_position` cannot restart `route_minus`/`route_plus` given as functions and falls back to the spread paths; pass Routes to keep them.
-- `Vessel.hotel_load` and `Vessel.sfc` are wrapped into callables, while `Vessel.max_power` stays a raw value. `sfc` defaults to 0, which makes the objective zero.
-- `EnsembleHerbieForecast.add_interpolator` takes `var_dim, time_dim, member_dim, latitude_dim, longitude_dim`, the order in which `RoutingAnalysis` queries it.
+- `Vessel.hotel_load` and `Vessel.sfc` are wrapped into callables, while `Vessel.max_power` stays a raw value. `sfc` defaults to 0, which makes the objective zero. `max_power` defaults to 1e12 kW: such a slack on `max_bhp < max_power` can send IPOPT's adaptive barrier off and the route diverging, so give a realistic value.
+- `EnsembleHerbieForecast.add_interpolator` takes `var_dim, time_dim, member_dim, latitude_dim, longitude_dim`, which must be the order of the array.
 - Report consumers (`json_wrapper.route_to_geojson`, `ui.py`) also need `init_fac`, which `run` records but `evaluate` does not. `ReportCollection.save` writes to `~/data/routes/` by default.
+- `DeterministicHerbieForecast` reads each GRIB file with `forecast.open_grib` (`cfgrib.open_datasets`, one hypercube per level, merged without their scalar level coordinates), so one `regex` may mix levels, such as the IFS 10 m wind and 2 m temperature. Plain `xr.open_dataset(engine="cfgrib")` would skip `t2m` and the concatenation fail on `heightAboveGround`. Two variables of the same name at two levels would collide; cfgrib names them apart (`u10`, `u100`).
 - `HRDPSForecast` wind speeds are right but its directions are not: the files have `uvRelativeToGrid` = 1 and the components are not rotated from the rotated grid, about 45 deg off around Saint-Pierre-et-Miquelon compared with GFS. `HerbieLatest` only looks on `aws` and `nomads` by default, so a model elsewhere needs `priority`.
-- `common` reads credentials once, at its import, so a variable set later is ignored. `EUMDAC_USER` and `EUMDAC_PWD` hold the EUMETSAT Consumer Key and Secret, not a login. Once `~/.cdsapirc` exists, `CDS_API_KEY` no longer has any effect. Without `CMEMS_USER`, the Copernicus Marine toolbox looks at its own variables and files, then prompts, and without a terminal `subset` returns `None`.
+- `EUMDAC_KEY` and `EUMDAC_SECRET` hold the EUMETSAT Consumer Key and Secret, not a login. When neither CMEMS credential is found, `CopernicusForecast` passes `None` to the toolbox only if the `copernicusmarine login` file exists (`COPERNICUSMARINE_CREDENTIALS_DIRECTORY` or `~/.copernicusmarine/`), else it raises; likewise `CDSForecast` falls back to `cdsapi.Client()` only if `CDSAPI_RC` or `~/.cdsapirc` exists. Architeuthis never writes `~/.cdsapirc` any more. Without a credential store (Linux server), `keyring` errors are treated as "not found", so environment variables still work.
 - `core.berg_zone` and `icebergs.berg_zone` are computed when they are read (module `__getattr__`), so `from architeuthis.icebergs import berg_zone` fetches the iceberg limit at that line.
 
 ## Testing
@@ -182,18 +194,18 @@ Tests live in `tests/`, configured in `pyproject.toml`. `.github/workflows/tests
 CI installs the latest dependencies, so it can differ from a local environment. In particular, casadi 3.7 and 3.8 do not always converge the same way, so keep test objectives reasonably well conditioned.
 
 - **`tests/numpy`, `tests/optimization`, `tests/modeling`:** vendored from AeroSandbox, including the `import architeuthis as asb` style.
-- **`tests/domain`:** Architeuthis code. `test_route.py` covers routes, voyages and passage plans offline. `test_routing.py` runs `RoutingAnalysis.run` and `evaluate` end to end, marked `integration`. `test_plots.py` draws every figure from real reports with Agg. `test_ui.py` runs the real `ui.py` without its server, with forecasts and downloads replaced. `test_examples.py` runs every example and the quick start of the README from start to finish on synthetic data, so a new example must be added to its `WINDOWS`. `test_readme.py` checks the README and its links, and `test_plots.py` checks that `docs/user_guide.md` gives the signature of each figure. `test_import_side_effects.py` checks imports in a new interpreter with the network cut off.
+- **`tests/domain`:** Architeuthis code. `test_route.py` covers routes, voyages and passage plans offline. `test_routing.py` runs `RoutingAnalysis.run` and `evaluate` end to end, marked `integration`. `test_plots.py` draws every figure from real reports with Agg. `test_ui.py` runs the real `ui.py` without its server, with forecasts and downloads replaced. `test_examples.py` runs every example and the quick start of the README from start to finish on synthetic data, so a new example must be added to its `WINDOWS`. `test_readme.py` checks the README and its links, and `test_plots.py` checks that `docs/user_guide.md` gives the signature of each figure. `test_import_side_effects.py` checks imports in a new interpreter with the network cut off. `test_credentials.py` covers the credential lookup, the store and the command line, and `test_packaging.py` the single source of the version. Download tests set credentials with `monkeypatch.setenv`.
 - **Expected failure:** `test_black_box_nonsmooth_function` is `xfail` because IPOPT can fail on the kink of `abs()`.
 
 Rules for new tests:
 
-- **Stay offline.** `tests/conftest.py` points `HOME` at a temporary folder, removes credentials and replaces `architeuthis.icebergs` with a stub. Mock providers with `patch("architeuthis.forecast.<name>")`, or `load_data` as `test_examples.py` does.
+- **Stay offline.** `tests/conftest.py` points `HOME` at a temporary folder, removes credentials and their aliases and `ARCHITEUTHIS_HOME`, selects the null `keyring` backend through `PYTHON_KEYRING_BACKEND` so the real credential store is never touched (`test_credentials.py` installs one in memory), and replaces `architeuthis.icebergs` with a stub. Mock providers with `patch("architeuthis.forecast.<name>")`, or `load_data` as `test_examples.py` does.
 - **Use synthetic data.** The fixtures in `tests/domain/conftest.py` provide forecasts, topographies, a vessel and real reports (`baseline_report`, `optimized_report`, `routing`): assign a dataset to `.data`, skip `load_data()`, then call `add_interpolator`. The reports are shared, so copy them to change them.
 - **Pass `linear_solver: mumps`** in routing tests, because of the `spral` crash described under Pitfalls.
 - **Keep the checkout clean.** Importing `wrappers/json_wrapper.py` or `ui.py` writes `assets/dashExtensions_default.js` to the working directory, so import them from a temporary folder, as `tests/domain/test_toolbox.py` does.
 - **Do not change `--tb=native`.** Other traceback styles parse `casadi.py`, which raises `MemoryError` and aborts the session.
 
-Not covered: the real IIP server (`test_icebergs.py` replaces `requests.get`), `ui.py` with real forecasts and in a browser, the rendering of cartopy maps, `satellite.py`, and the default `spral` solver options.
+Not covered: the real IIP server (`test_icebergs.py` replaces `requests.get`), `ui.py` with real forecasts and in a browser, the rendering of cartopy maps, `satellite.py` downloads, the real credential stores of each OS (only checked by hand on Windows), and the default `spral` solver options.
 
 ## Known inconsistencies
 
