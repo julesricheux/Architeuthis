@@ -56,6 +56,7 @@ WINDOWS = {
     "ifs_route_tested_with_gfs.py": SOON,
     "comparison_ascat_models.py": (TODAY - pd.Timedelta(days=4), TODAY + pd.Timedelta(days=2)),
     "function_polar_routing.py": SOON,
+    "sky_along_route.py": SOON,
 }
 QUICK_START = "readme_quick_start.py"
 
@@ -67,6 +68,8 @@ FIELDS = {
     "u10": 4.0, "v10": 1.0, "fg10": 11.0, "gust": 10.0, "msl": 101000.0, "prmsl": 101000.0,
     "swh": 2.5, "mwd": 250.0, "dirpw": 240.0, "uo": 0.1, "vo": 0.05,
     "t2m": 285.0, "u100": 5.0, "v100": 1.5, "mwp": 8.0,
+    "tcc": 0.6, "lcc": 0.4, "mcc": 0.3, "hcc": 0.2, "mucape": 150.0, "tprate": 1e-4,
+    "d2m": 281.0, "t": 270.0,
 }
 
 
@@ -86,7 +89,10 @@ def deterministic_names(forecast):
     """The fields that the `regex` of a forecast asks of its provider."""
     regex = forecast.regex or ""
     if forecast.model == "ifs":
-        tokens = {"u10": ":10u:", "v10": ":10v:", "fg10": ":10fg:", "msl": ":msl:", "u100": ":100u:", "v100": ":100v:", "t2m": ":2t:", "swh": ":swh:", "mwd": ":mwd:", "mwp": ":mwp:"}
+        # As Herbie searches the IFS inventory: parameter, then level and level type.
+        surface = {"u10": "10u", "v10": "10v", "fg10": "10fg", "msl": "msl", "u100": "100u", "v100": "100v", "t2m": "2t", "swh": "swh", "mwd": "mwd", "mwp": "mwp",
+                   "tcc": "tcc", "lcc": "lcc", "mcc": "mcc", "hcc": "hcc", "mucape": "mucape", "tprate": "tprate", "d2m": "2d"}
+        tokens = {name: f":{param}:sfc:" for name, param in surface.items()} | {"t": ":t:700:pl:"}
         return [name for name, token in tokens.items() if re.search(regex, token)]
     if forecast.model == "gfs":
         return ["u10", "v10"] + (["gust"] if "GUST" in regex else [])
@@ -350,3 +356,13 @@ def test_ensemble_routing_evaluates_each_plan_in_each_member(example):
     assert len(evaluations) == 2 * 2
     assert {report["plan_member"] for report in evaluations} == {1, 2}
     assert {report["member"] for report in evaluations} == {1, 2}
+
+
+def test_sky_along_route_describes_each_point_with_both_models(example):
+    variables = example("sky_along_route.py").variables
+    table = variables["table"]
+
+    assert len(table) == variables["points"]
+    assert {"sky IFS", "sky GFS"} <= set(table.columns)
+    assert all(isinstance(line, str) and line for line in table["sky IFS"])
+    assert {"cloud_low", "cloud_middle", "cloud_high"} <= set(variables["skies"]["gfs"])

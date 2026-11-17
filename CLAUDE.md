@@ -64,6 +64,7 @@ icebergs.py    IIP iceberg limit, fetched on first use: berg_zone polygon, berg_
 route.py       Waypoint, Leg, Route (waypoints + divergences + spread), RouteSet, RouteLibrary
 voyage.py      Schedule, Voyage (Route + Schedule), PassagePlan, PassagePlanLibrary
 exclusion.py   ExclusionZone, ExclusionZoneLibrary, iceberg_zone (the zones themselves belong to the user)
+sky.py         cloud genera per étage, cover, base and one line per point from 9 IFS/GFS fields (NumPy only, standalone)
 report.py      RoutingReport (dict), ReportCollection (list): tables, GPX, JSON storage
         |       all offline: they do not import core
 core.py        RoutingAnalysis (run, evaluate); re-exports the above
@@ -76,7 +77,7 @@ data/          package data: cloud_genera.json (the 10 WMO genera, étages, prec
 wrappers/      json_wrapper (GeoJSON), leaflet_wrapper (zone layers), legacy provider wrappers
 examples/      simple_routing, long_term_routing, ensemble_routing, post_leg_rewind,
                passage_planning, ifs_route_tested_with_gfs, short_term_routing, comparison_ascat_models,
-               function_polar_routing;
+               function_polar_routing, sky_along_route;
                they define their own sources and zones, and keep past settings as commented lines
 tests/         numpy, optimization, modeling (AeroSandbox), domain (Architeuthis)
 ```
