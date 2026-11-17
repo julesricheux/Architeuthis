@@ -43,6 +43,34 @@ def preprocess(ds):
     return ds.drop_vars("step", errors="ignore")
 
 
+def open_grib(path: str, **kwargs) -> xr.Dataset:
+    """
+    Open a GRIB file as one dataset, whatever the levels of its fields.
+
+    cfgrib reads one hypercube per level: the 10 m wind and the 2 m
+    temperature of IFS, for example, each with its height as a scalar
+    `heightAboveGround` coordinate. These level coordinates are dropped,
+    the names of the variables (`u10`, `t2m`) telling the levels apart,
+    so that the hypercubes merge into one dataset.
+
+    Args:
+        path: Path of the GRIB file.
+        **kwargs: Arguments of `xarray.open_dataset`.
+
+    Returns:
+        The fields of the file, without their level coordinates.
+    """
+    import cfgrib  # loads ecCodes: on first use, not at import
+
+    datasets = []
+    for dataset in cfgrib.open_datasets(path, **kwargs):
+        levels = {variable.attrs.get("GRIB_typeOfLevel") for variable in dataset.data_vars.values()}
+        scalar_levels = [name for name in levels if name in dataset.coords and dataset[name].ndim == 0]
+        datasets.append(preprocess(dataset.drop_vars(scalar_levels)))
+
+    return xr.merge(datasets, compat="override", combine_attrs="drop_conflicts")
+
+
 class Topography(ArchiteuthisSpatialData):
     """
     ETOPO 2022 topography, as a signed distance to the boundary.
@@ -550,19 +578,19 @@ class DeterministicHerbieForecast(HerbieForecast):
         super().__init__(name, model, product, regex, date, fxx, min_lon, max_lon, min_lat, max_lat, time_unit, verbose)
         
     def _read_data(self):
-        self.data = xr.open_mfdataset(
-            list(self.path),
-            engine="cfgrib",
-            decode_timedelta=False,
-            decode_times=True,
-            combine="nested",
+        # One dataset per file, whatever the levels of its fields (10 m wind and
+        # 2 m temperature, for example), then concatenated along valid_time
+        datasets = [
+            open_grib(path, decode_timedelta=False, decode_times=True)
+            for path in self.path
+        ]
+        self.data = xr.combine_nested(
+            datasets,
             concat_dim=["valid_time"],
-            # coords="different",
             coords="minimal", # for concatenation compatibility
             compat="no_conflicts",
-            preprocess=preprocess, # for concatenation compatibility
         )
-        
+
         
 def _regrid_to_lat_lon(data: xr.Dataset, crs, latitude, longitude, skip: int = 5) -> xr.Dataset:
     """

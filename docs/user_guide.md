@@ -111,6 +111,10 @@ atmosphere.add_function(
 )
 ```
 
+A Herbie forecast may mix fields at different levels in one download, such as the IFS 10 m wind and 2 m temperature with `regex=r":(?:10[uv]|2t):"`.
+
+`examples/function_polar_routing.py` routes a voyage with a dummy polar of this kind, which depends on `stw`, `tws`, `twa`, `swh`, `mwa` and the air temperature of IFS. It needs no polar file and no credentials.
+
 The three vessel models are evaluated separately, so a function that computes all components is computed three times when the problem is built.
 
 ### Credentials and the data folder

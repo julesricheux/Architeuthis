@@ -221,15 +221,8 @@ def test_herbie_conversion_pads_two_zero_filled_time_steps():
     assert np.all(forecast.data["u10"].values[:2] > 0.0)
 
 
-@pytest.mark.parametrize(
-    "forecast_class, expected_filter",
-    [
-        (DeterministicHerbieForecast, None),
-        (EnsembleHerbieForecast, {"dataType": "pf"}),
-    ],
-)
-def test_herbie_read_uses_cfgrib_with_the_right_filter(forecast_class, expected_filter):
-    forecast = forecast_class("read", model="ifs", product="oper", date=BASE_DATE)
+def test_ensemble_read_uses_cfgrib_with_the_perturbed_members():
+    forecast = EnsembleHerbieForecast("read", model="ifs", product="enfo", date=BASE_DATE)
     forecast.path = ["dummy.grib"]
 
     with patch("architeuthis.forecast.xr.open_mfdataset") as open_mfdataset:
@@ -238,8 +231,53 @@ def test_herbie_read_uses_cfgrib_with_the_right_filter(forecast_class, expected_
     args, kwargs = open_mfdataset.call_args
     assert args == (["dummy.grib"],)
     assert kwargs["engine"] == "cfgrib"
-    assert kwargs.get("filter_by_keys") == expected_filter
+    assert kwargs.get("filter_by_keys") == {"dataType": "pf"}
     assert forecast.data is open_mfdataset.return_value
+
+
+def write_grib(path, fields, step):
+    """Write GRIB2 fields at heights above ground, as one file of a Herbie download."""
+    from cfgrib.xarray_to_grib import to_grib
+
+    latitude = np.array([50.0, 49.0, 48.0])
+    longitude = np.array([-20.0, -19.0, -18.0, -17.0])
+    content = b""
+    for name, (short_name, height, value) in fields.items():
+        field = xr.DataArray(
+            np.full((latitude.size, longitude.size), value),
+            dims=("latitude", "longitude"),
+            coords={
+                "latitude": latitude,
+                "longitude": longitude,
+                "time": pd.Timestamp(BASE_DATE),
+                "step": pd.Timedelta(hours=step),
+                "heightAboveGround": float(height),
+            },
+            name=name,
+            attrs={"GRIB_shortName": short_name, "GRIB_typeOfLevel": "heightAboveGround", "GRIB_gridType": "regular_ll"},
+        )
+        part = path.with_name(f"{name}_{path.name}")
+        to_grib(field.to_dataset(), str(part), grib_keys={"edition": 2})
+        content += part.read_bytes()
+    path.write_bytes(content)
+    return str(path)
+
+
+def test_deterministic_read_merges_fields_at_different_heights(tmp_path):
+    # As the IFS 10 m wind with the 2 m temperature, which cfgrib alone cannot merge.
+    forecast = DeterministicHerbieForecast("read", model="ifs", product="oper", date=BASE_DATE)
+    forecast.path = [
+        write_grib(tmp_path / f"step_{step}.grib2", {"u10": ("10u", 10, 4.0 + step), "t2m": ("2t", 2, 285.0 + step)}, step)
+        for step in (0, 3)
+    ]
+
+    forecast._read_data()
+
+    assert set(forecast.data.data_vars) == {"u10", "t2m"}
+    assert "heightAboveGround" not in forecast.data.coords
+    assert forecast.data.sizes["valid_time"] == 2
+    assert forecast.data["u10"].mean(["latitude", "longitude"]).values == pytest.approx([4.0, 7.0])
+    assert forecast.data["t2m"].mean(["latitude", "longitude"]).values == pytest.approx([285.0, 288.0])
 
 
 def test_ensemble_interpolator_has_four_dimensions():

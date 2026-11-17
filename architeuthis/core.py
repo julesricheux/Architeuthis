@@ -506,7 +506,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         """
         A vessel input read from the forecasts, at segment midpoints.
 
-        The atmosphere is looked at first, then the wave and the current.
+        The atmosphere is looked at first, then the wave, the current.
         """
         for forecast, query in forecast_queries:
             if key in forecast.models:

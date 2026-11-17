@@ -55,6 +55,7 @@ WINDOWS = {
     "passage_planning.py": SOON,
     "ifs_route_tested_with_gfs.py": SOON,
     "comparison_ascat_models.py": (TODAY - pd.Timedelta(days=4), TODAY + pd.Timedelta(days=2)),
+    "function_polar_routing.py": SOON,
 }
 QUICK_START = "readme_quick_start.py"
 
@@ -65,6 +66,7 @@ LONGITUDE = np.arange(-100.0, 12.0, 3.0)
 FIELDS = {
     "u10": 4.0, "v10": 1.0, "fg10": 11.0, "gust": 10.0, "msl": 101000.0, "prmsl": 101000.0,
     "swh": 2.5, "mwd": 250.0, "dirpw": 240.0, "uo": 0.1, "vo": 0.05,
+    "t2m": 285.0,
 }
 
 
@@ -84,7 +86,7 @@ def deterministic_names(forecast):
     """The fields that the `regex` of a forecast asks of its provider."""
     regex = forecast.regex or ""
     if forecast.model == "ifs":
-        tokens = {"u10": ":10u:", "v10": ":10v:", "fg10": ":10fg:", "msl": ":msl:", "swh": ":swh:", "mwd": ":mwd:"}
+        tokens = {"u10": ":10u:", "v10": ":10v:", "fg10": ":10fg:", "msl": ":msl:", "t2m": ":2t:", "swh": ":swh:", "mwd": ":mwd:"}
         return [name for name, token in tokens.items() if re.search(regex, token)]
     if forecast.model == "gfs":
         return ["u10", "v10"] + (["gust"] if "GUST" in regex else [])
@@ -276,6 +278,23 @@ def test_examples_define_their_own_zones_and_their_own_sources():
         source = (EXAMPLES / script).read_text(encoding="utf-8")
         assert "presets" not in source
         assert "reference_data" not in source
+
+
+def test_function_polar_routing_reads_the_air_temperature(example):
+    variables = example("function_polar_routing.py").variables
+    reports = variables["reports"]
+
+    assert [report["solve"] for report in reports] == [0, 1]
+    assert {report["vessel"] for report in reports} == {"dummy_vessel"}
+    assert variables["vessel"].path is None
+    assert "air_temperature" in variables["atmosphere"].models
+
+    # Colder air, more sail power, less brake power.
+    query = {"stw": 11.0, "tws": 20.0, "twa": 90.0, "swh": 2.0, "mwa": 30.0}
+    vessel = variables["vessel"]
+    cold = float(vessel("bhp", query | {"air_temperature": 0.0}))
+    warm = float(vessel("bhp", query | {"air_temperature": 30.0}))
+    assert cold < warm
 
 
 def test_ensemble_routing_evaluates_each_plan_in_each_member(example):

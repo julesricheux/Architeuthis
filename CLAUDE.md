@@ -74,7 +74,8 @@ toolbox/       geo_utils (route geometry), plot_utils (figures, documented in do
                json_utils (report JSON codec), inspect_tools, string_formatting...
 wrappers/      json_wrapper (GeoJSON), leaflet_wrapper (zone layers), legacy provider wrappers
 examples/      simple_routing, long_term_routing, ensemble_routing, post_leg_rewind,
-               passage_planning, ifs_route_tested_with_gfs, short_term_routing, comparison_ascat_models;
+               passage_planning, ifs_route_tested_with_gfs, short_term_routing, comparison_ascat_models,
+               function_polar_routing;
                they define their own sources and zones, and keep past settings as commented lines
 tests/         numpy, optimization, modeling (AeroSandbox), domain (Architeuthis)
 ```
@@ -181,6 +182,7 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 - `Vessel.hotel_load` and `Vessel.sfc` are wrapped into callables, while `Vessel.max_power` stays a raw value. `sfc` defaults to 0, which makes the objective zero. `max_power` defaults to 1e12 kW: such a slack on `max_bhp < max_power` can send IPOPT's adaptive barrier off and the route diverging, so give a realistic value.
 - `EnsembleHerbieForecast.add_interpolator` takes `var_dim, time_dim, member_dim, latitude_dim, longitude_dim`, which must be the order of the array.
 - Report consumers (`json_wrapper.route_to_geojson`, `ui.py`) also need `init_fac`, which `run` records but `evaluate` does not. `ReportCollection.save` writes to `~/data/routes/` by default.
+- `DeterministicHerbieForecast` reads each GRIB file with `forecast.open_grib` (`cfgrib.open_datasets`, one hypercube per level, merged without their scalar level coordinates), so one `regex` may mix levels, such as the IFS 10 m wind and 2 m temperature. Plain `xr.open_dataset(engine="cfgrib")` would skip `t2m` and the concatenation fail on `heightAboveGround`. Two variables of the same name at two levels would collide; cfgrib names them apart (`u10`, `u100`).
 - `HRDPSForecast` wind speeds are right but its directions are not: the files have `uvRelativeToGrid` = 1 and the components are not rotated from the rotated grid, about 45 deg off around Saint-Pierre-et-Miquelon compared with GFS. `HerbieLatest` only looks on `aws` and `nomads` by default, so a model elsewhere needs `priority`.
 - `EUMDAC_KEY` and `EUMDAC_SECRET` hold the EUMETSAT Consumer Key and Secret, not a login. When neither CMEMS credential is found, `CopernicusForecast` passes `None` to the toolbox only if the `copernicusmarine login` file exists (`COPERNICUSMARINE_CREDENTIALS_DIRECTORY` or `~/.copernicusmarine/`), else it raises; likewise `CDSForecast` falls back to `cdsapi.Client()` only if `CDSAPI_RC` or `~/.cdsapirc` exists. Architeuthis never writes `~/.cdsapirc` any more. Without a credential store (Linux server), `keyring` errors are treated as "not found", so environment variables still work.
 - `core.berg_zone` and `icebergs.berg_zone` are computed when they are read (module `__getattr__`), so `from architeuthis.icebergs import berg_zone` fetches the iceberg limit at that line.
