@@ -241,7 +241,7 @@ steps_00_12 = list(range(0, 145, 3)) + list(range(150, 361, 6))
 # mirror_date = pd.Timestamp('2026-02-12 00:00:00')
 # mirror_end = pd.Timestamp('2026-01-31 23:00:00')
 
-recent = pd.Timestamp("now").floor("1d8h")
+recent = pd.Timestamp("now").floor("1d8h").floor("1d")
 # recent = pd.Timestamp('2026-11-08 00:00:00')
 
 ATMOS = {}

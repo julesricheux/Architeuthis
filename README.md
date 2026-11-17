@@ -5,7 +5,7 @@
 
 # Architeuthis: Weather Routing for Wind-powered Hybrid Vessels 🦑
 
-**Minimize fuel on a fixed schedule, with real forecasts, constraints and custom vessel model.**
+**Minimize fuel on a fixed schedule, with real forecasts, real constraints and your own vessel model.**
 
 <!-- Badges -->
 
@@ -15,7 +15,7 @@
 [![Downloads](https://static.pepy.tech/badge/architeuthis)](https://pepy.tech/projects/architeuthis)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-## 📚 [User Guide](docs/user_guide.md) | ❔ [Issues](https://github.com/julesricheux/Architeuthis/issues)
+## 📚 [User Guide](docs/user_guide.md) | 🧪 [Examples](examples/README.md) | ❔ [Issues](https://github.com/julesricheux/Architeuthis/issues)
 
 <!-- (Badges) -->
 
@@ -27,54 +27,30 @@
 
 An open-source marine weather and decision-making framework for hybrid sailing ships. It couples mesh-free, fully differentiable methods in a unified optimization environment to compute optimal routes under real-world constraints.
 
-"Mesh-free" means that routes are not searched on a graph. The waypoints are continuous variables of a single nonlinear program, and weather, bathymetry and vessel performance are differentiable tables queried at those waypoints. [CasADi](https://github.com/casadi/casadi) differentiates through everything and [IPOPT](https://github.com/coin-or/Ipopt) solves the problem.
+No graph, no grid search: the waypoints are continuous variables of a single nonlinear program. Weather, bathymetry and your vessel are differentiable models queried at those waypoints, [CasADi](https://github.com/casadi/casadi) differentiates through all of it and [IPOPT](https://github.com/coin-or/Ipopt) finds the route.
 
-**Key Features:**
-- ⛽ **Fuel-optimal routes** - Minimize the fuel of a voyage with a fixed departure and arrival time
-- 🚢 **Motor and hybrid vessels** - Bring your vessel as a performance table, with or without sails
-- 🌊 **Wind, waves and currents** - Ready-made IFS, GFS, ensemble and Mercator sources
-- 🧊 **Real-world constraints** - Land, shallow water, exclusion zones, the iceberg limit, maximum power and your own constraints
-- 🎲 **Forecast uncertainty** - Optimize each ensemble member, and test a plan against other models, members or vessels
-- 📊 **Ready-to-use outputs** - A4 reports, maps, tables, GPX tracks and an interactive viewer
+- ⛽ **Fuel-optimal routes** on a fixed departure and arrival time
+- 🧩 **Any vessel model**: a polar table, or your own semi-empirical functions with their fitted parameters
+- 🌊 **Wind, waves, currents and more**: IFS, GFS, ensembles, Mercator, ERA5, and any other field your model needs
+- 🧊 **Real-world constraints**: land, shallow water, exclusion zones, the iceberg limit, maximum power, your own rules
+- 🎲 **Forecast uncertainty**: optimize each ensemble member, test a plan against other models, members or vessels
+- 📊 **Ready-to-use outputs**: A4 reports, maps, tables, GPX tracks and an interactive viewer
+
+**Architeuthis** provides the **onshore weather routing support** of [Neoliner Origin](https://www.neoline.eu/) 🌬️⛵⚓
 
 **Keywords:** weather routing, voyage optimization, fuel saving, wind-assisted ship propulsion, hybrid vessel, passage planning, nonlinear optimization, CasADi, IPOPT, GRIB2, xarray, python
-
-**Architeuthis** is the tool used for the **onshore weather routing support** for [Neoliner Origin](https://www.neoline.eu/) 🌬️⛵⚓
 
 ---
 
 ## 🚀 Quick Start
 
-### ⚙️ Installation
-
-Architeuthis needs Python 3.11 or later.
-
-**With pip:**
 ```bash
-pip install architeuthis
+pip install architeuthis            # add [app] for the interactive viewer
 ```
 
-Add the interactive viewer with:
-```bash
-pip install "architeuthis[app]"
-```
+Or from source: `git clone https://github.com/julesricheux/Architeuthis.git`, then `conda env create -f environment.yaml` and run everything from the repository root (Python 3.11 or later).
 
-**From source, with conda:**
-```bash
-git clone https://github.com/julesricheux/Architeuthis.git
-```
-```bash
-cd Architeuthis
-```
-```bash
-conda env create -f environment.yaml
-```
-
-The environment is named `py313-architeuthis`. The package then needs no installation: run everything from the repository root.
-
-### 💡 Simple Example
-
-This example routes a vessel across the North Atlantic with recent ECMWF forecasts. It needs no credentials, only a polar file for your vessel (see [Your Vessel](#-your-vessel)).
+A North Atlantic crossing on yesterday's ECMWF forecast, with no account and no credentials:
 
 ```python
 import pandas as pd
@@ -89,80 +65,103 @@ from architeuthis.vessel import Vessel
 from architeuthis.voyage import Voyage
 
 domain = dict(min_lon=-60., max_lon=0., min_lat=38., max_lat=56.)
-
-# Yesterday's 00 UTC forecast, with its lead times in hours
 today = pd.Timestamp("now").floor("1d")
-date = today - pd.Timedelta(days=1)
-steps = list(range(0, 145, 3)) + list(range(150, 241, 6))
+date = today - pd.Timedelta(days=1)                               # yesterday's 00 UTC run
+steps = list(range(0, 145, 3)) + list(range(150, 241, 6))         # lead times, in hours
 
 atmosphere = DeterministicHerbieForecast("wind", model="ifs", product="oper", regex=r":10[u|v]:", fxx=steps, date=date, **domain)
 atmosphere.load_data()
-atmosphere.add_interpolator("u10", "valid_time", "latitude", "longitude")
-atmosphere.add_interpolator("v10", "valid_time", "latitude", "longitude")
+for key in ("u10", "v10"):
+    atmosphere.add_interpolator(key, "valid_time", "latitude", "longitude")
 
 wave = DeterministicHerbieForecast("wave", model="ifs", product="wave", regex=r":swh:|:mwd:", fxx=steps, date=date, **domain)
 wave.load_data()
-wave.add_wave_components()  # the direction is interpolated through its components
-wave.add_interpolator("swh", "valid_time", "latitude", "longitude")
-wave.add_interpolator("uw", "valid_time", "latitude", "longitude")
-wave.add_interpolator("vw", "valid_time", "latitude", "longitude")
+wave.add_wave_components()                                        # direction through its components
+for key in ("swh", "uw", "vw"):
+    wave.add_interpolator(key, "valid_time", "latitude", "longitude")
 
-# Calm water on the grid of the wind. For real currents, see CopernicusForecast in examples/post_leg_rewind.py
-calm = xr.zeros_like(atmosphere.data["u10"])
+calm = xr.zeros_like(atmosphere.data["u10"])                      # calm water; see CopernicusForecast for currents
 current = Forecast("calm_current", date=None, fxx=None, **domain)
 current.data = xr.Dataset({"uo": calm, "vo": calm})
-current.add_interpolator("uo", "valid_time", "latitude", "longitude")
-current.add_interpolator("vo", "valid_time", "latitude", "longitude")
+for key in ("uo", "vo"):
+    current.add_interpolator(key, "valid_time", "latitude", "longitude")
 
 topography = Topography("topography", **domain)
 topography.load_data()
 topography.add_interpolator("distance_to_iso0", "lat", "lon", var_key="z")
 
-# Specific fuel consumption in g/kWh, loads and power in kW
-vessel = Vessel("vessel", filepath="my_vessel_polar.nc", sfc=220., hotel_load=194., max_power=4100.)
+vessel = Vessel("vessel", filepath="my_vessel_polar.nc", sfc=220., hotel_load=194., max_power=4100.)  # g/kWh, kW, kW
 vessel.load_data()
 for key in ("bhp", "max_bhp", "sails_contribution"):
     vessel.add_interpolator(key, "stw", "tws", "twa", "hs", "wa", method="linear")
 
-# The reference route and the schedule, in UTC
 route = Route("crossing", [Waypoint(47.725, -4.380, "Penmarch"), Waypoint(46.551, -53.321, "Cape Race")])
 voyage = Voyage("crossing", etd=today, eta=today + pd.Timedelta(days=8), route=route)
 
-# Optimize
-analysis = RoutingAnalysis("crossing", vessel, voyage, atmosphere, wave, current, topography)
-report = analysis.run()
+report = RoutingAnalysis("crossing", vessel, voyage, atmosphere, wave, current, topography).run()
 
-# Results
 reports = ReportCollection([report])
 print(reports.summary())
 reports.to_gpx()     # a track for your navigation system
 reports.save()       # for the viewer
-plot_report(report)  # one A4 page: speed, sails, power, waves and wind against time
+plot_report(report)  # one A4 page: speed, sails, power, waves and wind
 ```
 
 ---
 
 ## 🚢 Your Vessel
 
-Architeuthis does not include a vessel model. You provide a NetCDF performance table, which can come from a velocity prediction program, sea trials or a simpler model. A motor vessel and a hybrid vessel only differ by the content of this table: for a motor vessel, `sails_contribution` is zero.
+Architeuthis ships no vessel model: bring yours, **as a table or as functions**. Both are models of the same object, queried the same way, and the routing does not care which one it gets.
 
-| Variable | Meaning | Unit |
-| --- | --- | --- |
-| `bhp` | Average brake power | kW |
-| `max_bhp` | Brake power with load fluctuations, checked against `max_power` | kW |
-| `sails_contribution` | Share of the propulsion from sails, for the reports | % |
+**📋 A polar table**, from a VPP, sea trials or anything else: a NetCDF file with `bhp`, `max_bhp` and `sails_contribution` (kW, kW, %) on the axes `stw, tws, twa, hs, wa` (kt, kt, deg, m, deg). That is the [Quick Start](#-quick-start).
 
-Each variable has the five dimensions below, in this order:
+**🧮 Or your own functions**, with their fitted parameters, and no file at all:
 
-| Dimension | Meaning | Unit |
-| --- | --- | --- |
-| `stw` | Speed through water | kt |
-| `tws` | True wind speed | kt |
-| `twa` | True wind angle, 0 to 180 | deg |
-| `hs` | Significant wave height | m |
-| `wa` | Wave angle, 0 to 180 | deg |
+```python
+import architeuthis.numpy as np
 
-`sfc` and `hotel_load` are given to `Vessel` as constants or as functions of the power, and `sfc` must be set because the objective is zero without it. A polar named `..._eff45.nc` gets the label `eff45` in reports, or you can give any `label`.
+def my_polar(x, p):
+    tws = (x["tws"] + x["tws100"]) / 2.                           # wind between 10 m and 100 m
+    sails = p["c_sail"] * tws**2 * x["stw"] * np.sind(x["twa100"])**2
+    calm = p["c_calm"] * x["stw"]**3 * (1. + p["k_t"] * (x["water_temperature"] - 15.))
+    return calm - sails, {"calm": calm, "sails": sails}
+
+inputs = ["stw", "tws", "tws100", "twa100", "water_temperature"]
+vessel = Vessel("my_ship", sfc=220., max_power=4100.)
+vessel.add_function("bhp", my_polar, inputs, args={"p": fitted})
+vessel.add_function("max_bhp", my_polar, inputs, args={"p": fitted})
+vessel.add_function("sails_contribution", my_polar, inputs, args={"p": fitted}, output="sails")
+```
+
+### ✨ The routing finds what your model needs
+
+Name an input, and the routing provides it. No wiring, no plumbing:
+
+| Your model asks for | The routing |
+| --- | --- |
+| `stw`, `sog`, `tws`, `twd`, `twa`, `aws`, `awa`, `hs`/`swh`, `wa`/`mwa` | computes them along the route, relative to the vessel |
+| `tws100`, `twa100`, `aws100`, `awa100`... at **any height** | computes them the same way from the forecast's `u100` and `v100` |
+| **anything else**: `water_temperature`, `mwp`, `air_temperature`... | samples the forecast that has a model of that name |
+
+So the forecasts above only need a few more lines, and the routing is unchanged:
+
+```python
+atmosphere = DeterministicHerbieForecast("wind", model="ifs", product="oper", regex=r":(?:10[uv]|100[uv]):", ...)  # one download, several levels
+atmosphere.add_interpolator("u100", "valid_time", "latitude", "longitude")
+atmosphere.add_interpolator("v100", "valid_time", "latitude", "longitude")
+current.add_interpolator("thetao", "valid_time", "latitude", "longitude", var_key="water_temperature")
+```
+
+A forecast can hold functions too, to convert a unit or combine fields: `atmosphere.add_function("air_temperature", lambda x: atmosphere("t2m", x) - 273.15, inputs=["valid_time", "latitude", "longitude"])`.
+
+**💡 Good practice**
+
+- **Stay differentiable:** write with `architeuthis.numpy`, and use `np.where`, `np.softmax` or `np.sigmoid` rather than `if` on values.
+- **Mind the units:** routing quantities are in kt and degrees, angles in absolute value. Forecast fields arrive as stored (m/s, K): convert them with `fac=` or a function.
+- **Return components:** `(value, {"sails": ...})`, then pick one with `output=`.
+- **Set a realistic `max_power` and `sfc`:** a huge power limit unsettles the solver, and the objective is zero without `sfc`.
+
+The complete script is [`examples/function_polar_routing.py`](examples/function_polar_routing.py), and the [User Guide](docs/user_guide.md) has the details.
 
 ---
 
@@ -170,28 +169,25 @@ Each variable has the five dimensions below, in this order:
 
 ### > What You Need to Set
 
-Most of Architeuthis needs no setting at all. The table lists everything you may have to set yourself, and when:
+Mostly nothing: IFS, GFS, HRDPS, ETOPO and the iceberg limit need no account. Each credential is needed only by its provider.
 
-| What | When you need it | How |
+| What | For | How |
 | --- | --- | --- |
-| `CMEMS_USER`, `CMEMS_PWD` | Currents, with `forecast.CopernicusForecast` | [Save them once](#-saving-your-credentials-once), see [Copernicus Marine](#copernicus-marine-currents) |
-| `CDS_API_KEY` | Reanalysis, with `forecast.CDSForecast` | [Save it once](#-saving-your-credentials-once), see [Climate Data Store](#climate-data-store-era5) |
-| `EUMDAC_KEY`, `EUMDAC_SECRET` | Satellite observations, with `satellite.ASCATData` or `satellite.PoseidonData` | [Save them once](#-saving-your-credentials-once), see [EUMETSAT](#eumetsat-satellite-observations) |
-| `ARCHITEUTHIS_HOME` | Optional: to keep downloads and results somewhere else than `~/data/` | [An environment variable](#-the-data-folder) |
-
-IFS, GFS, HRDPS, ETOPO and the iceberg limit need no account. Each credential is needed only by its provider, so you can start without any.
-
-Everything else is fixed by the package and is not meant to be changed: the version, the provider addresses, and the folders inside the data folder.
+| `CMEMS_USER`, `CMEMS_PWD` | Currents, `forecast.CopernicusForecast` | [Save them once](#-saving-your-credentials-once), [get them](#copernicus-marine-currents) |
+| `CDS_API_KEY` | Reanalysis, `forecast.CDSForecast` | [Save it once](#-saving-your-credentials-once), [get it](#climate-data-store-era5) |
+| `EUMDAC_KEY`, `EUMDAC_SECRET` | Satellite data, `satellite.ASCATData`, `satellite.PoseidonData` | [Save them once](#-saving-your-credentials-once), [get them](#eumetsat-satellite-observations) |
+| `ARCHITEUTHIS_HOME` | Optional: keep downloads elsewhere than `~/data/` | [An environment variable](#-the-data-folder) |
 
 ### > Saving Your Credentials Once
 
-1. Create your account with each provider you need, as explained [below](#copernicus-marine-currents).
-2. Open a terminal where Architeuthis is installed: activate its environment (`conda activate py313-architeuthis`). If you work from the source without installing it, go to the root of the repository.
-3. Run this command with the names you need. It asks for each value, hidden when it is secret, so the value never appears on the screen or in the history of the terminal:
+In the environment where Architeuthis lives, run `set` with the names you need. It asks for each value, hidden:
+
 ```bash
 python -m architeuthis.credentials set CMEMS_USER CMEMS_PWD
 ```
-4. Check what Architeuthis finds, without showing any value:
+
+Then check what Architeuthis finds, without showing any value:
+
 ```bash
 python -m architeuthis.credentials status
 ```
@@ -203,98 +199,57 @@ EUMDAC_KEY     missing
 EUMDAC_SECRET  missing
 ```
 
-That is all. Architeuthis now finds them in every session, in Spyder, a notebook or a script, with nothing to set in your code and nothing to restart. They stay on your computer, encrypted by your operating system, under the name `architeuthis`: in the *Windows Credential Manager*, the *macOS Keychain*, or the *Secret Service* of your Linux desktop (GNOME Keyring, KWallet). This goes through the [keyring](https://pypi.org/project/keyring/) package, installed with Architeuthis.
+Done: every session finds them, in Spyder, a notebook or a script. They stay encrypted by your operating system (Windows Credential Manager, macOS Keychain, Secret Service), through [keyring](https://pypi.org/project/keyring/). Run `set` again to change one, and remove one with:
 
-**To change a credential,** for a new password for example, run `set` again with its name. **To remove one:**
 ```bash
 python -m architeuthis.credentials delete CMEMS_PWD
 ```
 
-The same is possible from Python, in Spyder for example:
-```python
-from architeuthis.credentials import credential_sources, save_credential
-
-save_credential("CMEMS_PWD")  # asks for it, hidden
-print(credential_sources())   # where each one is found, without its value
-```
-
-**If a credential is missing,** the download stops before it starts, with a ⚠️ message and a `MissingCredentialError` that names it and gives the command that saves it.
+From Python: `save_credential("CMEMS_PWD")` and `credential_sources()`, in `architeuthis.credentials`. A missing credential stops the download before it starts, with a ⚠️ message and the command that fixes it.
 
 ### > Where Architeuthis Looks
 
-Credentials are read when a download needs them, never when Architeuthis is imported. For each one, Architeuthis takes the first value found:
+Only when a download needs them, never at import, taking the first value found:
 
-1. **An environment variable** of the same name, such as `CMEMS_PWD`. The variables of the providers' own clients are read too: `CDSAPI_KEY`, `COPERNICUSMARINE_SERVICE_USERNAME` and `COPERNICUSMARINE_SERVICE_PASSWORD`, and `EUMDAC_USER` and `EUMDAC_PWD`, the former names of `EUMDAC_KEY` and `EUMDAC_SECRET`.
+1. **An environment variable** of the same name, or one of the providers' own: `CDSAPI_KEY`, `COPERNICUSMARINE_SERVICE_USERNAME`, `COPERNICUSMARINE_SERVICE_PASSWORD`, and `EUMDAC_USER` and `EUMDAC_PWD`, the former names of `EUMDAC_KEY` and `EUMDAC_SECRET`.
 2. **The credential store**, where `set` saves them.
-3. **The provider's own file**, for Copernicus Marine and the Climate Data Store only, if neither of the above has the credentials: the file of `copernicusmarine login`, or `~/.cdsapirc`.
+3. **The provider's own file**: `copernicusmarine login`, or `~/.cdsapirc`.
 
-### > Environment Variables
-
-Saving credentials once is the recommended way. Use environment variables where there is no credential store, on a CI job, a container or a Linux server, or to use another account for a while: a variable takes precedence over the saved credential.
-
-For the current Python session only, which works even after Architeuthis is imported:
-```python
-import os
-from getpass import getpass
-
-os.environ["CMEMS_PWD"] = getpass("Copernicus Marine password: ")
-```
-
-On a server or a CI job, give them as secrets of the platform, such as GitHub Actions secrets or Docker secrets. Saved in your user profile, with `setx` on Windows, `export` in `~/.bashrc` or `conda env config vars set`, they work too, but they are stored there in plain text.
+Environment variables suit servers, CI jobs and containers, where there is no credential store, and override the store for a while. Give them as secrets of the platform; saved in a profile (`setx`, `~/.bashrc`, `conda env config vars`) they sit in plain text.
 
 ### > The Data Folder
 
-Downloads, libraries and reports are kept in `~/data/`, the `data` folder of your home directory:
+Everything goes to `~/data/`:
 
 | Folder | Holds |
 | --- | --- |
-| `topo/`, `cmems/`, `cds/`, `eumetsat/`, `iip/` | Downloads: relief, currents, reanalysis, satellite data and the iceberg limit |
-| `route_library/`, `route_sets/`, `passage_plans/`, `exclusion_zones/` | Your saved routes, passage plans and zones |
+| `topo/`, `cmems/`, `cds/`, `eumetsat/`, `iip/` | Downloads: relief, currents, reanalysis, satellite data, iceberg limit |
+| `route_library/`, `route_sets/`, `passage_plans/`, `exclusion_zones/` | Your saved routes, plans and zones |
 | `routes/` | Reports saved by `ReportCollection.save`, read by the viewer |
 
-To keep them elsewhere, on a larger disk for example, set `ARCHITEUTHIS_HOME` to that folder. It is read when Architeuthis is imported, so set it for good, then open a new terminal or restart Spyder.
-
-**Windows,** in PowerShell:
-```powershell
-setx ARCHITEUTHIS_HOME "D:\architeuthis-data"
-```
-
-**Linux and macOS,** in `~/.bashrc` or `~/.zshrc`:
-```bash
-export ARCHITEUTHIS_HOME="$HOME/architeuthis-data"
-```
-
-The GRIB files of IFS, GFS and HRDPS are kept by Herbie in its own folder, set by `save_dir` in `~/.config/herbie/config.toml` and also `~/data/` by default. `ARCHITEUTHIS_HOME` does not move them.
+Set `ARCHITEUTHIS_HOME` to move it, then open a new terminal: `setx ARCHITEUTHIS_HOME "D:\architeuthis-data"` on Windows, `export ARCHITEUTHIS_HOME="$HOME/architeuthis-data"` in `~/.bashrc` elsewhere. Herbie keeps the GRIB files in its own `save_dir` (`~/.config/herbie/config.toml`).
 
 ### > Keeping Credentials Safe
 
-- 🔒 **Never write a credential in your code**, a notebook or a comment. Anything committed to a repository stays in its history, even after it is removed from the files, and a public repository exposes it to everyone.
-- **Prefer `set` to `setx`, `~/.bashrc` or `conda env config vars`,** which store values in plain text.
-- **If a credential leaks,** change it at the provider right away, then run `set` again.
-- **Coming from version 0.2.0 or earlier,** which read environment variables only: they still work. To secure them, run `set` for each one, check with `status`, then delete the variables and the `~/.cdsapirc` that Architeuthis wrote.
+- 🔒 **Never write a credential in code**, a notebook or a comment: a repository's history keeps it forever.
+- **If one leaks,** change it at the provider, then `set` it again.
+- **Coming from 0.2.0 or earlier?** Your environment variables still work. Move them to the store with `set`, check with `status`, then delete them and the `~/.cdsapirc` Architeuthis wrote.
 
 ### Copernicus Marine (currents)
 
-1. Create a free account at [data.marine.copernicus.eu/register](https://data.marine.copernicus.eu/register).
-2. Save your username as `CMEMS_USER` and your password as `CMEMS_PWD`.
-3. Check them, which prints `True` if they are valid:
+Create a free account at [data.marine.copernicus.eu/register](https://data.marine.copernicus.eu/register), then save your username as `CMEMS_USER` and your password as `CMEMS_PWD`. To check them (prints `True`):
+
 ```python
 import copernicusmarine
-
 from architeuthis.credentials import get_credential
 
 print(copernicusmarine.login(get_credential("CMEMS_USER"), get_credential("CMEMS_PWD"), check_credentials_valid=True))
 ```
 
-If you already stored your credentials with `copernicusmarine login`, Architeuthis lets the toolbox use them when it finds none of its own. That file is in plain text, in `~/.copernicusmarine/`, so prefer `set`.
-
 ### Climate Data Store (ERA5)
 
-1. Create a free account at the [Climate Data Store](https://cds.climate.copernicus.eu/how-to-api).
-2. Copy your *Personal Access Token* from your profile page, and save it as `CDS_API_KEY`.
-3. Open the page of each dataset you need, such as [ERA5 single levels](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels?tab=download), and accept its Terms of Use. Downloads are refused until you do.
+Create a free account at the [Climate Data Store](https://cds.climate.copernicus.eu/how-to-api), save the *Personal Access Token* of your profile as `CDS_API_KEY`, and accept the Terms of Use of each dataset you need, such as [ERA5 single levels](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels?tab=download). Architeuthis hands the token to the client and writes no file; without one, the client falls back to your own `~/.cdsapirc`:
 
-Architeuthis gives the token to the CDS client directly and writes no file. If it finds none, the client reads its own `~/.cdsapirc` if you have one, a plain text file like this one:
 ```text
 url: https://cds.climate.copernicus.eu/api
 key: your-personal-access-token
@@ -302,29 +257,23 @@ key: your-personal-access-token
 
 ### EUMETSAT (satellite observations)
 
-These two credentials are **not** your login and password:
+Not your login: on the [API key page](https://api.eumetsat.int/api-key/) of a free EUMETSAT account, save your **Consumer Key** as `EUMDAC_KEY` and your **Consumer Secret** as `EUMDAC_SECRET`. To check them (prints an expiry date):
 
-1. Create a free EUMETSAT account and open the [API key page](https://api.eumetsat.int/api-key/).
-2. Save your **Consumer Key** as `EUMDAC_KEY` and your **Consumer Secret** as `EUMDAC_SECRET`.
-3. Check them, which prints an expiry date, or `401 Unauthorized` if they are wrong:
 ```python
 import eumdac
-
 from architeuthis.credentials import get_credential
 
 print(eumdac.AccessToken((get_credential("EUMDAC_KEY"), get_credential("EUMDAC_SECRET"))).expiration)
 ```
-
-`eumdac set-credentials` configures the `eumdac` command only, so Architeuthis still needs its own.
 
 ---
 
 ### 🗺️ The Routing Problem
 
 - **Objective:** total fuel, `sum((bhp + hotel_load) * dt * sfc) / 1e6`, in tonnes.
-- **Fixed:** departure and arrival, ETD and ETA. The schedule is a requirement and the speed is an outcome.
-- **Variables:** the positions along the route, and optionally a factor that blends the reference route towards two alternatives.
-- **Constraints:** by default, brake power below `max_power` and every position in navigable water. Your own constraints can replace them.
+- **Fixed:** departure, arrival, ETD and ETA. The schedule is a requirement, the speed an outcome.
+- **Variables:** the positions along the route, and optionally a factor blending the reference route towards two alternatives.
+- **Constraints:** brake power below `max_power` and every position at sea, or your own.
 
 ---
 
@@ -333,14 +282,14 @@ print(eumdac.AccessToken((get_credential("EUMDAC_KEY"), get_credential("EUMDAC_S
 Architeuthis stands on the work of others, with our thanks:
 
 - **[AeroSandbox](https://github.com/peterdsharpe/AeroSandbox)** by Peter D. Sharpe (MIT). The `numpy`, `optimization` and `modeling` packages are adapted from version 4.2.9 ([license](https://github.com/peterdsharpe/AeroSandbox/blob/master/LICENSE.txt)).
-- **[Herbie](https://github.com/blaylockbk/Herbie)** by Brian K. Blaylock (MIT) downloads the forecasts, and its README inspired the structure of this one.
+- **[Herbie](https://github.com/blaylockbk/Herbie)** by Brian K. Blaylock (MIT) downloads the forecasts, and its README inspired this one.
 - **[CasADi](https://github.com/casadi/casadi)** (LGPL) and **[IPOPT](https://github.com/coin-or/Ipopt)** (EPL) differentiate and solve the routing problem.
-- **[Copernicus Marine Toolbox](https://github.com/mercator-ocean/copernicus-marine-toolbox)**, **[xarray](https://github.com/pydata/xarray)**, **[Cartopy](https://github.com/SciTools/cartopy)**, **[Dash](https://github.com/plotly/dash)** and the other dependencies listed in [`pyproject.toml`](pyproject.toml).
+- **[Copernicus Marine Toolbox](https://github.com/mercator-ocean/copernicus-marine-toolbox)**, **[xarray](https://github.com/pydata/xarray)**, **[Cartopy](https://github.com/SciTools/cartopy)**, **[Dash](https://github.com/plotly/dash)** and the other dependencies of [`pyproject.toml`](pyproject.toml).
 - The forecast, ocean, relief and ice data of their providers.
 
 ## Contributing
 
-Please report bugs or suggest features via [issues](https://github.com/julesricheux/Architeuthis/issues) and **star this repository!** ⭐
+Report bugs or suggest features in the [issues](https://github.com/julesricheux/Architeuthis/issues), and **star this repository!** ⭐
 
 ## ⚖️ License
 
