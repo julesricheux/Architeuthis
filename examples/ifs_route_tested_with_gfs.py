@@ -81,7 +81,7 @@ vessel = Vessel(
     max_power=4100.,
 )
 vessel.load_data()
-for key in ("bhp", "max_bhp", "sails_contribution"):
+for key in ("bhp", "max_bhp"):
     vessel.add_interpolator(key, "stw", "tws", "twa", "hs", "wa", method="linear")
 
 #%% FORECASTS: IFS AND GFS WIND AND WAVES, MERCATOR CURRENTS, TOPOGRAPHY

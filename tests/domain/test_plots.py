@@ -160,9 +160,8 @@ class TestPlotReport:
         assert len(ax.lines) == 1
         assert ax.get_legend() is None
 
-    def test_page_works_without_the_optional_vessel_variables(self, routing):
-        report = routing(solve=False, analysis_options={"variables": []})
-        assert not {"max_bhp", "sails_contribution"} & set(report)
+    def test_page_works_without_the_optional_vessel_variables(self, baseline_report):
+        report = {k: v for k, v in baseline_report.items() if k not in ("max_bhp", "sails_contribution")}
 
         fig = plot_report(report, show=False)
         sails = fig.axes[REPORT_PANELS.index("sails")]

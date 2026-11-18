@@ -32,6 +32,10 @@ CONSUMPTION_QUANTITIES = ("bhp", "hotel_load", "total_power", "sfoc", "hourly_co
 POLAR_KEYS = ("bhp", "max_bhp", "sails_contribution")
 POLAR_DIMS = ("stw", "tws", "twa", "hs", "wa")
 
+# Power limit when `max_power` is not given, until 0.4.0, where it becomes None.
+_DEFAULT_MAX_POWER = 1e12 # kW
+_UNSET = object()
+
 
 def _label_from_path(filepath: str) -> str:
     """
@@ -80,8 +84,9 @@ class Vessel(ArchiteuthisData):
     models of this key, which take precedence and may name `bhp` or
     `total_power` among their inputs. Any other model, such as
     `max_bhp` or `sails_contribution`, is computed only when the
-    routing lists it in its `variables`. Each model is given the
-    inputs it names: see `RoutingAnalysis`.
+    routing lists it in its `variables` (until 0.4.0, these two are
+    still computed by default, with a `DeprecationWarning`). Each
+    model is given the inputs it names: see `RoutingAnalysis`.
 
     `label` is a short identifier that tags the reports of this vessel
     and appears in the UI, `eff45` for example. By default it is taken
@@ -94,9 +99,12 @@ class Vessel(ArchiteuthisData):
         hotel_load: Hotel load in kW, added to `bhp`: a number or a
             function of the brake power.
         max_power: Power limit in kW of the default constraints, or
-            None for no limit.
+            None for no limit. Not given, it is 1e12 kW with a
+            `DeprecationWarning`: None from 0.4.0.
         sfoc: Specific fuel oil consumption in g/kWh, for `bhp` and
             `total_power`: a number or a function of the total power.
+            Missing when needed, it is 0 with a `DeprecationWarning`,
+            which makes the fuel zero: an error from 0.4.0.
         verbose: Whether to report progress.
         label: Short identifier of the vessel in reports.
         sfc: Former name of `sfoc`, deprecated: removed in 0.4.0.
@@ -111,7 +119,7 @@ class Vessel(ArchiteuthisData):
         name: str,
         filepath: Optional[str] = None,
         hotel_load: Union[Callable, float, int] = 0., # kW
-        max_power: Optional[float] = None, # kW
+        max_power: Optional[float] = _UNSET, # kW
         sfoc: Union[Callable, float, int, None] = None, # g/kWh
         verbose: bool = True,
         label: Optional[str] = None,
@@ -132,6 +140,15 @@ class Vessel(ArchiteuthisData):
 
         self.hotel_load = ensure_callable(hotel_load)
         self.sfoc = ensure_callable(sfoc)
+        if max_power is _UNSET:
+            warnings.warn(
+                "Vessel max_power not given: it is 1e12 kW, a slack that can unsettle "
+                "IPOPT. From 0.4.0, its default is None, no power limit. Give "
+                "max_power=... or max_power=None.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            max_power = _DEFAULT_MAX_POWER
         self.max_power = max_power
 
     @property
@@ -203,6 +220,15 @@ class Vessel(ArchiteuthisData):
         if key in self.models:
             return self(key, query)
         function = getattr(self, key)
+        if function is None and key == "sfoc":
+            warnings.warn(
+                f"{self.name} has no sfoc for its {self.consumption_model} model: it "
+                "is 0 g/kWh, which makes the fuel zero. From 0.4.0, this raises "
+                "an error. Give Vessel(sfoc=...) or a model 'sfoc'.",
+                DeprecationWarning,
+                stacklevel=4,
+            )
+            return 0.
         if function is None:
             raise ValueError(
                 f"{self.name} needs {key} for its {self.consumption_model} model: "

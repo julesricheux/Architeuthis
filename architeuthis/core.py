@@ -83,6 +83,10 @@ def transform(x, delta):
     # return 2 * (np.sigmoid(x) - 0.5) * delta
     return (sigmoid(x)) * tall(delta)
 
+# Vessel models still computed when the vessel has them and they are not listed
+# in the variables, with a DeprecationWarning: only when listed from 0.4.0.
+IMPLICIT_VESSEL_VARIABLES = ("max_bhp", "sails_contribution")
+
 # Powers that the default constraints keep below `Vessel.max_power`: the first
 # of them in the context.
 POWER_LIMITED_QUANTITIES = ("max_bhp", "avg_bhp", "total_power")
@@ -393,7 +397,9 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
     (see `Vessel`). These quantities are in the report, the brake
     power as `avg_bhp`. Other vessel models, such as `max_bhp` or
     `sails_contribution`, are computed only when listed in
-    `variables`.
+    `variables`. Until 0.4.0, `max_bhp` and `sails_contribution` are
+    still computed when the vessel has them, with a
+    `DeprecationWarning`: list them.
 
     Each vessel model is queried with the inputs it names among
     `stw`, `sog`, `tws`, `twa`, `hs` or `swh`, `wa` or `mwa`, `aws` and
@@ -528,10 +534,27 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         Additional variables of a run or an evaluation.
 
         These are the gusts of `options["include_gusts"]` (deprecated),
-        then the variables of this analysis, then `variables`.
+        the vessel models of `IMPLICIT_VESSEL_VARIABLES` that are not
+        listed (deprecated), then the variables of this analysis, then
+        `variables`.
         """
         gusts = {key: key for key in _GUST_QUANTITIES} if self.options.get("include_gusts", False) else {}
-        return gusts | normalize_variables(self.variables) | normalize_variables(variables)
+        listed = normalize_variables(self.variables) | normalize_variables(variables)
+        implicit = {
+            key: key for key in IMPLICIT_VESSEL_VARIABLES
+            if key in self.vessel.models and key not in listed
+        }
+        if implicit:
+            names = ", ".join(implicit)
+            warnings.warn(
+                f"RoutingAnalysis computes {names} because the vessel has these "
+                "models. This is deprecated: from 0.4.0, vessel models other than "
+                f"the consumption are computed only when listed, as in "
+                f"variables={list(implicit)}.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        return gusts | implicit | listed
 
     def _resolve_variable(self, name: str, specification, quantities=_PASSAGE_QUANTITIES) -> tuple:
         """

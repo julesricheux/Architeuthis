@@ -135,9 +135,11 @@ vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa")
 vessel.add_function("sfoc", lambda x: 175. + 2e-6 * (x["total_power"] - 3000.)**2, ["total_power"])
 ```
 
-`vessel.consumption(query)` gives these quantities for a query, and `vessel.consumption_model` the model it uses. Without any of the three models, or without `sfoc` when it is needed, the routing raises an error that says so. The entries of the table are in the report and in `ctx`, so a constraint can limit the consumption or the total power. `sfc`, the former name of `sfoc`, still works with a `DeprecationWarning` until 0.4.0.
+`vessel.consumption(query)` gives these quantities for a query, and `vessel.consumption_model` the model it uses. Without any of the three models, the routing raises an error that says so. Without `sfoc` when it is needed, it is still 0 g/kWh until 0.4.0, a zero objective, with a `DeprecationWarning`; from 0.4.0 this is an error too. The entries of the table are in the report and in `ctx`, so a constraint can limit the consumption or the total power. `sfc`, the former name of `sfoc`, still works with a `DeprecationWarning` until 0.4.0.
 
-`max_power`, in kW, is the power limit of the default constraints: `max_bhp` when `variables` lists it, else `avg_bhp`, else `total_power` stays below it. By default it is None, and nothing limits the power.
+`max_power`, in kW, is the power limit of the default constraints: `max_bhp` when `variables` lists it, else `avg_bhp`, else `total_power` stays below it. `max_power=None` leaves the power free. Left out, it is still 1e12 kW until 0.4.0, with a `DeprecationWarning`, and None from 0.4.0.
+
+Until 0.4.0, `max_bhp` and `sails_contribution` are still computed when the vessel has these models and `variables` does not list them, with a `DeprecationWarning`, so that the default constraints and existing scripts work as before. List them to keep them from 0.4.0.
 
 ### Additional variables
 
@@ -293,7 +295,7 @@ Six stacked panels share a time axis in UTC, which runs from the first to the la
 | 5 | `tws` | `tws`, `tws_gust` | True wind, kt: average, and gust as a dashed line with a band | From 0 |
 | 6 | `aws` | `aws`, `aws_gust` | Apparent wind, kt: average, and gust as a dashed line with a band | From 0 |
 
-The gust lines are left out when the report has no gust, which happens with `RoutingAnalysis(..., options={})` unless `variables` lists `"gust"`. Likewise, `sails_contribution` and `max_bhp` are in the report only when `variables` lists them.
+The gust lines are left out when the report has no gust, which happens with `RoutingAnalysis(..., options={})` unless `variables` lists `"gust"`. Likewise, `sails_contribution` and `max_bhp` are in the report only when `variables` lists them (or, until 0.4.0, when the vessel has them).
 
 | Argument | Default | Meaning |
 | --- | --- | --- |

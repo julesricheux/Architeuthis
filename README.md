@@ -146,7 +146,7 @@ The objective is the fuel, so the vessel needs one model of its consumption, the
 | `total_power`, propulsion and hotel | kW | `sfoc`, g/kWh |
 | `bhp`, propulsion | kW | `sfoc`, after adding `hotel_load`, kW |
 
-Each can be a table, a function or a constant (`vessel.add_constant("bhp", 1500.)`). `hotel_load` and `sfoc` are numbers or functions of the power given to `Vessel(...)`, or models of their own, which can take `bhp` or `total_power` as an input: an sfoc curve of the engine load, for example. Any other model of the vessel, such as `max_bhp` or `sails_contribution`, is computed only when you list it: `RoutingAnalysis(..., variables=["max_bhp"])`.
+Each can be a table, a function or a constant (`vessel.add_constant("bhp", 1500.)`). `hotel_load` and `sfoc` are numbers or functions of the power given to `Vessel(...)`, or models of their own, which can take `bhp` or `total_power` as an input: an sfoc curve of the engine load, for example. Any other model of the vessel, such as `max_bhp` or `sails_contribution`, is computed only when you list it: `RoutingAnalysis(..., variables=["max_bhp"])`. Until 0.4.0, `max_bhp` and `sails_contribution` are still computed when the vessel has them, with a deprecation warning that asks to list them.
 
 ### ✨ The routing finds what your model needs
 
@@ -176,7 +176,7 @@ Quantities your model does not use can be computed all the same, to constrain th
 - **Stay differentiable:** write with `architeuthis.numpy`, and use `np.where`, `np.softmax` or `np.sigmoid` rather than `if` on values.
 - **Mind the units:** routing quantities are in kt and degrees, angles in absolute value. Forecast fields arrive as stored (m/s, K): convert them with `fac=` or a function.
 - **Return components:** `(value, {"sails": ...})`, then pick one with `output=`.
-- **Set a realistic `max_power`, or none:** a huge power limit unsettles the solver. Without one, the brake power is not limited.
+- **Set a realistic `max_power`, or `None`:** a huge power limit unsettles the solver. `max_power=None` leaves the power free; until 0.4.0, leaving it out still gives 1e12 kW, with a warning.
 
 The complete script is [`examples/function_polar_routing.py`](examples/function_polar_routing.py), and the [User Guide](docs/user_guide.md) has the details.
 

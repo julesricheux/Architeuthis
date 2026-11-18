@@ -92,7 +92,7 @@ def herbie_fields(name, keys, wave_direction=None, **herbie):
 def build_vessel(name, polar=POLAR, **performance):
     vessel = Vessel(name, filepath=polar, **performance)
     vessel.load_data()
-    for key in ("bhp", "max_bhp", "sails_contribution"):
+    for key in ("bhp", "max_bhp"):
         vessel.add_interpolator(key, "stw", "tws", "twa", "hs", "wa", method="linear")
     return vessel
 
@@ -164,7 +164,8 @@ topography.add_interpolator("distance_to_iso0", "lat", "lon", var_key="z")
 
 vessel = build_vessel("vessel", sfoc=196.0, hotel_load=172.0, max_power=3e3)
 
-analysis = RoutingAnalysis("ifs", vessel, rest_of_voyage, ifs_wind, ifs_wave, current, topography)
+# max_bhp is a vessel model that the fuel does not need: listed, the default constraints limit it
+analysis = RoutingAnalysis("ifs", vessel, rest_of_voyage, ifs_wind, ifs_wave, current, topography, variables=["max_bhp"])
 report = analysis.run(
     max_iter=1000,
     solver_options={"ipopt": DEFAULT_SOLVER_OPTIONS["ipopt"] | {"linear_solver": "mumps"}},
@@ -191,7 +192,9 @@ scenarios = {
 }
 
 for label, (scenario_vessel, wind, wave) in scenarios.items():
-    evaluation = RoutingAnalysis(label, scenario_vessel, plan.voyage(), wind, wave, current, topography, verbose=False).evaluate(plan)
+    evaluation = RoutingAnalysis(
+        label, scenario_vessel, plan.voyage(), wind, wave, current, topography, variables=["max_bhp"], verbose=False,
+    ).evaluate(plan)
     print(
         f"{label:<24} {evaluation['fuel']:7.2f} t"
         f"  ({evaluation['fuel'] / report['fuel'] - 1:+.1%})"

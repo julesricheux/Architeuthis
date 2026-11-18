@@ -844,6 +844,7 @@ for plan, (model, vessel) in product(
         WAVE[model],
         current,
         topos[0],
+        variables=["max_bhp", "sails_contribution"],
         verbose=False,
     ).evaluate(plan)
     evaluation["plan"] = plan.name

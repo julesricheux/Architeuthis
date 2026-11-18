@@ -185,14 +185,16 @@ and this project follows Semantic Versioning https://semver.org
 - `plot_report` draws `total_power`, else `hourly_consumption`, on its power panel when the report has no `avg_bhp`, and says so on the sails panel when the report has no `sails_contribution`.
 
 ### Changed
-- `max_bhp` and `sails_contribution` are no longer required: they are computed and reported only when listed in `variables`, as any other vessel model: `RoutingAnalysis(..., variables=["max_bhp", "sails_contribution"])`. The examples and the quick start list them.
-- The default constraints limit `max_bhp` when it is listed, else `avg_bhp`, else `total_power`, to `max_power`, and only if the vessel has one.
-- `Vessel(max_power=...)` defaults to None, no power limit, instead of 1e12 kW, a slack that could unsettle IPOPT. `sfoc` defaults to None, and a formulation that needs it raises an error without it, where `sfc` defaulted to 0 and made the objective zero.
+- `max_bhp` and `sails_contribution` are no longer required: a vessel needs only a consumption model, and they are computed and reported when listed in `variables`, as any other vessel model: `RoutingAnalysis(..., variables=["max_bhp", "sails_contribution"])`. The examples and the quick start list them.
+- The default constraints limit `max_bhp` when it is in the variables, else `avg_bhp`, else `total_power`, to `max_power`, and only if it is not None. `Vessel(max_power=None)` gives no power limit.
 - The fuel is computed as `sum(hourly_consumption * dt) / 1e3`, which gives the same value as before for a `bhp` model.
 - `plot_power_and_weather(max_bhp=True)`, `plot_ensemble_along_route`, `draw(sails_threshold=...)` and the tooltips of the UI map skip `max_bhp` and `sails_contribution` when a report has none.
 
 ### Deprecated
 - `Vessel(sfc=...)` and `Vessel.sfc` raise a `DeprecationWarning` and will be removed in 0.4.0: use `sfoc`, the specific fuel oil consumption in g/kWh.
+- A vessel with `max_bhp` or `sails_contribution` models still has them computed when `variables` does not list them, so that the default constraints and existing scripts work as before, with a `DeprecationWarning`. From 0.4.0, they are computed only when listed.
+- `Vessel` without `max_power` still has 1e12 kW, with a `DeprecationWarning`. From 0.4.0, the default is None, no power limit.
+- A `bhp` or `total_power` model without `sfoc` still burns at 0 g/kWh, a zero objective, with a `DeprecationWarning`. From 0.4.0, it raises an error.
 
 ---
 
@@ -201,3 +203,8 @@ and this project follows Semantic Versioning https://semver.org
 ### Removed
 - `RoutingAnalysis(options={"include_gusts": ...})`, deprecated since 0.3.1: give `variables=["gust"]`. An analysis then computes `tws_gust` and `aws_gust` only when `"gust"` is in its variables, no longer by default.
 - `Vessel(sfc=...)` and `Vessel.sfc`, deprecated in favour of `sfoc`.
+
+### Changed
+- Vessel models other than the consumption, `max_bhp` and `sails_contribution` included, are computed only when listed in `variables`.
+- `Vessel(max_power=...)` defaults to None, no power limit, instead of 1e12 kW.
+- A `bhp` or `total_power` model without `sfoc` raises an error instead of burning at 0 g/kWh.

@@ -660,6 +660,7 @@ for plan, member in product(
         topo,
         atmosphere_member=member,
         wave_member=member,
+        variables=["max_bhp", "sails_contribution"],
         verbose=False,
     ).evaluate(plan)
     evaluation["plan"] = plan.name
