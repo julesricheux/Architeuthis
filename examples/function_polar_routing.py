@@ -85,7 +85,14 @@ def dummy_polar(x, p):
 polar_inputs = ["stw", "tws", "twa", "tws100", "twa100", "swh", "mwa", "air_temperature"]
 
 vessel = Vessel("dummy_vessel", sfoc=196., hotel_load=172., max_power=4100.)  # no file, no load_data
+# The fuel only needs the consumption: here the brake power, plus the hotel load, burnt
+# at the sfoc. The other models are computed when the analysis lists them in its variables.
 vessel.add_function("bhp", dummy_polar, polar_inputs, args={"p": parameters})
+# Other ways to give the consumption, the first the vessel has being used:
+# vessel.add_function("sfoc", lambda x: 180. + 1e-6 * (x["total_power"] - 3000.)**2, ["total_power"])  # sfoc curve
+# vessel.add_constant("hotel_load", 172.)  # a model, as hotel_load=172.
+# vessel.add_function("total_power", lambda x: dummy_polar(x, parameters)[0] + 172., polar_inputs)  # with sfoc
+# vessel.add_function("hourly_consumption", lambda x: 196e-3 * (dummy_polar(x, parameters)[0] + 172.), polar_inputs)  # kg/h
 vessel.add_function("max_bhp", dummy_polar, polar_inputs, args={"p": parameters})
 vessel.add_function("sails_contribution", dummy_polar, polar_inputs, args={"p": parameters}, output="sails")
 vessel.add_function("leeway", dummy_polar, polar_inputs, args={"p": parameters}, output="leeway")

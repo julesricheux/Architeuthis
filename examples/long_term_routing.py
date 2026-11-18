@@ -60,22 +60,24 @@ def cubic_model(x, p):
 def quadratic_model(x, p):
     return p["c"] * x**2 + p["b"] * x + p["a"]
 
-def sfoc_func(x):
+# Curves of the engine load, as vessel models: the sfoc (g/kWh) against the total
+# power, the hotel load (kW) against the brake power, both in kW
+def sfoc_curve(x):
     p_sfoc = {
         'a': 325.7684374001559,
         'b': -0.13133435575556507,
         'c': 5.216985806784128e-05,
         'd': -6.660802866517442e-09
     }
-    return np.fmax(cubic_model(x, p_sfoc), 200.)
+    return np.fmax(cubic_model(x["total_power"], p_sfoc), 200.)
 
-def hotel_load_func(x):
+def hotel_load_curve(x):
     p_hl = {
         'a': 177.84810351574922,
         'b': -0.011382017491188723,
         'c': 1.0915372379294297e-05
     }
-    return quadratic_model(x, p_hl)
+    return quadratic_model(x["bhp"], p_hl)
 
 vessel_files = [    
     # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff15.nc",
@@ -88,7 +90,6 @@ vessel_files = [
     # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff60.nc",
 ]
 
-columns = ["bhp", "max_bhp", "leeway"]
 
 vessels = []
 
@@ -101,17 +102,19 @@ for i, vessel_data in enumerate(vessel_files):
         filepath=vessel_data,
         sfoc=220.,
         hotel_load=194.,
-        # sfoc=sfoc_func,
-        # hotel_load=hotel_load_func,
         max_power=maxBHP
     )
     # vessel = Vessel(f"vessel_{i}", filepath=vessel_data, sfoc=196., hotel_load=172., max_power=maxBHP)
     vessel.load_data()
     
+    # The fuel needs bhp only; max_bhp and sails_contribution are computed because
+    # the analysis lists them in its variables
     vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
     vessel.add_interpolator("max_bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
     # vessel.add_interpolator("leeway", "stw", "tws", "twa", "hs", "wa", method="linear")
     vessel.add_interpolator("sails_contribution", "stw", "tws", "twa", "hs", "wa", method="linear")
+    # vessel.add_function("sfoc", sfoc_curve, ["total_power"])  # instead of sfoc=220.
+    # vessel.add_function("hotel_load", hotel_load_curve, ["bhp"])  # instead of hotel_load=194.
     
     vessels.append(vessel)
 

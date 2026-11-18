@@ -188,6 +188,7 @@ and this project follows Semantic Versioning https://semver.org
 - `max_bhp` and `sails_contribution` are no longer required: a vessel needs only a consumption model, and they are computed and reported when listed in `variables`, as any other vessel model: `RoutingAnalysis(..., variables=["max_bhp", "sails_contribution"])`. The examples and the quick start list them.
 - The default constraints limit `max_bhp` when it is in the variables, else `avg_bhp`, else `total_power`, to `max_power`, and only if it is not None. `Vessel(max_power=None)` gives no power limit.
 - The fuel is computed as `sum(hourly_consumption * dt) / 1e3`, which gives the same value as before for a `bhp` model.
+- The examples follow the new vessel definition: the sfoc and hotel load curves are vessel models of `total_power` and `bhp` (active in `ensemble_routing.py`, as commented alternatives in `simple_routing.py` and `long_term_routing.py`), `function_polar_routing.py` shows the other consumption formulations as commented alternatives, and the unused `columns` lists are gone.
 - `plot_power_and_weather(max_bhp=True)`, `plot_ensemble_along_route`, `draw(sails_threshold=...)` and the tooltips of the UI map skip `max_bhp` and `sails_contribution` when a report has none.
 
 ### Deprecated

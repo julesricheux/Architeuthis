@@ -67,7 +67,6 @@ vessel_data = r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_2
 # vessel_data = 'C:/Users/jules/data/polar/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff92.nc'
 # vessel_data = "C:\\Users\\jrich\\output_sails.nc"
 
-columns = ["bhp", "max_bhp", "leeway"]
 
 vessel = Vessel("base_vessel", filepath=vessel_data, sfoc=196., hotel_load=172., max_power=3e3)
 vessel.load_data()

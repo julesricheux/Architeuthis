@@ -58,7 +58,6 @@ vessel_files = [
     # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_6m_eff70.nc",
 ]
 
-columns = ["bhp", "max_bhp", "leeway"]
 
 vessels = []
 
