@@ -60,14 +60,14 @@ def cubic_model(x, p):
 def quadratic_model(x, p):
     return p["c"] * x**2 + p["b"] * x + p["a"]
 
-def sfc_func(x):
-    p_sfc = {
+def sfoc_func(x):
+    p_sfoc = {
         'a': 325.7684374001559,
         'b': -0.13133435575556507,
         'c': 5.216985806784128e-05,
         'd': -6.660802866517442e-09
     }
-    return np.fmax(cubic_model(x, p_sfc), 200.)
+    return np.fmax(cubic_model(x, p_sfoc), 200.)
 
 def hotel_load_func(x):
     p_hl = {
@@ -99,13 +99,13 @@ for i, vessel_data in enumerate(vessel_files):
     vessel = Vessel(
         f"vessel_{i}",
         filepath=vessel_data,
-        sfc=220.,
+        sfoc=220.,
         hotel_load=194.,
-        # sfc=sfc_func,
+        # sfoc=sfoc_func,
         # hotel_load=hotel_load_func,
         max_power=maxBHP
     )
-    # vessel = Vessel(f"vessel_{i}", filepath=vessel_data, sfc=196., hotel_load=172., max_power=maxBHP)
+    # vessel = Vessel(f"vessel_{i}", filepath=vessel_data, sfoc=196., hotel_load=172., max_power=maxBHP)
     vessel.load_data()
     
     vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
@@ -579,6 +579,8 @@ for solve, tf, model, vessel, fac, m, tpg in (
         # atmosphere_member=m,
         # wave_member=m,
         constraints=custom_constraints,
+        # Vessel models that the fuel does not need, for the constraints and figures
+        variables=["max_bhp", "sails_contribution"],
     )
     
     report = analysis.run(

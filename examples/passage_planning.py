@@ -162,7 +162,7 @@ topography = Topography("topography", exclusion_zones=exclusion_zones, **domain)
 topography.load_data()
 topography.add_interpolator("distance_to_iso0", "lat", "lon", var_key="z")
 
-vessel = build_vessel("vessel", sfc=196.0, hotel_load=172.0, max_power=3e3)
+vessel = build_vessel("vessel", sfoc=196.0, hotel_load=172.0, max_power=3e3)
 
 analysis = RoutingAnalysis("ifs", vessel, rest_of_voyage, ifs_wind, ifs_wave, current, topography)
 report = analysis.run(
@@ -182,7 +182,7 @@ plan = PassagePlan.load(plans.path(plan.name))
 gfs_wind = herbie_fields("wind_gfs", {"u10": "u10", "v10": "v10"}, model="gfs", product="pgrb2.0p25", regex=r"(?:U|V)GRD:10 m")
 gfs_wave = herbie_fields("wave_gfs", WAVE_KEYS, wave_direction="dirpw", model="gfs_wave", product="global.0p25", regex=r":HTSGW:|:DIRPW:")
 
-heavier_hotel_load = build_vessel("vessel_hotel_250", sfc=196.0, hotel_load=250.0, max_power=3e3)
+heavier_hotel_load = build_vessel("vessel_hotel_250", sfoc=196.0, hotel_load=250.0, max_power=3e3)
 
 scenarios = {
     "IFS (as optimized)": (vessel, ifs_wind, ifs_wave),

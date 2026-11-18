@@ -275,7 +275,7 @@ class TestOptimization:
         def limit_power(ctx):
             return [ctx["max_bhp"] < power_limit]
 
-        report = route(open_sea, constraints=limit_power)
+        report = route(open_sea, constraints=limit_power, variables=["max_bhp"])
 
         assert np.max(report["max_bhp"]) <= power_limit * (1.0 + 1e-6)
 
@@ -343,7 +343,7 @@ class TestEvaluation:
         from architeuthis.vessel import Vessel
 
         analysis, report = optimized
-        heavier = Vessel("heavier", filepath="unused.nc", sfc=SFC, hotel_load=HOTEL_LOAD, verbose=False)
+        heavier = Vessel("heavier", filepath="unused.nc", sfoc=SFC, hotel_load=HOTEL_LOAD, verbose=False)
         heavier.data = polar.copy()
         for key in ("bhp", "max_bhp", "sails_contribution"):
             heavier.data[key] = heavier.data[key] * 2.0
@@ -361,7 +361,7 @@ class TestEvaluation:
 
         evaluation = analyse(island).evaluate(straight.passage_plan)
 
-        # The default constraints are max_bhp < max_power and z < 0.
+        # The default constraints are avg_bhp < max_power and z < 0.
         assert len(evaluation["constraint_violations"]) == 2
         assert evaluation["max_constraint_violation"] == pytest.approx(np.max(evaluation["z"]))
         assert evaluation["max_constraint_violation"] > 50.0
@@ -491,11 +491,9 @@ def function_vessel():
     from architeuthis.vessel import Vessel
 
     # max_power as the fixture: a slack of 1e12 kW unsettles IPOPT's barrier.
-    vessel = Vessel("function_ship", sfc=SFC, hotel_load=HOTEL_LOAD, max_power=1e6, verbose=False)
+    vessel = Vessel("function_ship", sfoc=SFC, hotel_load=HOTEL_LOAD, max_power=1e6, verbose=False)
     parameters = {"k": POLAR_POWER_COEFFICIENT, "k_temperature": 0.01}
-    for key in ("bhp", "max_bhp"):
-        vessel.add_function(key, semi_empirical_power, inputs=["stw", "water_temperature"], args={"p": parameters})
-    vessel.add_function("sails_contribution", lambda x: 0.0 * x["stw"], inputs=["stw", "tws", "twa"])
+    vessel.add_function("bhp", semi_empirical_power, inputs=["stw", "water_temperature"], args={"p": parameters})
     return vessel
 
 
@@ -594,11 +592,9 @@ def wind_polar(suffix):
 def wind_vessel(suffix):
     from architeuthis.vessel import Vessel
 
-    vessel = Vessel(f"wind{suffix}", sfc=SFC, hotel_load=HOTEL_LOAD, max_power=1e6, verbose=False)
+    vessel = Vessel(f"wind{suffix}", sfoc=SFC, hotel_load=HOTEL_LOAD, max_power=1e6, verbose=False)
     inputs = ["stw"] + [f"{name}{suffix}" for name in ("tws", "twd", "twa", "aws", "awa")]
-    for key in ("bhp", "max_bhp"):
-        vessel.add_function(key, wind_polar(suffix), inputs)
-    vessel.add_function("sails_contribution", lambda x: 0.0 * x["stw"], ["stw"])
+    vessel.add_function("bhp", wind_polar(suffix), inputs)
     return vessel
 
 
@@ -759,7 +755,11 @@ class TestAdditionalVariables:
         def keep_clear(ctx):
             return [ctx["max_bhp"] < ctx["vessel"].max_power, ctx["clearance"] < 0.0]
 
-        analysis = analyse(island, constraints=keep_clear, variables={"clearance": lambda ctx: ctx["z"]})
+        analysis = analyse(
+            island,
+            constraints=keep_clear,
+            variables={"max_bhp": None, "clearance": lambda ctx: ctx["z"]},
+        )
         report = analysis.run(max_iter=500, solver_options=MUMPS)
 
         assert report["status"] in (0, 1)
@@ -826,3 +826,169 @@ class TestAdditionalVariables:
 
         with pytest.raises(error, match=match):
             analysis.run(solve=False, solver_options=MUMPS)
+
+
+# ------------------------------------------------------------------------------
+# Consumption formulations and optional vessel variables
+# ------------------------------------------------------------------------------
+
+
+def cubic_bhp(x):
+    return POLAR_POWER_COEFFICIENT * x["stw"] ** 3
+
+
+def consumption_vessel(formulation, **kwargs):
+    """A vessel whose consumption is the cubic law of the fixture, in one of the formulations."""
+    from architeuthis.vessel import Vessel
+
+    vessel = Vessel(f"{formulation}_ship", verbose=False, **kwargs)
+    if formulation == "bhp":
+        vessel.add_function("bhp", cubic_bhp, ["stw"])
+    elif formulation == "total_power":
+        vessel.add_function("total_power", lambda x: cubic_bhp(x) + HOTEL_LOAD, ["stw"])
+    else:
+        vessel.add_function(
+            "hourly_consumption",
+            lambda x: (cubic_bhp(x) + HOTEL_LOAD) * SFC / 1e3,
+            ["stw"],
+        )
+    return vessel
+
+
+def evaluate_baseline(vessel, atmosphere, wave, current, topography, **kwargs):
+    analysis = RoutingAnalysis(
+        "analysis", vessel, make_voyage(), atmosphere, wave, current, topography, verbose=False, **kwargs,
+    )
+    return analysis.run(solve=False, solver_options=MUMPS)
+
+
+class TestConsumption:
+    @pytest.fixture
+    def baseline(self, atmosphere, wave, current, open_sea):
+        def _baseline(vessel, **kwargs):
+            return evaluate_baseline(vessel, atmosphere, wave, current, open_sea, **kwargs)
+
+        return _baseline
+
+    @pytest.fixture
+    def reference(self, baseline):
+        return baseline(consumption_vessel("bhp", hotel_load=HOTEL_LOAD, sfoc=SFC))
+
+    def test_the_formulations_give_the_same_fuel(self, baseline, reference):
+        total = baseline(consumption_vessel("total_power", sfoc=SFC))
+        hourly = baseline(consumption_vessel("hourly_consumption"))
+
+        assert total["fuel"] == pytest.approx(reference["fuel"], rel=1e-9)
+        assert hourly["fuel"] == pytest.approx(reference["fuel"], rel=1e-9)
+        assert np.ravel(hourly["hourly_consumption"]) == pytest.approx(np.ravel(reference["hourly_consumption"]))
+
+    def test_fuel_integrates_the_hourly_consumption(self, reference):
+        duration_h = np.diff(np.ravel(reference["tim"])) / HOUR
+
+        assert reference["fuel"] == pytest.approx(np.sum(np.ravel(reference["hourly_consumption"]) * duration_h) / 1e3)
+
+    def test_reports_hold_the_quantities_of_their_formulation(self, baseline, reference):
+        total = baseline(consumption_vessel("total_power", sfoc=SFC))
+        hourly = baseline(consumption_vessel("hourly_consumption"))
+        segments = len(np.ravel(reference["ctim"]))
+
+        for key in ("avg_bhp", "hotel_load", "total_power", "sfoc", "hourly_consumption"):
+            assert len(np.ravel(reference[key])) == segments
+        assert np.ravel(reference["hotel_load"]) == pytest.approx(HOTEL_LOAD)
+        assert np.ravel(reference["total_power"]) == pytest.approx(np.ravel(reference["avg_bhp"]) + HOTEL_LOAD)
+        assert np.ravel(reference["sfoc"]) == pytest.approx(SFC)
+        assert {"total_power", "sfoc", "hourly_consumption"} <= set(total)
+        assert not {"avg_bhp", "hotel_load"} & set(total)
+        assert "hourly_consumption" in hourly
+        assert not {"avg_bhp", "hotel_load", "total_power", "sfoc"} & set(hourly)
+
+    def test_optional_vessel_variables_are_computed_only_when_listed(self, vessel, baseline):
+        default = baseline(vessel)
+        listed = baseline(vessel, variables=["max_bhp", "sails_contribution"])
+
+        assert not {"max_bhp", "sails_contribution"} & set(default)
+        assert np.ravel(listed["max_bhp"]) == pytest.approx(np.ravel(listed["avg_bhp"]))
+        assert np.ravel(listed["sails_contribution"]) == pytest.approx(0.0)
+        assert listed["fuel"] == pytest.approx(default["fuel"])
+
+    def test_a_constant_brake_power(self, baseline):
+        from architeuthis.vessel import Vessel
+
+        vessel = Vessel("constant_ship", hotel_load=HOTEL_LOAD, sfoc=SFC, verbose=False)
+        vessel.add_constant("bhp", 1000.0)
+
+        report = baseline(vessel)
+
+        assert np.ravel(report["avg_bhp"]) == pytest.approx(1000.0)
+        assert report["fuel"] == pytest.approx((1000.0 + HOTEL_LOAD) * ETA / HOUR * SFC / 1e6)
+
+    def test_sfoc_and_hotel_load_can_be_models(self, baseline, reference):
+        vessel = consumption_vessel("bhp")
+        vessel.add_constant("hotel_load", HOTEL_LOAD)
+        # An sfoc curve of the engine load, constant here
+        vessel.add_function("sfoc", lambda x: SFC + 0.0 * x["total_power"], ["total_power"])
+
+        report = baseline(vessel)
+
+        assert report["fuel"] == pytest.approx(reference["fuel"], rel=1e-9)
+
+    def test_a_variable_model_can_take_a_consumption_quantity(self, baseline):
+        vessel = consumption_vessel("bhp", hotel_load=HOTEL_LOAD, sfoc=SFC)
+        vessel.add_function("load", lambda x: x["bhp"] / 1e4, ["bhp"])
+
+        report = baseline(vessel, variables=["load"])
+
+        assert np.ravel(report["load"]) == pytest.approx(np.ravel(report["avg_bhp"]) / 1e4)
+
+    def test_a_vessel_without_consumption_is_reported(self, baseline):
+        from architeuthis.vessel import Vessel
+
+        vessel = Vessel("no_consumption", sfoc=SFC, verbose=False)
+        vessel.add_function("max_bhp", cubic_bhp, ["stw"])
+
+        with pytest.raises(KeyError, match="no consumption model"):
+            baseline(vessel)
+
+    def test_a_missing_sfoc_is_reported(self, baseline):
+        with pytest.raises(ValueError, match="needs sfoc"):
+            baseline(consumption_vessel("total_power"))
+
+    def test_the_power_limit_is_optional(self, analyse, open_sea):
+        def count(vessel):
+            analysis = analyse(open_sea, vessel=vessel)
+            return len(analysis.evaluate(analysis.run(solve=False, solver_options=MUMPS))["constraint_violations"])
+
+        assert count(consumption_vessel("bhp", sfoc=SFC)) == 1
+        assert count(consumption_vessel("bhp", sfoc=SFC, max_power=1e6)) == 2
+        assert count(consumption_vessel("total_power", sfoc=SFC, max_power=1e6)) == 2
+        assert count(consumption_vessel("hourly_consumption", max_power=1e6)) == 1
+
+    def test_max_bhp_is_limited_first_when_listed(self):
+        import casadi as ca
+        from types import SimpleNamespace
+
+        from architeuthis.core import default_routing_constraints
+
+        powers = {key: ca.MX.sym(key) for key in ("max_bhp", "avg_bhp", "total_power")}
+        ctx = {"vessel": SimpleNamespace(max_power=100.0), "z": ca.MX.sym("z"), **powers}
+
+        for key in ("max_bhp", "avg_bhp", "total_power"):
+            limit, at_sea = default_routing_constraints(ctx)
+            assert ca.is_equal(limit.dep(0), powers[key])
+            assert ca.is_equal(at_sea.dep(0), ctx["z"])
+            del ctx[key]
+        assert len(default_routing_constraints(ctx)) == 1
+
+    @pytest.mark.integration
+    def test_an_hourly_consumption_can_be_optimized(self, atmosphere, wave, current, island):
+        vessel = consumption_vessel("hourly_consumption")
+        analysis = RoutingAnalysis(
+            "analysis", vessel, make_voyage(), atmosphere, wave, current, island, verbose=False,
+        )
+
+        baseline = analysis.run(solve=False, solver_options=MUMPS)
+        optimized = analysis.run(max_iter=500, solver_options=MUMPS)
+
+        assert optimized["status"] == 1
+        assert np.max(optimized["z"]) < 1e-2
+        assert np.max(baseline["z"]) > 0.0

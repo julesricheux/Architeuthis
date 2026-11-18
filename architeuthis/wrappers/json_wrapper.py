@@ -18,6 +18,20 @@ from dash_extensions.javascript import assign
 from architeuthis.toolbox.json_utils import CustomEncoder, custom_decoder  # noqa: F401
 
 
+def _power_line(avg_bhp, max_bhp, consumption, i: int) -> str:
+    """
+    Tooltip line of the power at segment `i`, from what the report has.
+
+    This is the BHP and its maximum, else the consumption in kg/h.
+    """
+    if avg_bhp is not None:
+        maximum = f" / MAX {max_bhp[i]:.0f}" if max_bhp is not None else ""
+        return f"BHP {avg_bhp[i]:.1f}{maximum}<br>"
+    if consumption is not None:
+        return f"Consumption {consumption[i]:.0f} kg/h<br>"
+    return ""
+
+
 def route_to_geojson(route: dict, valid_time: float | None = None, color: str = "#ffffff") -> dict:
     """
     A route report as GeoJSON, for the map of the UI.
@@ -46,9 +60,12 @@ def route_to_geojson(route: dict, valid_time: float | None = None, color: str = 
     twa = route["twa"]
     swh = route["swh"]
     mwa = route["mwa"]
-    avg_bhp = route["avg_bhp"]
-    max_bhp = route["max_bhp"]
-    sc = route["sails_contribution"]
+    # Consumption quantities depend on the vessel, max_bhp and sails_contribution
+    # on the variables of the routing
+    avg_bhp = route.get("avg_bhp")
+    max_bhp = route.get("max_bhp")
+    sc = route.get("sails_contribution")
+    consumption = route.get("hourly_consumption")
     fuel = route["fuel"]
     member = route.get("member", 0)
     
@@ -90,9 +107,9 @@ def route_to_geojson(route: dict, valid_time: float | None = None, color: str = 
                     f"SOG {sog[i]:.1f} / COG {cog[i]:.0f}<br>"
                     f"TWS {tws[i]:.1f} / TWA {twa[i]:.0f}<br>"
                     f"SWH {swh[i]:.1f} / MWA {mwa[i]:.0f}<br>"
-                    f"BHP {avg_bhp[i]:.1f} / MAX {max_bhp[i]:.0f}<br>"
-                    f"Sails contribution {sc[i]:.1f} %<br>"
-                    f"Fuel: {fuel:.2f} t"
+                    + _power_line(avg_bhp, max_bhp, consumption, i)
+                    + (f"Sails contribution {sc[i]:.1f} %<br>" if sc is not None else "")
+                    + f"Fuel: {fuel:.2f} t"
                 ),
             },
         })

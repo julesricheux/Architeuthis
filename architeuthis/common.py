@@ -146,6 +146,13 @@ def to_timestamp(value: Union[Datetime, float, int]) -> float:
     return float(timestamp.timestamp())
 
 
+def _constant(x: dict, value: float) -> float:
+    """
+    The function of a constant model: `value`, whatever `x`.
+    """
+    return value
+
+
 class FunctionModel:
     """
     A model computed by a function, R^N -> R^1.
@@ -430,6 +437,33 @@ class ArchiteuthisData(ArchiteuthisObject):
             name=f"{self.name}_{var_key}",
         )
         self.add_model(var_key, model, description=getattr(function, "__name__", None))
+
+    def add_constant(
+        self,
+        var_key: str,
+        value: float,
+    ):
+        """
+        Register a constant as the model of a variable.
+
+        The model takes no input and returns `value` for any query, a
+        brake power or a hotel load for example. A `var_key` that
+        already exists is left as it is.
+
+        Args:
+            var_key: Key of the model when calling this object.
+            value: The value of the variable.
+
+        Example:
+            >>> vessel.add_constant("hotel_load", 180.)
+        """
+        model = FunctionModel(
+            function=_constant,
+            inputs=(),
+            args={"value": float(value)},
+            name=f"{self.name}_{var_key}",
+        )
+        self.add_model(var_key, model, description=f"constant {float(value):g}")
 
     def add_model(
         self,

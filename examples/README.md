@@ -20,7 +20,7 @@ Their commented lines are alternatives that were used in past studies: other pol
 ## How a routing script reads
 
 ```python
-vessel = Vessel("vessel", filepath=polar_file, sfc=220., hotel_load=194., max_power=4100.)
+vessel = Vessel("vessel", filepath=polar_file, sfoc=220., hotel_load=194., max_power=4100.)
 vessel.load_data()
 for key in ("bhp", "max_bhp", "sails_contribution"):
     vessel.add_interpolator(key, "stw", "tws", "twa", "hs", "wa", method="linear")
@@ -49,7 +49,7 @@ topography.add_interpolator("distance_to_iso0", "lat", "lon", var_key="z")
 route = Route("crossing", [departure, cape_race, arrival])
 voyage = Voyage("crossing", etd="2026-11-06T08:40", eta="2026-11-15T04:00", route=route)
 
-analysis = RoutingAnalysis("analysis", vessel, voyage, atmosphere, wave, current, topography)
+analysis = RoutingAnalysis("analysis", vessel, voyage, atmosphere, wave, current, topography, variables=["max_bhp", "sails_contribution"])
 report = analysis.run()
 
 reports = ReportCollection([report])

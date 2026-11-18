@@ -84,7 +84,7 @@ def dummy_polar(x, p):
 # tws100 and twa100: the routing computes them from u100 and v100, as tws and twa from u10 and v10
 polar_inputs = ["stw", "tws", "twa", "tws100", "twa100", "swh", "mwa", "air_temperature"]
 
-vessel = Vessel("dummy_vessel", sfc=196., hotel_load=172., max_power=4100.)  # no file, no load_data
+vessel = Vessel("dummy_vessel", sfoc=196., hotel_load=172., max_power=4100.)  # no file, no load_data
 vessel.add_function("bhp", dummy_polar, polar_inputs, args={"p": parameters})
 vessel.add_function("max_bhp", dummy_polar, polar_inputs, args={"p": parameters})
 vessel.add_function("sails_contribution", dummy_polar, polar_inputs, args={"p": parameters}, output="sails")
@@ -175,12 +175,14 @@ def constraints(ctx):
 analysis = RoutingAnalysis(
     "ifs", vessel, voyage, atmosphere, wave, current, topography,
     constraints=constraints,
-    # Computed along the route, in ctx for the constraints and in the reports:
-    # "gust" gives tws_gust and aws_gust in kt (from the forecast "gust", else
+    # Computed along the route, in ctx for the constraints and in the reports: the
+    # fuel only needs bhp, so max_bhp and sails_contribution are listed; "gust" gives tws_gust and aws_gust in kt (from the forecast "gust", else
     # tws * GUST_DEFAULT_RATIO), then any model of the forecasts or vessel by its key
     # ("wave.slope" to name the source), the wind at 100 m, and functions of the
     # variables before them.
     variables=[
+        "max_bhp",  # vessel models that the fuel does not need: in ctx and the reports
+        "sails_contribution",
         "gust",
         "slope",
         "tws100",

@@ -160,6 +160,33 @@ class TestPlotReport:
         assert len(ax.lines) == 1
         assert ax.get_legend() is None
 
+    def test_page_works_without_the_optional_vessel_variables(self, routing):
+        report = routing(solve=False, analysis_options={"variables": []})
+        assert not {"max_bhp", "sails_contribution"} & set(report)
+
+        fig = plot_report(report, show=False)
+        sails = fig.axes[REPORT_PANELS.index("sails")]
+        power = fig.axes[REPORT_PANELS.index("bhp")]
+
+        assert len(sails.lines) == 0
+        assert "sails_contribution" in sails.texts[0].get_text()
+        assert len(power.lines) == 1
+        np.testing.assert_allclose(step_values(power), report["avg_bhp"])
+        assert [text.get_text() for text in power.get_legend().get_texts()] == ["Average BHP"]
+
+    @pytest.mark.parametrize(
+        "key, label",
+        [("total_power", "Total power / kW"), ("hourly_consumption", "Consumption / kg/h")],
+    )
+    def test_power_panel_falls_back_on_the_consumption(self, baseline_report, key, label):
+        report = {k: v for k, v in baseline_report.items() if k not in ("avg_bhp", "total_power")}
+        report[key] = baseline_report[key]
+
+        ax = plot_report(report, show=False).axes[REPORT_PANELS.index("bhp")]
+
+        np.testing.assert_allclose(step_values(ax), baseline_report[key])
+        assert ax.get_ylabel() == label
+
     def test_time_axis_covers_the_route_in_utc(self, baseline_report):
         fig = plot_report(baseline_report, show=False)
 
@@ -359,6 +386,14 @@ def test_draw_marks_the_segments_under_sail(baseline_report):
     assert np.all(sizes[1:] == 0.0)
 
 
+def test_draw_marks_every_node_without_sails_contribution(baseline_report):
+    report = {key: value for key, value in baseline_report.items() if key != "sails_contribution"}
+
+    fig = draw([report], barbs=False, sails_threshold=10.0, show=False)
+
+    assert fig.axes[0].lines[1].get_marker() == "o"
+
+
 def test_draw_can_use_an_existing_axes(baseline_report):
     fig = plt.figure()
     ax = fig.add_subplot(1, 2, 1, projection=ccrs.PlateCarree())
@@ -463,6 +498,14 @@ def test_power_and_weather_can_add_the_maximum_power(baseline_report):
 
     assert len(fig.axes[0].lines) == 2
     assert fig.axes[0].lines[1].get_linestyle() == "--"
+
+
+def test_power_and_weather_skips_a_missing_maximum_power(baseline_report):
+    report = {key: value for key, value in baseline_report.items() if key != "max_bhp"}
+
+    fig = plot_power_and_weather([report], max_bhp=True, show=False)
+
+    assert len(fig.axes[0].lines) == 1
 
 
 def test_quantiles_show_three_bands_and_the_median(members):

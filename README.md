@@ -90,7 +90,7 @@ topography = Topography("topography", **domain)
 topography.load_data()
 topography.add_interpolator("distance_to_iso0", "lat", "lon", var_key="z")
 
-vessel = Vessel("vessel", filepath="my_vessel_polar.nc", sfc=220., hotel_load=194., max_power=4100.)  # g/kWh, kW, kW
+vessel = Vessel("vessel", filepath="my_vessel_polar.nc", sfoc=220., hotel_load=194., max_power=4100.)  # g/kWh, kW, kW
 vessel.load_data()
 for key in ("bhp", "max_bhp", "sails_contribution"):
     vessel.add_interpolator(key, "stw", "tws", "twa", "hs", "wa", method="linear")
@@ -98,7 +98,11 @@ for key in ("bhp", "max_bhp", "sails_contribution"):
 route = Route("crossing", [Waypoint(47.725, -4.380, "Penmarch"), Waypoint(46.551, -53.321, "Cape Race")])
 voyage = Voyage("crossing", etd=today, eta=today + pd.Timedelta(days=8), route=route)
 
-report = RoutingAnalysis("crossing", vessel, voyage, atmosphere, wave, current, topography).run()
+analysis = RoutingAnalysis(
+    "crossing", vessel, voyage, atmosphere, wave, current, topography,
+    variables=["max_bhp", "sails_contribution"],  # the fuel only needs bhp: ask for the rest
+)
+report = analysis.run()
 
 reports = ReportCollection([report])
 print(reports.summary())
@@ -113,7 +117,7 @@ plot_report(report)  # one A4 page: speed, sails, power, waves and wind
 
 Architeuthis ships no vessel model: bring yours, **as a table or as functions**. Both are models of the same object, queried the same way, and the routing does not care which one it gets.
 
-**📋 A polar table**, from a VPP, sea trials or anything else: a NetCDF file with `bhp`, `max_bhp` and `sails_contribution` (kW, kW, %) on the axes `stw, tws, twa, hs, wa` (kt, kt, deg, m, deg). That is the [Quick Start](#-quick-start).
+**📋 A polar table**, from a VPP, sea trials or anything else: a NetCDF file with, for example, `bhp`, `max_bhp` and `sails_contribution` (kW, kW, %) on the axes `stw, tws, twa, hs, wa` (kt, kt, deg, m, deg). That is the [Quick Start](#-quick-start).
 
 **🧮 Or your own functions**, with their fitted parameters, and no file at all:
 
@@ -127,11 +131,22 @@ def my_polar(x, p):
     return calm - sails, {"calm": calm, "sails": sails}
 
 inputs = ["stw", "tws", "tws100", "twa100", "water_temperature"]
-vessel = Vessel("my_ship", sfc=220., max_power=4100.)
+vessel = Vessel("my_ship", sfoc=220., max_power=4100.)
 vessel.add_function("bhp", my_polar, inputs, args={"p": fitted})
-vessel.add_function("max_bhp", my_polar, inputs, args={"p": fitted})
 vessel.add_function("sails_contribution", my_polar, inputs, args={"p": fitted}, output="sails")
 ```
+
+### ⛽ The routing only needs the consumption
+
+The objective is the fuel, so the vessel needs one model of its consumption, the first of:
+
+| Model | Unit | Burnt at |
+| --- | --- | --- |
+| `hourly_consumption` | kg/h | (it is the consumption) |
+| `total_power`, propulsion and hotel | kW | `sfoc`, g/kWh |
+| `bhp`, propulsion | kW | `sfoc`, after adding `hotel_load`, kW |
+
+Each can be a table, a function or a constant (`vessel.add_constant("bhp", 1500.)`). `hotel_load` and `sfoc` are numbers or functions of the power given to `Vessel(...)`, or models of their own, which can take `bhp` or `total_power` as an input: an sfoc curve of the engine load, for example. Any other model of the vessel, such as `max_bhp` or `sails_contribution`, is computed only when you list it: `RoutingAnalysis(..., variables=["max_bhp"])`.
 
 ### ✨ The routing finds what your model needs
 
@@ -161,7 +176,7 @@ Quantities your model does not use can be computed all the same, to constrain th
 - **Stay differentiable:** write with `architeuthis.numpy`, and use `np.where`, `np.softmax` or `np.sigmoid` rather than `if` on values.
 - **Mind the units:** routing quantities are in kt and degrees, angles in absolute value. Forecast fields arrive as stored (m/s, K): convert them with `fac=` or a function.
 - **Return components:** `(value, {"sails": ...})`, then pick one with `output=`.
-- **Set a realistic `max_power` and `sfc`:** a huge power limit unsettles the solver, and the objective is zero without `sfc`.
+- **Set a realistic `max_power`, or none:** a huge power limit unsettles the solver. Without one, the brake power is not limited.
 
 The complete script is [`examples/function_polar_routing.py`](examples/function_polar_routing.py), and the [User Guide](docs/user_guide.md) has the details.
 
@@ -272,10 +287,10 @@ print(eumdac.AccessToken((get_credential("EUMDAC_KEY"), get_credential("EUMDAC_S
 
 ### 🗺️ The Routing Problem
 
-- **Objective:** total fuel, `sum((bhp + hotel_load) * dt * sfc) / 1e6`, in tonnes.
+- **Objective:** total fuel, `sum(hourly_consumption * dt) / 1e3`, in tonnes, where the consumption is `(bhp + hotel_load) * sfoc / 1e3` kg/h, `total_power * sfoc / 1e3` or your own `hourly_consumption`.
 - **Fixed:** departure, arrival, ETD and ETA. The schedule is a requirement, the speed an outcome.
 - **Variables:** the positions along the route, and optionally a factor blending the reference route towards two alternatives.
-- **Constraints:** brake power below `max_power` and every position at sea, or your own, on any quantity of the route or any additional variable (`variables=`).
+- **Constraints:** every position at sea and, if the vessel has a `max_power`, `max_bhp` (when listed), else `bhp` or `total_power`, below it. Or your own, on any quantity of the route or any additional variable (`variables=`).
 
 ---
 
