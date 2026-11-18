@@ -150,7 +150,7 @@ and this project follows Semantic Versioning https://semver.org
 
 ---
 
-## v0.3.1 - Unreleased
+## v0.3.1 - 2026-11-18
 
 ### Added
 - Additional variables: `RoutingAnalysis(variables=...)`, and `run(variables=...)` and `evaluate(variables=...)` for one run, compute quantities that the objective and the vessel models do not need, at the middle of each segment, and put them in the constraint context `ctx` and in the report. A variable is a model key of the atmosphere, wave, current or vessel (`"gust"`, `"slope"`, or `"wave.slope"` to name the source), a derived quantity (`tws_gust` and `aws_gust` in kt, from the forecast `gust` or the standard ratio; the wind at any height, such as `tws100`), a routing quantity, or a callable of `ctx`. For example, gust thresholds and a wave slope (`swh / mwp`) can be constrained and reported. `core.normalize_variables` reads the accepted forms, and the variables are recorded in the passage plan metadata.
