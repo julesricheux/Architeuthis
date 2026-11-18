@@ -10,6 +10,10 @@ vessel: tws and twa from u10 and v10, tws100 and twa100 from u100 and v100, whic
 atmospheric forecast provides. The air temperature is not a routing quantity, so it
 is read from that forecast too, which has a model of that name.
 
+The routing also computes variables that the polar does not use, for constraints
+and reports: the IFS gusts and a wave slope, swh / mwp, which the wave forecast
+computes as a function of its own fields.
+
 Needs no polar file and no credentials: IFS comes through Herbie, and the current
 is calm. Run from the repository root, cell by cell (#%%) or as a script.
 
@@ -74,7 +78,7 @@ def dummy_polar(x, p):
     # The engine cannot absorb power: smooth floor at 10 % of the calm water power
     bhp = np.softmax(calm + waves - sails, 0.1 * calm, softness=10.)
 
-    return bhp, {"calm": calm, "waves": waves, "sails": sails}
+    return bhp, {"calm": calm, "waves": waves, "sails": sails, "leeway": 0*sails}
 
 
 # tws100 and twa100: the routing computes them from u100 and v100, as tws and twa from u10 and v10
@@ -84,6 +88,7 @@ vessel = Vessel("dummy_vessel", sfc=196., hotel_load=172., max_power=4100.)  # n
 vessel.add_function("bhp", dummy_polar, polar_inputs, args={"p": parameters})
 vessel.add_function("max_bhp", dummy_polar, polar_inputs, args={"p": parameters})
 vessel.add_function("sails_contribution", dummy_polar, polar_inputs, args={"p": parameters}, output="sails")
+vessel.add_function("leeway", dummy_polar, polar_inputs, args={"p": parameters}, output="leeway")
 
 print(vessel("bhp", {
     "stw": 11., "tws": 20., "twa": 90., "tws100": 25., "twa100": 85.,
@@ -92,14 +97,16 @@ print(vessel("bhp", {
 
 #%% FORECASTS AND TOPOGRAPHY
 
-# IFS 10 m and 100 m wind and 2 m air temperature
+# IFS 10 m and 100 m wind, 10 m gust and 2 m air temperature
 atmosphere = DeterministicHerbieForecast(
-    "wind_ifs", model="ifs", product="oper", regex=r":(?:10[uv]|100[uv]|2t):",
+    "wind_ifs", model="ifs", product="oper", regex=r":(?:10[uv]|10fg|100[uv]|2t):",
     fxx=steps, date=recent, **domain,
 )
 atmosphere.load_data()
 for key in ("u10", "v10", "u100", "v100", "t2m"):
     atmosphere.add_interpolator(key, "valid_time", "latitude", "longitude", method="bspline")
+# The gust, in m/s, under the key the routing reads for tws_gust and aws_gust
+atmosphere.add_interpolator("fg10", "valid_time", "latitude", "longitude", var_key="gust", method="bspline")
 
 # The routing reads the inputs of the polar from the atmosphere, wave and current
 # forecasts: the atmosphere gets an air_temperature model, in °C as the polar takes it
@@ -110,13 +117,21 @@ atmosphere.add_function(
 )
 
 wave = DeterministicHerbieForecast(
-    "wave_ifs", model="ifs", product="wave", regex=r":swh:|:mwd:",
+    "wave_ifs", model="ifs", product="wave", regex=r":swh:|:mwd:|:mwp:",
     fxx=steps, date=recent, **domain,
 )
 wave.load_data()
 wave.add_wave_components()
-for key in ("swh", "uw", "vw"):
+for key in ("swh", "uw", "vw", "mwp"):
     wave.add_interpolator(key, "valid_time", "latitude", "longitude", method="bspline")
+
+# Wave slope (m/s), a comfort criterion that the polar does not use. The period is 0
+# on land and past the horizon, so it is smoothly kept above 1 s.
+wave.add_function(
+    "slope",
+    lambda x: wave("swh", x) / np.softmax(wave("mwp", x), 1., softness=0.1),
+    inputs=["valid_time", "latitude", "longitude"],
+)
 
 # Calm water on the IFS grid, so that no credentials are needed
 calm = xr.zeros_like(atmosphere.data["u10"])
@@ -146,7 +161,34 @@ voyage = Voyage(
     route=route,
 )
 
-analysis = RoutingAnalysis("ifs", vessel, voyage, atmosphere, wave, current, topography)
+def constraints(ctx):
+    return [
+        ctx["max_bhp"] < ctx["vessel"].max_power,
+        ctx["leeway"] < 1.,
+        # ctx["z"] < 0.,
+        # ctx["tws_gust"] < 45.,  # no gust over 45 kt
+        # ctx["gust_excess"] < 15.,  # nor gusts 15 kt above the mean wind
+        # ctx["slope"] < 0.5,  # nor steep seas
+    ]
+
+
+analysis = RoutingAnalysis(
+    "ifs", vessel, voyage, atmosphere, wave, current, topography,
+    constraints=constraints,
+    # Computed along the route, in ctx for the constraints and in the reports:
+    # "gust" gives tws_gust and aws_gust in kt (from the forecast "gust", else
+    # tws * GUST_DEFAULT_RATIO), then any model of the forecasts or vessel by its key
+    # ("wave.slope" to name the source), the wind at 100 m, and functions of the
+    # variables before them.
+    variables=[
+        "gust",
+        "slope",
+        "tws100",
+        "air_temperature",
+        "leeway",
+        {"gust_excess": lambda ctx: ctx["tws_gust"] - ctx["tws"]},
+    ],
+)
 solver_options = {"ipopt": DEFAULT_SOLVER_OPTIONS["ipopt"] | {"linear_solver": "mumps"}}
 
 reports = ReportCollection()
@@ -154,3 +196,4 @@ reports.append(analysis.run(solve=False, solver_options=solver_options))  # refe
 reports.append(analysis.run(max_iter=1000, solver_options=solver_options))
 
 print(reports.summary())
+print(reports[-1].table(["tws", "tws_gust", "gust_excess", "swh", "slope"]))

@@ -103,6 +103,7 @@ and this project follows Semantic Versioning https://semver.org
 - Latest HRDPS run not found: HRDPSForecast now looks on the MSC Datamart.
 - `pyproject.toml` declared the MIT license, while the project is distributed under GPL v3 as in `LICENSE`.
 - The latest HRDPS run could not be found, because `HerbieLatest` only looks on AWS and NOMADS by default. `HRDPSForecast` looks on the MSC Datamart.
+
 ---
 
 ## v0.3.0 - 2026-11-17
@@ -146,3 +147,35 @@ and this project follows Semantic Versioning https://semver.org
 
 ### Removed
 - `common.ensure_cdsapirc`, `common.file_path` and the credential constants of `common` (`_CDS_API_KEY`, `_CMEMS_USER`, `_CMEMS_PWD`, `_EUMDAC_USER`, `_EUMDAC_PWD`, `_EUMDAC_CREDENTIALS`).
+
+---
+
+## v0.3.1 - 2026-11-18
+
+### Added
+- Additional variables: `RoutingAnalysis(variables=...)`, and `run(variables=...)` and `evaluate(variables=...)` for one run, compute quantities that the objective and the vessel models do not need, at the middle of each segment, and put them in the constraint context `ctx` and in the report. A variable is a model key of the atmosphere, wave, current or vessel (`"gust"`, `"slope"`, or `"wave.slope"` to name the source), a derived quantity (`tws_gust` and `aws_gust` in kt, from the forecast `gust` or the standard ratio; the wind at any height, such as `tws100`), a routing quantity, or a callable of `ctx`. For example, gust thresholds and a wave slope (`swh / mwp`) can be constrained and reported. `core.normalize_variables` reads the accepted forms, and the variables are recorded in the passage plan metadata.
+- `examples/function_polar_routing.py` downloads the IFS 10 m gust and mean wave period, and reports the gusts, the wave slope, the wind at 100 m and the air temperature as additional variables.
+- `architeuthis/data/cloud_genera.json`: the ten cloud genera of the WMO International Cloud Atlas (Table 2), with their abbreviation, étage and the étages they reach, form, composition, precipitation (character, intensity and forms), species, varieties, supplementary features, accessory clouds, mother clouds, appearance and significance at sea, plus the heights of the three étages. It is the reference for describing the sky along a route.
+- `architeuthis.sky` diagnoses the clouds from nine fields of IFS or GFS: total, low, middle and high cloud covers, CAPE, precipitation rate, 2 m temperature and dewpoint, temperature at 700 hPa. `IFS_SKY_REGEX` and `GFS_SKY_REGEX` download them, `add_sky_models` registers them in common keys and units, `sample` reads them along a route, `diagnose` gives the cover in oktas, the cloud base, fog, and one genus per étage as seen from deck, and `describe` writes one line per point for the crew. It stands apart from the routing for now, and its thresholds are not calibrated yet.
+- `examples/sky_along_route.py` compares the skies of IFS and GFS along a great circle, as a table and as meteograms.
+- `plot_utils.plot_sky`, also `sky.draw`: the sky along a route as a meteogram, in two styles. `"cells"` has one row per étage shaded by its cover, the genera of each column stacked and colored by their form, "/" where hidden, a frame for the Cb and Ns that rise through every étage, the cloud base, fog and the oktas. `"smooth"` paints the clouds after their genus over a day or night sky (Cu domes, Cb towers with anvil and lightning, rolls of Sc and Ac, layers, Ci strokes), with rain or snow under them, fog, WMO sky cover symbols and a tag per genus where it is. Both have the precipitation rate below. `plot_utils.sun_elevation` gives the elevation of the Sun.
+- `sky.diagnose` also gives every genus present per étage, as bit masks read by `sky.genera_present`, and `describe` joins them (`Cb+Cu`).
+
+### Changed
+- `variables=["gust"]` computes the true and apparent wind gusts, `tws_gust` and `aws_gust`, in kt. The gust model itself is reached under another name, as in `{"gust_ms": "atmosphere.gust"}`.
+
+### Deprecated
+- `RoutingAnalysis(options={"include_gusts": ...})` raises a `DeprecationWarning` and will be removed in 0.4.0: give `variables=["gust"]`. Until then, an analysis without `options` still computes the gusts; from 0.4.0, they are computed only when `"gust"` is in the variables.
+
+### Fixed
+- Reading Herbie GRIB files flooded the console with xarray `FutureWarning`s about the default of `compat`, for example with the IFS 10 m gust next to the 10 m wind. `cfgrib.open_datasets` groups fields through merges that rely on the current default, `"no_conflicts"`: `forecast.open_grib` now pins it during the read and silences that warning there only, so the grouping stays the same when xarray changes the default.
+- `save_credential` seemed to have no effect when an environment variable of the same credential was set, such as `CMEMS_PWD` or `COPERNICUSMARINE_SERVICE_PASSWORD` from before 0.3.0: that variable kept being read first. Saving now removes these variables from the current session and names them in a ⚠️ status, so the saved value is used at once. It also reads the value back from the credential store and raises an error if the save did not take.
+- `plot_fuel_quantiles` raised a `KeyError` when no report had converged (with `converged_only=True`): it now draws empty axes.
+- The example tests no longer depend on the settings of the examples: any variable a script reads is added to the synthetic data, and the checks of `simple_routing.py` hold whatever its models, vessels and runs.
+
+---
+
+## v0.4.0 - Planned
+
+### Removed
+- `RoutingAnalysis(options={"include_gusts": ...})`, deprecated since 0.3.1: give `variables=["gust"]`. An analysis then computes `tws_gust` and `aws_gust` only when `"gust"` is in its variables, no longer by default.

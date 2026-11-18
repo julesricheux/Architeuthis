@@ -12,7 +12,8 @@ Each script is self-contained. Its settings are at the top and it runs from the 
 | One optimization per ensemble member, and a fuel consumption that depends on the power | [`ensemble_routing.py`](ensemble_routing.py) |
 | High-resolution wind on a short leg | [`short_term_routing.py`](short_term_routing.py) |
 | Querying forecasts directly, to compare them with satellite observations | [`comparison_ascat_models.py`](comparison_ascat_models.py) |
-| A polar written as functions, with no file, on the wind at 10 m and 100 m and the air temperature | [`function_polar_routing.py`](function_polar_routing.py) |
+| A polar written as functions, with no file, on the wind at 10 m and 100 m and the air temperature; gusts and wave slope computed as additional variables | [`function_polar_routing.py`](function_polar_routing.py) |
+| The clouds along a route, from IFS and GFS side by side, without routing | [`sky_along_route.py`](sky_along_route.py) |
 
 Their commented lines are alternatives that were used in past studies: other polars, domains, positions, waypoints, schedules, constraints and figure settings. Each script keeps them next to what they replace, and the settings of the former figures are in a cell of their own. The schedules follow the latest forecasts, with the dates of past studies left as comments.
 
