@@ -168,6 +168,37 @@ Forecasts are queried at the time and position of each segment, with the ensembl
 
 `examples/function_polar_routing.py` computes the IFS gusts, the wave slope and the wind at 100 m this way.
 
+### The sky along a route
+
+`architeuthis.sky` describes the clouds an observer would see from deck, from nine fields of IFS or GFS: the total, low, middle and high cloud covers, the CAPE, the precipitation rate, the 2 m temperature and dewpoint, and the temperature at 700 hPa. It tells apart the ten cloud genera of the WMO International Cloud Atlas, whose table is `architeuthis/data/cloud_genera.json`. It works on NumPy values and stands apart from the routing for now.
+
+```python
+from architeuthis import sky
+
+forecast = DeterministicHerbieForecast("sky", model="gfs", product="pgrb2.0p25", regex=sky.GFS_SKY_REGEX, fxx=range(3, 121, 3), date=forecast_date, **domain)
+forecast.load_data()
+sky.add_sky_models(forecast)                       # names and units of the model > keys and units of sky
+
+fields = sky.sample(forecast, valid_time, latitude, longitude)
+diagnosis = sky.diagnose(fields)
+print(sky.describe(fields | diagnosis))           # ["6/8 · Sc 600 m · As · light rain", ...]
+```
+
+| Name | Does |
+| --- | --- |
+| `IFS_SKY_REGEX`, `GFS_SKY_REGEX` | Select the nine fields with Herbie. For GFS, only the instantaneous covers and rate, not the averages of the same names; GFS has no middle and high covers at step 0, so start at 3 h. |
+| `add_sky_models(forecast, model=None)` | Registers the fields under the keys of `SKY_VARIABLES`, in 0-1 covers, J/kg, mm/h and K, whatever their names and units in the model (`SKY_FIELDS`). |
+| `sample(forecast, valid_time, latitude, longitude)` | The nine fields at these points, as NumPy arrays. |
+| `diagnose(fields, thresholds=None)` | Per point: `cloud_oktas` (9 for fog), `cloud_base` in m, one genus per étage in `cloud_low`, `cloud_middle` and `cloud_high` (index in `load_genera()["genera"]`, `NONE` or `HIDDEN`), every genus present in the column in `cloud_low_genera`, `cloud_middle_genera` and `cloud_high_genera` (bit masks, whether hidden from deck or not), `fog` and the lower-tropospheric `stability` in K. |
+| `describe(sky, thresholds=None)` | One line per point: cover, low genera and their base, middle and high genera seen from deck, several genera of an étage joined by "+" (`Cb+Cu`), precipitation. |
+| `load_genera()`, `genus_index`, `genus_abbreviation` | The table of genera, and the codes of `diagnose`. |
+| `genera_present(mask, main=None)` | The genera of a bit mask of `diagnose`, the main one first. |
+| `draw(sky, valid_time, **kwargs)` | The meteogram of `plot_sky`, described with the figures below. |
+
+The rules take, in each étage, the first genus that applies. Low: Cb with a strong CAPE and precipitation rate, St with a low cover over air near its dewpoint, Cu with a broken cover in unstable air, else Sc. Middle: Ns with thick middle and low covers and steady rain, As with a thick middle cover, else Ac. High: Cs with a wide cover, else Ci. Other genera present beside the main one are kept: Cu around a Cb or beside Sc, Sc beside St, Ac beside As, Ci beside Cs or from the anvil of a Cb. An étage is `HIDDEN` where the étages below leave at most `visible_cover` (10%) of the sky open, coded "/" as in the WMO codes. The cloud base is the condensation level, 125 m per kelvin of dewpoint spread. Cirrocumulus would need the upper air and is reported as Cirrus. The thresholds, in `THRESHOLDS`, are first values that have not been calibrated against observations: replace some with `thresholds={...}`.
+
+`examples/sky_along_route.py` puts the skies of IFS and GFS side by side along a great circle.
+
 ### Credentials and the data folder
 
 The [README](../README.md#-credentials-and-settings) explains how to get each credential and save it once. `architeuthis.credentials` holds the functions behind `python -m architeuthis.credentials`:
@@ -335,6 +366,32 @@ plot_fuel_quantiles(reports, daily=True)
 plot_fuel_distribution({"Eff. 45%": reports.select(vessel="eff45"), "Eff. 60%": reports.select(vessel="eff60")})
 ```
 
+### The sky as a meteogram: `plot_sky`
+
+```python
+plot_sky(sky, valid_time, style="cells", title=None, labels=True, latitude=None, longitude=None, figsize=(12, 6), dpi=300, save_as=None, show=True)
+```
+
+Draws the result of `architeuthis.sky` over the air column against time, as a meteogram, in one of two styles (`SKY_STYLES`). `sky.draw(sky, valid_time, ...)` is the same figure. Both styles show every genus present in the column, from the bit masks of `diagnose`, and have the precipitation rate in mm/h in a bottom panel, blue for rain and light blue for snow; without `prate` in `sky`, there is no bottom panel.
+
+- `style="cells"`, the table of the sky: one row per étage, of equal heights, the low one to scale, 0 to 2 km, the middle and high ones schematic (`SKY_ETAGE_ROWS`). Each row is shaded by its cover, white to dark grey, and holds the genera of each column, stacked with the main one on top and colored by their form (cumuliform, stratocumuliform, stratiform, cirriform), or "/" where the clouds below hide the étage from deck. A frame marks the genera that rise through the three étages, even hidden: a Cb from its cloud base, a Ns from the middle étage. Dashes give the cloud base, dots the fog, and the oktas run along the top.
+- `style="smooth"`, the picture of the sky, as in a weather app: the clouds are painted after their genus over a blue sky, in a column on a continuous height scale, to scale up to 2 km and compressed above. Cu are separate domes with flat bases, taller with the CAPE; Cb towers with an anvil, lightning and rain under them; Sc and Ac broken into rolls where their cover is; St, As and Ns layers, Ns with a ragged base; Cs a veil and Ci hooked strokes. Rain streaks or snow fall under the columns that have clouds, fog rises from the sea, and the cover is given along the top by WMO sky cover symbols, crossed for a sky hidden by fog. Each genus is tagged once per stretch of the route, at its height, again on long stretches. With `latitude` and `longitude`, the nights are darker, after `sun_elevation`.
+
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `sky` | | The fields of `SKY_VARIABLES` and the result of `diagnose`, merged with `fields \| diagnose(fields)`. |
+| `valid_time` | | Time of each point, in epoch seconds. Each column runs halfway to its neighbours. |
+| `style` | `"cells"` | `"cells"` or `"smooth"`. |
+| `labels` | `True` | Whether to write the genera, and the oktas of `"cells"`, which crowd on long routes. |
+| `latitude`, `longitude` | `None` | Position of each point, to shade the nights in `"smooth"`. |
+
+```python
+fields = sky.sample(forecast, valid_time, latitude, longitude)
+columns = fields | sky.diagnose(fields)
+sky.draw(columns, valid_time, title="Brest to the Azores, GFS")
+sky.draw(columns, valid_time, style="smooth", latitude=latitude, longitude=longitude)
+```
+
 ### Helpers for your own figures
 
 | Helper | Use |
@@ -344,6 +401,7 @@ plot_fuel_distribution({"Eff. 45%": reports.select(vessel="eff45"), "Eff. 60%": 
 | `set_plot_style()` | Applies the Architeuthis style to every figure from now on, for scripts that draw their own figures. Importing `plot_utils` no longer does this. |
 | `plot_style()` | The same style inside a `with` block only. |
 | `A4_PORTRAIT`, `REPORT_PANELS` | The A4 page size in inches, and the panel names of `plot_report`. |
+| `sun_elevation(seconds, latitude, longitude)` | Elevation of the Sun in degrees, within a few tenths, as the smooth sky uses it for the nights. |
 
 ## Exclusion zones
 
