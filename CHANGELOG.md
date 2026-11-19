@@ -200,6 +200,9 @@ and this project follows Semantic Versioning https://semver.org
 - A `bhp` or `total_power` model without `sfoc` still burns at 0 g/kWh, a zero objective, with a `DeprecationWarning`. From 0.4.0, it raises an error.
 - `report["avg_bhp"]`, `ctx["avg_bhp"]`, `report.get("avg_bhp")` and `"avg_bhp" in report` still give the brake power, with a `DeprecationWarning`: use `bhp`.
 
+### Fixed
+- `WAVE_COMPONENTS_OFFSET` is back to 1e-2 m² from 0: the wave direction had no gradient where the wave components vanish (a calm sea, land cells, the steps past the forecast horizon), so IPOPT stopped at its first iteration with `Invalid_Number_Detected` for any vessel model taking `hs` or `wa`, such as a polar table.
+
 ---
 
 ## v0.4.0 - Planned

@@ -1040,3 +1040,20 @@ class TestConsumption:
         assert optimized["status"] == 1
         assert np.max(optimized["z"]) < 1e-2
         assert np.max(baseline["z"]) > 0.0
+
+
+@pytest.mark.integration
+def test_a_polar_table_can_be_optimized_on_a_calm_sea(vessel, atmosphere, current, island):
+    # The wave components vanish everywhere: the wave direction, an input of the
+    # table, keeps a gradient only thanks to WAVE_COMPONENTS_OFFSET.
+    from .conftest import uniform_forecast
+
+    calm_sea = uniform_forecast("calm_sea", swh=0.0, uw=0.0, vw=0.0)
+    analysis = RoutingAnalysis(
+        "analysis", vessel, make_voyage(), atmosphere, calm_sea, current, island, verbose=False,
+    )
+
+    optimized = analysis.run(max_iter=500, solver_options=MUMPS)
+
+    assert optimized["status"] == 1
+    assert np.max(optimized["z"]) < 1e-2
