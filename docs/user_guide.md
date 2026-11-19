@@ -135,6 +135,8 @@ vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa")
 vessel.add_function("sfoc", lambda x: 175. + 2e-6 * (x["total_power"] - 3000.)**2, ["total_power"])
 ```
 
+`examples/vessel_definitions.py` compares five definitions of one vessel on a short-sea leg, without polar file or credentials: the brake power as a function or as a table, an sfoc curve of the total power, the total power, and the hourly consumption.
+
 `vessel.consumption(query)` gives these quantities for a query, and `vessel.consumption_model` the model it uses. Without any of the three models, the routing raises an error that says so. Without `sfoc` when it is needed, it is still 0 g/kWh until 0.4.0, a zero objective, with a `DeprecationWarning`; from 0.4.0 this is an error too. The entries of the table are in the report and in `ctx`, so a constraint can limit the consumption or the total power. `sfc`, the former name of `sfoc`, still works with a `DeprecationWarning` until 0.4.0.
 
 `max_power`, in kW, is the power limit of the default constraints: `max_bhp` when `variables` lists it, else `bhp`, else `total_power` stays below it. `max_power=None` leaves the power free. Left out, it is still 1e12 kW until 0.4.0, with a `DeprecationWarning`, and None from 0.4.0.

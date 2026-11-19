@@ -1,6 +1,6 @@
 # Examples
 
-Each script is self-contained. Its settings are at the top and it runs from the repository root, cell by cell (`#%%`, in Spyder for example) or as a whole with `python examples/simple_routing.py`. The routing examples need your own polar files, except `function_polar_routing.py`, in `~/data/polars/` by default, and the docstring of each script gives the data and credentials it needs.
+Each script is self-contained. Its settings are at the top and it runs from the repository root, cell by cell (`#%%`, in Spyder for example) or as a whole with `python examples/simple_routing.py`. The routing examples need your own polar files, except `function_polar_routing.py` and `vessel_definitions.py`, in `~/data/polars/` by default, and the docstring of each script gives the data and credentials it needs.
 
 | To learn | Read |
 | --- | --- |
@@ -14,6 +14,7 @@ Each script is self-contained. Its settings are at the top and it runs from the 
 | Querying forecasts directly, to compare them with satellite observations | [`comparison_ascat_models.py`](comparison_ascat_models.py) |
 | A polar written as functions, with no file, on the wind at 10 m and 100 m and the air temperature; gusts and wave slope computed as additional variables | [`function_polar_routing.py`](function_polar_routing.py) |
 | The clouds along a route, from IFS and GFS side by side, without routing | [`sky_along_route.py`](sky_along_route.py) |
+| The ways of defining the consumption of a vessel, compared on a short-sea leg: brake power as a function or a table, sfoc curve, total power, hourly consumption | [`vessel_definitions.py`](vessel_definitions.py) |
 
 Their commented lines are alternatives that were used in past studies: other polars, domains, positions, waypoints, schedules, constraints and figure settings. Each script keeps them next to what they replace, and the settings of the former figures are in a cell of their own. The schedules follow the latest forecasts, with the dates of past studies left as comments.
 

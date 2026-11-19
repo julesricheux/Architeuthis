@@ -180,6 +180,7 @@ and this project follows Semantic Versioning https://semver.org
 ### Added
 - The vessel consumption has three formulations, and the routing only needs one of them, the first that the vessel has: `hourly_consumption` (kg/h), `total_power` (kW, propulsion and hotel) burnt at `sfoc`, or `bhp` plus `hotel_load` burnt at `sfoc`. Each is a table, a function or a constant. `Vessel.consumption(query)` computes them, `Vessel.consumption_model`, `consumption_keys()` and `consumption_quantities()` describe them, and `vessel.CONSUMPTION_KEYS` lists the three models.
 - `hotel_load` and `sfoc` can be vessel models, which take precedence over the numbers or functions given to `Vessel` and can take `bhp`, `hotel_load` or `total_power` as inputs: an sfoc curve of the engine load, for example. Any vessel model listed in `variables` can take them too.
+- `examples/vessel_definitions.py` compares the ways of defining the consumption of a vessel on a short-sea leg, with IFS wind and a calm sea, without polar file or credentials.
 - `add_constant(var_key, value)` registers a constant model without input on any data object, a constant brake power or hotel load for example.
 - Reports hold the consumption quantities of the formulation: `hourly_consumption` always, and `bhp`, `hotel_load`, `total_power` and `sfoc` when the formulation computes them. They are in `ctx` for the constraints.
 - `plot_report` draws `total_power`, else `hourly_consumption`, on its power panel when the report has no `bhp`, and says so on the sails panel when the report has no `sails_contribution`.
