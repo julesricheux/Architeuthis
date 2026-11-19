@@ -128,17 +128,21 @@ def ascat_dataset():
 
 def imagery_dataset(imagery):
     """
-    Brightness temperatures every 10 min over the period and the grid of
-    an imagery source: clouds moving east over a warm sea, GOES-East
-    1.5 K warmer than Meteosat.
+    Images every 10 min over the period and the grid of an imagery
+    source: clouds moving east over a warm sea, GOES-East 1.5 K warmer
+    than Meteosat in the infrared and darker in the visible.
     """
     latitude, longitude = imagery.grid()
     times = pd.date_range(pd.Timestamp(imagery.start).ceil("10min"), pd.Timestamp(imagery.end), freq="10min")
     hours = (times - times[0]).total_seconds().values / 3600.0
-    shift = 1.5 if isinstance(imagery, GIBSData) else 0.0
+    goes = isinstance(imagery, GIBSData)
     clouds = np.cos(np.radians(longitude[None, None, :] * 6.0 - hours[:, None, None] * 30.0)) * np.cos(np.radians(latitude[None, :, None] * 8.0))
+    values = {
+        "brightness": (0.4 + 0.3 * clouds) * (0.8 if goes else 1.0),
+        "bt": 255.0 + 30.0 * clouds + (1.5 if goes else 0.0),
+    }
     return xr.Dataset(
-        {"bt": (("valid_time", "latitude", "longitude"), (255.0 + 30.0 * clouds + shift).astype(np.float32))},
+        {variable: (("valid_time", "latitude", "longitude"), values[variable].astype(np.float32)) for variable in imagery.variables},
         coords={"valid_time": times.asi8 / 1e9, "latitude": latitude, "longitude": longitude},
     )
 
@@ -372,6 +376,9 @@ def test_cloud_imagery_joins_both_satellites_into_one_layer(example):
     # The overlap check finds the 1.5 K of the synthetic sources
     assert np.median(variables["difference"]) == pytest.approx(1.5, abs=1e-3)
     assert len(variables["frames"]) == len(clouds.times()) > 1
+    # The visible of GOES, 20 % darker, put on the levels of Meteosat
+    np.testing.assert_allclose(variables["daylight"].data["gain"].sel(channel="visible").isel(source=1), 1.25, rtol=1e-3)
+    assert len(variables["daylight"].times()) > 1
     assert variables["frames"][0].shape == (25, 80, 4)
     assert (run.folder / "cloud_imagery.gif").exists()
 

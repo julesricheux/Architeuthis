@@ -172,13 +172,16 @@ def values_to_rgba(
     vmax: float = 300.0,
     transparent_above: Optional[float] = None,
     fade: float = 10.0,
+    transparent_below: Optional[float] = None,
 ) -> np.ndarray:
     """
     Pixels of values drawn on a colour scale.
 
-    NaN is transparent. With `transparent_above`, values fade out above
-    it, over `fade`: warm clear skies vanish from a cloud layer, so that
-    the map below shows through.
+    NaN is transparent, and the alpha of the colormap is kept. With
+    `transparent_above`, values also fade out above it, over `fade`:
+    warm clear skies vanish from an infrared cloud layer, so that the
+    map below shows through. `transparent_below` does the same below a
+    value: the dark sea of a visible image.
 
     Args:
         values: Values, any shape.
@@ -188,6 +191,8 @@ def values_to_rgba(
         transparent_above: Value above which pixels fade out, None to
             keep them opaque.
         fade: Range of the fading, in the units of the values.
+        transparent_below: Value below which pixels fade out, None to
+            keep them opaque.
 
     Returns:
         RGBA array of shape (..., 4), uint8.
@@ -195,11 +200,58 @@ def values_to_rgba(
     values = np.asarray(values, dtype=float)
     colormap = matplotlib.colormaps[colormap] if isinstance(colormap, str) else colormap
     rgba = colormap(np.clip((values - vmin) / (vmax - vmin), 0.0, 1.0))
-    alpha = np.where(np.isnan(values), 0.0, 1.0)
-    if transparent_above is not None:
-        alpha = alpha * np.clip((transparent_above + fade - values) / fade, 0.0, 1.0)
+    alpha = np.where(np.isnan(values), 0.0, rgba[..., 3])
+    with np.errstate(invalid="ignore"):
+        if transparent_above is not None:
+            alpha = alpha * np.clip((transparent_above + fade - values) / fade, 0.0, 1.0)
+        if transparent_below is not None:
+            alpha = alpha * np.clip((values - transparent_below + fade) / fade, 0.0, 1.0)
     rgba[..., 3] = np.nan_to_num(alpha)
     return np.round(rgba * 255).astype(np.uint8)
+
+
+def quantile_fit(
+    values: np.ndarray,
+    reference: np.ndarray,
+    mask: Optional[np.ndarray] = None,
+    quantiles: Sequence[float] = tuple(range(5, 100, 5)),
+    min_count: int = 50,
+    min_spread: float = 0.0,
+) -> tuple[float, float]:
+    """
+    Linear transform that gives values the distribution of a reference.
+
+    Fitted on matching quantiles rather than pixel by pixel, so that two
+    images of the same scene seen from different angles (shifted
+    clouds, other sun glint) still match on the whole. Used to put the
+    images of two sources on the same levels where they overlap.
+
+    Args:
+        values: Values to transform.
+        reference: Values of the reference, of the same shape.
+        mask: Pixels to fit on, None for all; NaN are left out.
+        quantiles: Quantiles compared, in percent.
+        min_count: Fewer pixels than this give no transform.
+        min_spread: A reference whose quantiles span less than this
+            (a night image, say) gives no transform.
+
+    Returns:
+        (gain, offset), so that `gain * values + offset` matches the
+        reference; (1, 0) when there is too little to fit.
+    """
+    values = np.asarray(values, dtype=float)
+    reference = np.asarray(reference, dtype=float)
+    both = np.isfinite(values) & np.isfinite(reference)
+    if mask is not None:
+        both &= np.asarray(mask, dtype=bool)
+    if both.sum() < min_count:
+        return 1.0, 0.0
+    low = np.percentile(values[both], quantiles)
+    high = np.percentile(reference[both], quantiles)
+    if np.ptp(high) <= min_spread or np.ptp(low) == 0.0:
+        return 1.0, 0.0
+    gain, offset = np.polyfit(low, high, 1)
+    return float(gain), float(offset)
 
 
 def softmin_weights(distances: Sequence[np.ndarray], width: float) -> np.ndarray:

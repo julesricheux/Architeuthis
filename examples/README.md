@@ -13,7 +13,7 @@ Each script is self-contained. Its settings are at the top and it runs from the 
 | High-resolution wind on a short leg | [`short_term_routing.py`](short_term_routing.py) |
 | Querying forecasts directly, to compare them with satellite observations | [`comparison_ascat_models.py`](comparison_ascat_models.py) |
 | ASCAT winds from EUMETSAT or Copernicus Marine: the default source with its fallback, one source only, each source with its options, and both compared on the same passes | [`ascat_sources.py`](ascat_sources.py) |
-| Cloud images from Meteosat and GOES-East joined into one layer over the North Atlantic: both on one scale, the seam, the clouds over a map and an animation | [`cloud_imagery.py`](cloud_imagery.py) |
+| Cloud images from Meteosat and GOES-East joined into one layer over the North Atlantic, in the infrared and the visible: both on one scale, the seam, the ir, blue and visible layers in the colours of Windy, the clouds over a map and an animation | [`cloud_imagery.py`](cloud_imagery.py) |
 | A polar written as functions, with no file, on the wind at 10 m and 100 m and the air temperature; gusts and wave slope computed as additional variables | [`function_polar_routing.py`](function_polar_routing.py) |
 | The clouds along a route, from IFS and GFS side by side, without routing | [`sky_along_route.py`](sky_along_route.py) |
 | A routing in the wind alone: the waves and the current left out read as zero | [`wind_only_routing.py`](wind_only_routing.py) |

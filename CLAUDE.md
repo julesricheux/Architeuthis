@@ -60,8 +60,9 @@ copernicus.py  CopernicusMarineData mixin (subset + credentials), shared by Cope
         |                 Copernicus (CMEMS), CDS (ERA5); calm_forecast (zero fields)
         +-- satellite.py  EUMETSATData > EUMETSATASCATData, PoseidonData; CopernicusSatelliteData >
         |                 CopernicusASCATData; ASCATData: first of EUMETSAT, CMEMS that works (validation);
-        |                 SatelliteImagery > WMSImageryData > EUMETViewData, GIBSData (IR images as bt, K);
-        |                 GeostationaryImagery: sources joined into one layer (cloud imagery)
+        |                 SatelliteImagery > WMSImageryData > EUMETViewData, GIBSData; layers "ir", "blue"
+        |                 (bt, K) and "visible" (brightness 0-1) chosen like forecast variables;
+        |                 GeostationaryImagery: sources joined into one layer
         |
 icebergs.py    IIP iceberg limit, fetched on first use: berg_zone polygon, berg_geojson
         |
@@ -75,9 +76,10 @@ core.py        RoutingAnalysis (run, evaluate); re-exports the above
         |
 ui.py          Dash/Leaflet viewer of forecast fields and saved route reports
 
-toolbox/       geo_utils (route geometry, central_angle), plot_utils (figures, documented in docs/user_guide.md),
+toolbox/       geo_utils (route geometry, central_angle), windy_colormaps (wind, waves, satellite layers), plot_utils (figures, documented in docs/user_guide.md),
                json_utils (report JSON codec), wms_utils (WMS requests, GIBS times and colormaps),
-               image_utils (PNG, palette inversion, colour scales, blending, GIF), inspect_tools, string_formatting...
+               image_utils (PNG, palette inversion, colour scales, quantile matching, blending, GIF),
+               inspect_tools, string_formatting...
 data/          package data: cloud_genera.json (the 10 WMO genera, étages, precipitation)
 wrappers/      json_wrapper (GeoJSON), leaflet_wrapper (zone layers), legacy provider wrappers
 examples/      simple_routing, long_term_routing, ensemble_routing, post_leg_rewind,
@@ -198,8 +200,10 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 - `EUMDAC_KEY` and `EUMDAC_SECRET` hold the EUMETSAT Consumer Key and Secret, not a login. When neither CMEMS credential is found, `CopernicusForecast` passes `None` to the toolbox only if the `copernicusmarine login` file exists (`COPERNICUSMARINE_CREDENTIALS_DIRECTORY` or `~/.copernicusmarine/`), else it raises; likewise `CDSForecast` falls back to `cdsapi.Client()` only if `CDSAPI_RC` or `~/.cdsapirc` exists. Architeuthis never writes `~/.cdsapirc` any more. Without a credential store (Linux server), `keyring` errors are treated as "not found", so environment variables still work.
 - `copernicusmarine` takes naive dates as **local** times, not UTC. `CopernicusSatelliteData` passes UTC-aware timestamps; `CopernicusForecast` passes `date` and `end` as given. Its `"strict-inside"` selection refuses a period past the end of a dataset, so satellite data uses `"inside"`, which clips. Importing `copernicusmarine` takes about 3 s, which is why `architeuthis/copernicus.py` exists rather than this code living in `common.py`; mock it with `patch("architeuthis.copernicus.copernicusmarine.subset")`.
 - `ASCATData` is not an `EUMETSATData`: it builds an `EUMETSATASCATData` or a `CopernicusASCATData` per source in `load_data` and keeps the data of the first that loads, catching any exception of the others. ASCAT `wind_dir` is where the wind goes, unlike the meteorological convention of the models.
-- Imagery servers send rendered PNGs, which `WMSImageryData` turns back into brightness temperatures (`bt`, K) with the palette of the layer. EUMETView's grey ramp is calibrated in `EUMETVIEW_CALIBRATIONS`, fitted once against FCI L1c data; another layer needs its own fit. The GIBS IR colormap draws 195-203 K in the greys of 261-328 K: `GIBSData.secondary` marks those entries and `image_utils.invert_palette` reads such pixels from their neighbours (`tolerance` 3, a wider one makes most mid-grey sea ambiguous and turns it cold). Past about 70 deg from GOES-East (east of 5 W), GIBS reads cold; `GeostationaryImagery` gives Meteosat all the weight there.
+- Imagery servers send rendered PNGs, which `WMSImageryData` turns back into brightness temperatures (`bt`, K) with the palette of the layer. EUMETView's grey ramp is calibrated in `EUMETVIEW_CALIBRATIONS`, fitted once against FCI L1c data; another layer needs its own fit. The GIBS IR colormap draws 195-203 K in the greys of 261-328 K: `GIBSData.secondary["ir"]` marks those entries and `image_utils.invert_palette` reads such pixels from their neighbours (`tolerance` 3, a wider one makes most mid-grey sea ambiguous and turns it cold). Past about 70 deg from GOES-East (east of 5 W), GIBS reads cold; `GeostationaryImagery` gives Meteosat all the weight there.
 - The WMS capabilities of GIBS may lag by an hour or more, depending on the server answering: `GIBSData` takes its times from DescribeDomains (`wms_utils.gibs_time_domain`), falling back on the capabilities. An entirely transparent image (not produced yet) is left out with a ⚠️ status and not cached. GIBS is about an hour behind EUMETView, so `GeostationaryImagery` (all sources' times by default) ends about an hour ago.
+- Visible imagery has no published calibration on either server: both are read as grey level / 255 (`brightness`), and their relation changes through the day with the sun and viewing angles (GOES-to-Meteosat factor 0.74 at 11 UTC, 0.93 at 13 UTC on 2026-11-19), so `GeostationaryImagery` matches them per image along the seam (`match`, on for the visible only) rather than with a constant. A night image (reference spread under 0.02) is not matched. `windy_colormaps.SATELLITE_STOPS["ir"]` reproduces Windy's Infra+ legend; "blue" only imitates Windy's Blue, whose definition is not published.
+- Imagery data layers (`IMAGERY_LAYERS`) map to channels, and each channel to one server layer per source (`wms_layers`) and one quantity in `data` (`IMAGERY_CHANNELS`). A source with several channels keeps the times every channel has, and stores its pixels as `rgba_<channel>` in `output_path/<server layer>/<box>/`. `GeostationaryImagery.data["gain"]` and `["offset"]` are on (channel, source, valid_time).
 - `core.berg_zone` and `icebergs.berg_zone` are computed when they are read (module `__getattr__`), so `from architeuthis.icebergs import berg_zone` fetches the iceberg limit at that line.
 
 ## Testing

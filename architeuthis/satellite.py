@@ -7,11 +7,15 @@ or from Copernicus Marine (`CopernicusASCATData`, daily gridded swaths,
 about a day behind). `ASCATData` takes them in a chosen order and falls
 back on the next source when one fails. Both give the same variables.
 
-Geostationary IR images come rendered from map services, with no
-account: Meteosat from EUMETView (`EUMETViewData`), GOES and Himawari
-from NASA GIBS (`GIBSData`). Their colours are turned back into
-brightness temperatures, the common scale, and `GeostationaryImagery`
-joins them into one continuous layer.
+Geostationary infrared and visible images come rendered from map
+services, with no account: Meteosat from EUMETView (`EUMETViewData`),
+GOES and Himawari from NASA GIBS (`GIBSData`). Their colours are turned
+back into a common scale, brightness temperatures for the infrared and
+a brightness from 0 to 1 for the visible, `GeostationaryImagery` joins
+them into one continuous layer. The channels to download are chosen as
+the variables of a forecast, "ir" or "visible" (`IMAGERY_CHANNELS`),
+and `image` draws one with a colour scale of Windy chosen when drawing
+(`windy_colormaps.SATELLITE_STOPS`).
 
 Created on Thu Jan 29 16:15:59 2026
 
@@ -38,6 +42,7 @@ from architeuthis.credentials import require_credentials
 from architeuthis.toolbox import image_utils, wms_utils
 from architeuthis.toolbox.geo_utils import central_angle
 from architeuthis.toolbox.image_utils import values_to_rgba
+from architeuthis.toolbox.windy_colormaps import get_satellite_cmap
 
 
 class ArchiteuthisSatelliteData(ArchiteuthisSpatialData):
@@ -571,21 +576,48 @@ EUMETVIEW_URL = "https://view.eumetsat.int/geoserver/ows"
 GIBS_URL = "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi"
 GIBS_COLORMAP_URL = "https://gibs.earthdata.nasa.gov/colormaps/v1.3/{}.xml"
 
-# The common scale of the IR images: brightness temperature, in K, drawn
-# from white (cold cloud tops) to black (warm surfaces)
-IR_COLORMAP = "gray_r"
-IR_RANGE = (200.0, 300.0)
-
-# Grey level g of EUMETView IR images to brightness temperature,
-# BT = offset + slope * g, in K. FCI IR 10.5: fitted on 2026-11-19 16:50
-# UTC against the FCI L1c radiances of the same scan (EUMETSAT Data
-# Tailor), 1.6 million pixels over France: correlation 0.991, residual
-# 2 K, from 301 K (black) to 192 K (white).
-EUMETVIEW_CALIBRATIONS = {
-    "mtg_fd:ir105_hrfi": (301.2, -0.428),
+# Channels to choose from, as the variables of a forecast: the infrared,
+# day and night, and the visible, by day. They are the only single
+# channels that both EUMETView and GIBS serve (2026-11): EUMETView also
+# has the MSG water vapour (msg_fes:wv062) but GIBS none of GOES, and the
+# other layers of both are colour composites (GeoColor, dust, fire, air
+# mass). Quantity of each channel in `data`, on a scale common to every
+# source: brightness temperature in K, brightness from 0 (black) to 1.
+IMAGERY_CHANNELS = {
+    "ir": "bt",
+    "visible": "brightness",
 }
 
-# GIBS colormap of each layer (all band 13 layers share it)
+# Colour scale drawing each channel by default, among those of its
+# quantity (`windy_colormaps.SATELLITE_QUANTITIES`): Infra+ for the
+# infrared ("blue" is the other), the camera image for the visible
+IMAGERY_COLORMAPS = {
+    "ir": "infra",
+    "visible": "visible",
+}
+
+# Layer of each source per channel, on its map server
+EUMETVIEW_LAYERS = {
+    "ir": "mtg_fd:ir105_hrfi",       # MTG FCI 10.5 um, 2 km
+    "visible": "mtg_fd:vis06_hrfi",  # MTG FCI 0.6 um, 1 km
+}
+GIBS_LAYERS = {
+    "ir": "GOES-East_ABI_Band13_Clean_Infrared",       # ABI 10.3 um, 2 km
+    "visible": "GOES-East_ABI_Band2_Red_Visible_1km",  # ABI 0.64 um, 1 km
+}
+
+# Grey level g of EUMETView images to their value, offset + slope * g.
+# FCI IR 10.5, in K: fitted on 2026-11-19 16:50 UTC against the FCI L1c
+# radiances of the same scan (EUMETSAT Data Tailor), 1.6 million pixels
+# over France: correlation 0.991, residual 2 K, from 301 K (black) to
+# 192 K (white). Visible: the grey level itself, from 0 to 1.
+EUMETVIEW_CALIBRATIONS = {
+    "mtg_fd:ir105_hrfi": (301.2, -0.428),
+    "mtg_fd:vis06_hrfi": (0.0, 1.0 / 255.0),
+}
+
+# GIBS colormap of each IR layer (all band 13 layers share it); the
+# visible layers are grey levels, read from 0 to 1
 GIBS_COLORMAPS = {
     "GOES-East_ABI_Band13_Clean_Infrared": "Clean_Longwave_Infrared_Window_Band",
     "GOES-West_ABI_Band13_Clean_Infrared": "Clean_Longwave_Infrared_Window_Band",
@@ -606,15 +638,43 @@ SUBSATELLITE_LONGITUDES = {
     "Himawari_": 140.7,     # Himawari-9
 }
 
+# Pixels that both sources weigh at least this much in a composite: the
+# band along the seam where their levels are matched
+MATCH_WEIGHT = 0.05
+
+
+def imagery_channels(channels: Union[str, Sequence[str]]) -> list[str]:
+    """
+    Imagery channels, checked, in order and without duplicates.
+
+    Args:
+        channels: A key of `IMAGERY_CHANNELS` or a list of them.
+
+    Returns:
+        The list of channels.
+
+    Example:
+        imagery_channels(["ir", "visible"])
+    """
+    channels = [channels] if isinstance(channels, str) else list(channels)
+    unknown = [channel for channel in channels if channel not in IMAGERY_CHANNELS]
+    if unknown or not channels:
+        raise ValueError(f"Unknown imagery channel(s) {unknown}: choose among {list(IMAGERY_CHANNELS)}.")
+    return list(dict.fromkeys(channels))
+
 
 class SatelliteImagery(ArchiteuthisSatelliteData):
     """
     Base class of satellite images on a latitude-longitude grid.
 
-    After `load_data`, `data` holds `bt`, the brightness temperature in
-    K, on `valid_time` (float epoch seconds), `latitude` (ascending) and
-    `longitude`. Images of every source are thus on one physical scale,
-    and `image` draws them on one colour scale.
+    The channels to load are chosen as the variables of a forecast: "ir",
+    "visible" (`IMAGERY_CHANNELS`). After `load_data`, `data` holds the
+    quantity of each (`variables`): `bt`, the brightness temperature in
+    K, for "ir", and `brightness`, from 0 to 1, for "visible", on
+    `valid_time` (float epoch seconds), `latitude` (ascending) and
+    `longitude`. Images of every source are thus on one scale. How they
+    look is chosen when drawing: `image` draws a channel with a colour
+    scale of Windy.
 
     Args:
         name: Name of this object, used in status messages.
@@ -625,6 +685,8 @@ class SatelliteImagery(ArchiteuthisSatelliteData):
         min_lat: Southern bound of the domain, in degrees.
         max_lat: Northern bound of the domain, in degrees.
         resolution: Pixel size, in degrees.
+        channels: Channel or channels: "ir" (day and night), "visible"
+            (by day).
         verbose: Whether to report progress.
     """
 
@@ -638,11 +700,20 @@ class SatelliteImagery(ArchiteuthisSatelliteData):
         min_lat: float = -90.,
         max_lat: float = 90.,
         resolution: float = 0.05,
+        channels: Union[str, Sequence[str]] = "ir",
         verbose: bool = True,
     ):
         self.resolution = resolution
+        self.channels = imagery_channels(channels)
 
         super().__init__(name, start, end, min_lon, max_lon, min_lat, max_lat, verbose)
+
+    @property
+    def variables(self) -> list[str]:
+        """
+        Names of the quantities of the channels in `data`.
+        """
+        return [IMAGERY_CHANNELS[channel] for channel in self.channels]
 
     @property
     def size(self) -> tuple[int, int]:
@@ -686,49 +757,71 @@ class SatelliteImagery(ArchiteuthisSatelliteData):
     def image(
         self,
         time: Union[int, Datetime] = -1,
-        colormap: str = IR_COLORMAP,
-        vmin: float = IR_RANGE[0],
-        vmax: float = IR_RANGE[1],
+        channel: Optional[str] = None,
+        colormap: Optional[str] = None,
         transparent_above: Optional[float] = None,
-        fade: float = 10.0,
+        transparent_below: Optional[float] = None,
+        fade: Optional[float] = None,
     ) -> np.ndarray:
         """
-        One image drawn on the common colour scale, north up.
+        One image of a channel, with a colour scale of Windy, north up.
 
         Args:
             time: Index of the image, or a time (the nearest image).
-            colormap: Matplotlib colormap or its name.
-            vmin: Temperature of the first colour, in K.
-            vmax: Temperature of the last colour, in K.
-            transparent_above: Temperature above which pixels fade out,
-                for a cloud layer over a map; None to keep them opaque.
-            fade: Range of the fading, in K.
+            channel: "ir" or "visible", among the loaded ones; None for
+                the first of `channels`.
+            colormap: Colour scale of the quantity of the channel
+                (`windy_colormaps.SATELLITE_STOPS`): "infra" (Infra+)
+                or "blue" (Blue, clear sky transparent) for "ir",
+                "visible" for "visible"; None for the default of the
+                channel (`IMAGERY_COLORMAPS`).
+            transparent_above: Value above which pixels fade out, the
+                warm clear sky of an infrared cloud layer over a map;
+                None to keep the transparency of the colour scale.
+            transparent_below: Value below which pixels fade out, the
+                dark sea of a visible cloud layer; None to keep the
+                transparency of the colour scale.
+            fade: Range of the fading, None for a tenth of the scale.
 
         Returns:
             RGBA array of shape (height, width, 4), uint8, first row
             north, as `imshow` and map overlays take it.
+
+        Example:
+            rgba = clouds.image(-1, "ir", colormap="blue")
         """
+        channel = self.channels[0] if channel is None else imagery_channels(channel)[0]
+        variable = IMAGERY_CHANNELS[channel]
+        if variable not in self.data:
+            raise ValueError(f"The {channel} channel is not loaded: add it to the channels.")
+        colormap = IMAGERY_COLORMAPS[channel] if colormap is None else colormap
+        colormap, norm = get_satellite_cmap(colormap, quantity=variable)
         if not isinstance(time, (int, np.integer)):
             target = to_timestamp(time)
             time = int(np.abs(self.data["valid_time"].values - target).argmin())
-        values = self.data["bt"].isel(valid_time=time).values[::-1]
-        return values_to_rgba(values, colormap, vmin, vmax, transparent_above, fade)
+        values = self.data[variable].isel(valid_time=time).values[::-1]
+        fade = (norm.vmax - norm.vmin) / 10.0 if fade is None else fade
+        return values_to_rgba(values, colormap, norm.vmin, norm.vmax, transparent_above, fade, transparent_below)
 
 
 class WMSImageryData(SatelliteImagery):
     """
-    Images of a WMS layer, turned back into the values they show.
+    Images of a WMS server, turned back into the values they show.
 
+    One server layer per channel (`wms_layers`).
     The server crops and renders each image at the requested box,
-    resolution and time; the times are those of the layer within the
-    period. Images are kept in `~/data/wms/`, downloaded once. Their
-    pixels are in `rgba` and, given the palette of the layer, its
-    values in `bt` (see `image_utils.invert_palette`).
+    resolution and time; the times are those every channel has within
+    the period. Images are kept in `~/data/wms/`, downloaded once; an
+    empty image, not produced yet, is left out. Their pixels are in
+    `rgba_<channel>` and, given the palette of the server layer, their
+    values in the quantity of the channel (see
+    `image_utils.invert_palette`).
 
     Args:
         name: Name of this object, used in status messages.
         url: Endpoint of the WMS server.
-        layer: Name of the layer.
+        wms_layers: Name of the server layer of each channel, as
+            `{"ir": ..., "visible": ...}`.
         start: Start of the period.
         end: End of the period.
         min_lon: Western bound of the domain, in degrees.
@@ -738,10 +831,12 @@ class WMSImageryData(SatelliteImagery):
         resolution: Pixel size, in degrees.
         time_step: Keep only the times on multiples of this step ("1h"
             for example), None for all the times of the layer.
-        palette: (colours, values) of the layer, None if unknown.
+        channels: Channel or channels, "ir", "visible".
+        palettes: (colours, values) of each channel, None if unknown.
         subsatellite_lon: Longitude of the satellite, in degrees, None
-            to guess it from the layer name (`SUBSATELLITE_LONGITUDES`).
-        style: Style of the layer, "" for its default.
+            to guess it from the server layer names
+            (`SUBSATELLITE_LONGITUDES`).
+        style: Style of the server layers, "" for their default.
         verbose: Whether to report progress.
     """
 
@@ -749,7 +844,7 @@ class WMSImageryData(SatelliteImagery):
         self,
         name: str,
         url: str,
-        layer: str,
+        wms_layers: dict,
         start: Union[Datetime, list[Datetime]] = None,
         end: Union[Datetime, list[Datetime]] = None,
         min_lon: float = -180.,
@@ -758,86 +853,119 @@ class WMSImageryData(SatelliteImagery):
         max_lat: float = 90.,
         resolution: float = 0.05,
         time_step: Optional[str] = None,
-        palette: Optional[tuple] = None,
+        channels: Union[str, Sequence[str]] = "ir",
+        palettes: Optional[dict] = None,
         subsatellite_lon: Optional[float] = None,
         style: str = "",
         verbose: bool = True,
     ):
+        super().__init__(name, start, end, min_lon, max_lon, min_lat, max_lat, resolution, channels, verbose)
+
+        missing = [channel for channel in self.channels if channel not in wms_layers]
+        if missing:
+            raise ValueError(f"{name} has no server layer for the {missing} channel(s).")
         self.url = url
-        self.layer = layer
+        self.wms_layers = {channel: wms_layers[channel] for channel in self.channels}
         self.time_step = time_step
-        self.palette = palette
-        self.secondary = None
+        self.palettes = {channel: (palettes or {}).get(channel) for channel in self.channels}
+        self.secondary = {channel: None for channel in self.channels}
         self.style = style
         if subsatellite_lon is None:
             subsatellite_lon = next(
-                (lon for prefix, lon in SUBSATELLITE_LONGITUDES.items() if layer.startswith(prefix)),
+                (
+                    lon for prefix, lon in SUBSATELLITE_LONGITUDES.items()
+                    for layer in self.wms_layers.values() if layer.startswith(prefix)
+                ),
                 None,
             )
         self.subsatellite_lon = subsatellite_lon
+        self.output_path = os.path.join(_HOME, "wms", urlparse(url).hostname or "server")
 
-        super().__init__(name, start, end, min_lon, max_lon, min_lat, max_lat, resolution, verbose)
-
-        folder = f"{self.min_lon:g}_{self.min_lat:g}_{self.max_lon:g}_{self.max_lat:g}_{self.resolution:g}"
-        self.output_path = os.path.join(
-            _HOME, "wms", urlparse(url).hostname or "server", layer.replace(":", "_"), folder,
-        )
-
-    def _time_extent(self) -> list[str]:
+    def _folder(self, channel: str) -> str:
         """
-        Time extent of the layer, from the capabilities of the server.
+        Folder of the images of a channel, by server layer and box.
+
+        Args:
+            channel: "ir" or "visible".
+
+        Returns:
+            The path.
+        """
+        box = f"{self.min_lon:g}_{self.min_lat:g}_{self.max_lon:g}_{self.max_lat:g}_{self.resolution:g}"
+        return os.path.join(self.output_path, self.wms_layers[channel].replace(":", "_"), box)
+
+    def _time_extent(self, channel: str) -> list[str]:
+        """
+        Time extent of a server layer, from the capabilities.
+
+        Args:
+            channel: "ir" or "visible".
 
         Returns:
             The values of its time dimension.
         """
-        return wms_utils.time_extent(wms_utils.capabilities(self.url), self.layer)
+        if getattr(self, "_capabilities", None) is None:
+            self._capabilities = wms_utils.capabilities(self.url)
+        return wms_utils.time_extent(self._capabilities, self.wms_layers[channel])
 
     def _locate_data(self):
-        times = wms_utils.available_times(self._time_extent(), self.start, self.end)
-        if self.time_step is not None:
-            times = times[times == times.floor(self.time_step)]
-        if times.empty:
-            raise FileNotFoundError(
-                f"No image of {self.layer} between {self.start} and {self.end}."
-            )
-        self.available = times
+        self._capabilities = None
+        self.available = {}
+        for channel, layer in self.wms_layers.items():
+            times = wms_utils.available_times(self._time_extent(channel), self.start, self.end)
+            if self.time_step is not None:
+                times = times[times == times.floor(self.time_step)]
+            if times.empty:
+                raise FileNotFoundError(f"No image of {layer} between {self.start} and {self.end}.")
+            self.available[channel] = times
 
     def _download_data(self):
-        os.makedirs(self.output_path, exist_ok=True)
         bounds = (self.min_lon, self.min_lat, self.max_lon, self.max_lat)
-        self.path, kept = [], []
-        downloaded = 0
-        self.info(f"🛰️ {len(self.available)} image(s) of {self.layer}...")
-        for time in tqdm.tqdm(self.available, disable=not self.verbose):
-            path = os.path.join(self.output_path, f"{time:%Y%m%dT%H%M%S}.png")
-            if not os.path.exists(path):
-                content = wms_utils.get_map(self.url, self.layer, bounds, self.size, time, self.style)
-                if not image_utils.decode_png(content)[..., 3].any():
-                    # Not produced yet, or nothing over the domain: not
-                    # cached, so that a later run asks again
-                    status(f"⚠️ Empty image of {self.layer} at {time:%Y-%m-%d %H:%M}, left out.")
-                    continue
-                with open(path + ".part", "wb") as file:
-                    file.write(content)
-                os.replace(path + ".part", path)
-                downloaded += 1
-            self.path.append(path)
-            kept.append(time)
-        if not kept:
-            raise FileNotFoundError(f"Every image of {self.layer} is empty over the domain.")
-        self.available = pd.DatetimeIndex(kept)
-        self.info(f"✅ {downloaded} downloaded, {len(self.path) - downloaded} already there.")
+        kept = {}
+        for channel, layer in self.wms_layers.items():
+            folder = self._folder(channel)
+            os.makedirs(folder, exist_ok=True)
+            kept[channel] = {}
+            downloaded = 0
+            self.info(f"🛰️ {len(self.available[channel])} image(s) of {layer}...")
+            for time in tqdm.tqdm(self.available[channel], disable=not self.verbose):
+                path = os.path.join(folder, f"{time:%Y%m%dT%H%M%S}.png")
+                if not os.path.exists(path):
+                    content = wms_utils.get_map(self.url, layer, bounds, self.size, time, self.style)
+                    if not image_utils.decode_png(content)[..., 3].any():
+                        # Not produced yet, or nothing over the domain: not
+                        # cached, so that a later run asks again
+                        status(f"⚠️ Empty image of {layer} at {time:%Y-%m-%d %H:%M}, left out.")
+                        continue
+                    with open(path + ".part", "wb") as file:
+                        file.write(content)
+                    os.replace(path + ".part", path)
+                    downloaded += 1
+                kept[channel][time] = path
+            if not kept[channel]:
+                raise FileNotFoundError(f"Every image of {layer} is empty over the domain.")
+            self.info(f"✅ {downloaded} downloaded, {len(kept[channel]) - downloaded} already there.")
+
+        # The times every channel has
+        times = sorted(set.intersection(*(set(paths) for paths in kept.values())))
+        if not times:
+            raise FileNotFoundError(f"The channels of {self.name} have no time in common.")
+        self.times_kept = pd.DatetimeIndex(times)
+        self.path = {channel: [paths[time] for time in times] for channel, paths in kept.items()}
 
     def _read_data(self):
-        frames = []
-        for path in self.path:
-            with open(path, "rb") as file:
-                frames.append(image_utils.decode_png(file.read())[::-1])  # south first
         latitude, longitude = self.grid()
+        variables = {}
+        for channel, paths in self.path.items():
+            frames = []
+            for path in paths:
+                with open(path, "rb") as file:
+                    frames.append(image_utils.decode_png(file.read())[::-1])  # south first
+            variables[f"rgba_{channel}"] = (("valid_time", "latitude", "longitude", "band"), np.stack(frames))
         self.data = xr.Dataset(
-            {"rgba": (("valid_time", "latitude", "longitude", "band"), np.stack(frames))},
+            variables,
             coords={
-                "valid_time": np.array([time.timestamp() for time in self.available]),
+                "valid_time": np.array([time.timestamp() for time in self.times_kept]),
                 "latitude": latitude,
                 "longitude": longitude,
                 "band": list("RGBA"),
@@ -845,24 +973,27 @@ class WMSImageryData(SatelliteImagery):
         )
 
     def _convert_data(self):
-        if self.palette is None:
-            status(f"⚠️ No palette for {self.layer}: its pixels are in rgba only.")
-            return
-        self.data["bt"] = (
-            ("valid_time", "latitude", "longitude"),
-            image_utils.invert_palette(self.data["rgba"].values, *self.palette, secondary=self.secondary).astype(np.float32),
-        )
+        for channel, layer in self.wms_layers.items():
+            palette = self.palettes[channel]
+            if palette is None:
+                status(f"⚠️ No palette for {layer}: its pixels are in rgba_{channel} only.")
+                continue
+            values = image_utils.invert_palette(
+                self.data[f"rgba_{channel}"].values, *palette, secondary=self.secondary[channel],
+            )
+            self.data[IMAGERY_CHANNELS[channel]] = (("valid_time", "latitude", "longitude"), values.astype(np.float32))
 
 
 class EUMETViewData(WMSImageryData):
     """
     Meteosat images of EUMETView, the map service of EUMETSAT.
 
-    No account. The default layer is MTG FCI IR 10.5 um, every 10 min
+    No account. The server layers are those of MTG FCI
+    (`EUMETVIEW_LAYERS`): IR 10.5 um and visible 0.6 um, every 10 min
     since 2024-09, a few minutes after the scan, covering 70 deg around
-    the satellite at 0 deg. Its grey levels are turned into brightness
-    temperatures with `EUMETVIEW_CALIBRATIONS`; a layer without one
-    gives `rgba` only.
+    the satellite at 0 deg. Their grey levels are turned into values
+    with `EUMETVIEW_CALIBRATIONS`; a layer without one gives its pixels
+    only.
 
     Args:
         name: Name of this object, used in status messages.
@@ -875,8 +1006,15 @@ class EUMETViewData(WMSImageryData):
         resolution: Pixel size, in degrees.
         time_step: Keep only the times on multiples of this step, None
             for every image.
-        layer: Name of the EUMETView layer.
+        channels: Channel or channels, "ir", "visible".
+        wms_layers: Server layer of each channel, None for
+            `EUMETVIEW_LAYERS`.
         verbose: Whether to report progress.
+
+    Example:
+        meteosat = EUMETViewData("meteosat", start, end,
+                                 -20, 10, 40, 55,
+                                 channels=["ir", "visible"])
     """
 
     def __init__(
@@ -890,14 +1028,18 @@ class EUMETViewData(WMSImageryData):
         max_lat: float = 90.,
         resolution: float = 0.05,
         time_step: Optional[str] = None,
-        layer: str = "mtg_fd:ir105_hrfi",
+        channels: Union[str, Sequence[str]] = "ir",
+        wms_layers: Optional[dict] = None,
         verbose: bool = True,
     ):
-        calibration = EUMETVIEW_CALIBRATIONS.get(layer)
-        palette = None if calibration is None else image_utils.linear_gray_palette(*calibration)
+        wms_layers = EUMETVIEW_LAYERS | (wms_layers or {})
+        palettes = {
+            channel: image_utils.linear_gray_palette(*EUMETVIEW_CALIBRATIONS[layer])
+            for channel, layer in wms_layers.items() if layer in EUMETVIEW_CALIBRATIONS
+        }
         super().__init__(
-            name, EUMETVIEW_URL, layer, start, end, min_lon, max_lon, min_lat, max_lat,
-            resolution, time_step, palette, verbose=verbose,
+            name, EUMETVIEW_URL, wms_layers, start, end, min_lon, max_lon, min_lat, max_lat,
+            resolution, time_step, channels, palettes, verbose=verbose,
         )
 
 
@@ -905,18 +1047,19 @@ class GIBSData(WMSImageryData):
     """
     GOES and Himawari images of NASA GIBS.
 
-    GIBS (Global Imagery Browse Services) needs no account. The default
-    layer is GOES-East ABI band 13 (10.3 um), every 10 min over about
-    90 days, at 2 km, with an hour or so of delay; GIBS has no
-    Meteosat. The published colormap of the layer
-    (`GIBS_COLORMAPS`) turns its colours into brightness temperatures.
-    GIBS resamples with interpolation, so a tenth of the pixels blend
-    two colours: exact enough on the grey part of the scale (above
-    about 250 K), approximate on the coloured cloud tops. The colormap
-    draws 195-203 K in the greys of 261-328 K: such pixels take the
-    reading closest to their neighbours (`GIBS_SECONDARY_BELOW`). The
-    times come from the DescribeDomains of GIBS, more up to date than
-    its WMS capabilities.
+    GIBS (Global Imagery Browse Services) needs no account. The server
+    layers are those of GOES-East ABI (`GIBS_LAYERS`): band 13 (IR 10.3
+    um, 2 km) and band 2 (visible 0.64 um, 1 km), every 10 min over
+    about 90 days, with an hour or so of delay; GIBS has no Meteosat.
+    The visible layers are grey levels, read from 0 to 1. The published
+    colormap of an IR layer (`GIBS_COLORMAPS`) turns its colours into
+    brightness temperatures. GIBS resamples with interpolation, so a
+    tenth of the pixels blend two colours: exact enough on the grey
+    part of the scale (above about 250 K), approximate on the coloured
+    cloud tops. The colormap draws 195-203 K in the greys of 261-328 K:
+    such pixels take the reading closest to their neighbours
+    (`GIBS_SECONDARY_BELOW`). The times come from the DescribeDomains
+    of GIBS, more up to date than its WMS capabilities.
 
     Args:
         name: Name of this object, used in status messages.
@@ -929,7 +1072,9 @@ class GIBSData(WMSImageryData):
         resolution: Pixel size, in degrees.
         time_step: Keep only the times on multiples of this step, None
             for every image.
-        layer: Name of the GIBS layer.
+        channels: Channel or channels, "ir", "visible".
+        wms_layers: Server layer of each channel, None for
+            `GIBS_LAYERS`; GOES-West or Himawari for example.
         verbose: Whether to report progress.
     """
 
@@ -944,59 +1089,76 @@ class GIBSData(WMSImageryData):
         max_lat: float = 90.,
         resolution: float = 0.05,
         time_step: Optional[str] = None,
-        layer: str = "GOES-East_ABI_Band13_Clean_Infrared",
+        channels: Union[str, Sequence[str]] = "ir",
+        wms_layers: Optional[dict] = None,
         verbose: bool = True,
     ):
+        wms_layers = GIBS_LAYERS | (wms_layers or {})
+        palettes = {"visible": image_utils.linear_gray_palette(0.0, 1.0 / 255.0)}
         super().__init__(
-            name, GIBS_URL, layer, start, end, min_lon, max_lon, min_lat, max_lat,
-            resolution, time_step, verbose=verbose,
+            name, GIBS_URL, wms_layers, start, end, min_lon, max_lon, min_lat, max_lat,
+            resolution, time_step, channels, palettes, verbose=verbose,
         )
 
-    def _time_extent(self) -> list[str]:
+    def _time_extent(self, channel: str) -> list[str]:
         """
-        Time extent of the layer over the period, from DescribeDomains.
+        Time extent of a server layer, from GIBS DescribeDomains.
 
         Falls back on the capabilities, which may lag, if it fails or if
         the period is open.
+
+        Args:
+            channel: "ir" or "visible".
 
         Returns:
             The values of its time dimension.
         """
         if self.start is None or self.end is None:
-            return super()._time_extent()
+            return super()._time_extent(channel)
         try:
-            return wms_utils.gibs_time_domain(self.layer, self.start, self.end)
+            return wms_utils.gibs_time_domain(self.wms_layers[channel], self.start, self.end)
         except requests.RequestException as error:
             status(f"⚠️ GIBS DescribeDomains failed ({error}), reading the capabilities.")
-            return super()._time_extent()
+            return super()._time_extent(channel)
 
     def _locate_data(self):
         super()._locate_data()
-        colormap = GIBS_COLORMAPS.get(self.layer)
-        if colormap is not None and self.palette is None:
+        for channel, layer in self.wms_layers.items():
+            colormap = GIBS_COLORMAPS.get(layer)
+            if colormap is None or self.palettes[channel] is not None:
+                continue
             response = requests.get(GIBS_COLORMAP_URL.format(colormap), timeout=wms_utils.TIMEOUT)
             response.raise_for_status()
-            self.palette = wms_utils.parse_gibs_colormap(response.text)
-            colours, values = self.palette
+            colours, values = wms_utils.parse_gibs_colormap(response.text)
+            self.palettes[channel] = (colours, values)
             grey = np.ptp(colours.astype(int), axis=1) == 0
-            self.secondary = grey & (values < GIBS_SECONDARY_BELOW)
+            self.secondary[channel] = grey & (values < GIBS_SECONDARY_BELOW)
 
 
 class GeostationaryImagery(SatelliteImagery):
     """
-    One continuous IR image from several geostationary satellites.
+    One continuous image from several geostationary satellites.
 
-    Each pixel is taken from the satellite that sees it the most
-    directly (the smallest angle from its sub-satellite point), and the
-    images are blended over a few degrees along the seams, so that the
-    layer has no visible edge. Where a satellite has no value, outside
-    its disk say, the others fill in. By default, Meteosat (EUMETView,
-    MTG FCI at 0 deg) and GOES-East (GIBS, at 75.2 W) cover the North
-    Atlantic from the Americas to Europe, every 10 min.
+    The channels are chosen as the variables of a forecast: "ir" or
+    "visible", or both (`IMAGERY_CHANNELS`). Each pixel is
+    taken from the satellite that sees it the most directly (the
+    smallest angle from its sub-satellite point), and the images are
+    blended over a few degrees along the seams, so that the layer has
+    no visible edge. Where a satellite has no value, outside its disk
+    say, the others fill in. By default, Meteosat (EUMETView, MTG FCI
+    at 0 deg) and GOES-East (GIBS, at 75.2 W) cover the North Atlantic
+    from the Americas to Europe, every 10 min.
 
-    `data` then holds `bt` on the times of every source (`complete`) or
-    of any, and `weight`, the share of each source in each pixel. A
-    source that fails to load is left out, with a warning.
+    Infrared images agree as they are, in K. Visible ones do not: the
+    brightness of a scene depends on the angles of the sun and of the
+    satellite, so each image of the other sources is put on the levels
+    of the first one along the seam (`match`,
+    `image_utils.quantile_fit`), giving `gain` and `offset`.
+
+    `data` then holds the quantity of each channel (`variables`) on the
+    times of every source (`complete`) or of any, `weight`, the share
+    of each source in each pixel, and `gain` and `offset`. A source
+    that fails to load is left out, with a warning.
 
     Args:
         name: Name of this object, used in status messages.
@@ -1009,19 +1171,24 @@ class GeostationaryImagery(SatelliteImagery):
         resolution: Pixel size, in degrees.
         time_step: Keep only the times on multiples of this step, None
             for every image.
+        channels: Channel or channels: "ir" (day and night), "visible"
+            (by day).
         sources: `WMSImageryData` objects to combine, None for
-            EUMETView and GIBS over this domain and period.
+            EUMETView and GIBS over this domain, period and channels.
         seam_width: Width of the blending along the seams, in degrees of
             viewing angle.
         complete: Keep only the times every source has, so that no
             image misses a part; else the times any source has.
+        match: Match the levels of the sources along the seam, None for
+            the visible only.
         verbose: Whether to report progress.
 
     Example:
         clouds = GeostationaryImagery("clouds", start, end,
-                                      -75, 5, 35, 60)
+                                      -75, 5, 35, 60,
+                                      channels=["ir", "visible"])
         clouds.load_data()
-        rgba = clouds.image(-1, transparent_above=270)
+        rgba = clouds.image(-1, "ir", colormap="blue")
     """
 
     def __init__(
@@ -1035,36 +1202,50 @@ class GeostationaryImagery(SatelliteImagery):
         max_lat: float = 90.,
         resolution: float = 0.05,
         time_step: Optional[str] = None,
+        channels: Union[str, Sequence[str]] = "ir",
         sources: Optional[Sequence[WMSImageryData]] = None,
         seam_width: float = 2.0,
         complete: bool = True,
+        match: Optional[bool] = None,
         verbose: bool = True,
     ):
-        super().__init__(name, start, end, min_lon, max_lon, min_lat, max_lat, resolution, verbose)
+        super().__init__(name, start, end, min_lon, max_lon, min_lat, max_lat, resolution, channels, verbose)
 
         if sources is None:
             common = dict(
                 start=start, end=end, min_lon=min_lon, max_lon=max_lon, min_lat=min_lat,
-                max_lat=max_lat, resolution=resolution, time_step=time_step, verbose=verbose,
+                max_lat=max_lat, resolution=resolution, time_step=time_step, channels=self.channels,
+                verbose=verbose,
             )
             sources = [EUMETViewData(f"{name}_eumetview", **common), GIBSData(f"{name}_gibs", **common)]
         self.sources = list(sources)
+        for channel in self.channels:
+            if not any(channel in source.channels for source in self.sources):
+                raise ValueError(f"No source gives the {channel} channel.")
         self.seam_width = seam_width
         self.complete = complete
+        if match is None:
+            self.matched = [channel for channel in self.channels if channel == "visible"]
+        else:
+            self.matched = list(self.channels) if match else []
 
     def _download_data(self):
         loaded = []
         for index, source in enumerate(self.sources):
             try:
                 source.load_data()
-                if "bt" not in source.data:
-                    raise ValueError(f"{source.layer} has no brightness temperature.")
+                missing = [variable for variable in source.variables if variable not in source.data]
+                if missing:
+                    raise ValueError(f"{source.name} has no {missing}.")
             except Exception as error:
                 status(f"⚠️ Imagery from {source.name} left out ({type(error).__name__}: {error}).")
                 if not loaded and index == len(self.sources) - 1:
                     raise
                 continue
             loaded.append(source)
+        for channel in self.channels:
+            if not any(channel in source.channels for source in loaded):
+                raise FileNotFoundError(f"No source of the {channel} channel could be loaded.")
         self.loaded = loaded
 
     def _convert_data(self):
@@ -1075,13 +1256,6 @@ class GeostationaryImagery(SatelliteImagery):
         times = np.array(sorted(times))
 
         latitude, longitude = self.grid()
-        layers = []
-        for source in self.loaded:
-            bt = source.data["bt"].reindex(valid_time=times)
-            if bt.sizes["latitude"] != latitude.size or not np.allclose(bt["longitude"], longitude):
-                bt = bt.interp(latitude=latitude, longitude=longitude, method="nearest")
-            layers.append(bt.values)
-
         lat, lon = np.meshgrid(latitude, longitude, indexing="ij")
         angles = [
             np.zeros_like(lat) if source.subsatellite_lon is None
@@ -1090,19 +1264,48 @@ class GeostationaryImagery(SatelliteImagery):
         ]
         weights = image_utils.softmin_weights(angles, self.seam_width)
 
+        gain = np.ones((len(self.channels), len(self.loaded), len(times)))
+        offset = np.zeros_like(gain)
+        variables = {}
+        for row, channel in enumerate(self.channels):
+            variable = IMAGERY_CHANNELS[channel]
+            images = []
+            for source in self.loaded:
+                if variable not in source.data:
+                    images.append(np.full((len(times), latitude.size, longitude.size), np.nan))
+                    continue
+                values = source.data[variable].reindex(valid_time=times)
+                if values.sizes["latitude"] != latitude.size or not np.allclose(values["longitude"], longitude):
+                    values = values.interp(latitude=latitude, longitude=longitude, method="nearest")
+                images.append(values.values.astype(float))
+
+            if channel in self.matched:
+                for index in range(1, len(images)):
+                    seam = (weights[0] >= MATCH_WEIGHT) & (weights[index] >= MATCH_WEIGHT)
+                    for step in range(len(times)):
+                        # A dark reference (night) has nothing to match
+                        gain[row, index, step], offset[row, index, step] = image_utils.quantile_fit(
+                            images[index][step], images[0][step], seam, min_spread=0.02,
+                        )
+                    images[index] = gain[row, index][:, None, None] * images[index] + offset[row, index][:, None, None]
+
+            variables[variable] = (
+                ("valid_time", "latitude", "longitude"),
+                image_utils.blend(images, weights[:, None]).astype(np.float32),
+            )
+
         self.data = xr.Dataset(
-            {
-                "bt": (
-                    ("valid_time", "latitude", "longitude"),
-                    image_utils.blend(layers, weights[:, None]).astype(np.float32),
-                ),
+            variables | {
                 "weight": (("source", "latitude", "longitude"), weights.astype(np.float32)),
+                "gain": (("channel", "source", "valid_time"), gain),
+                "offset": (("channel", "source", "valid_time"), offset),
             },
             coords={
                 "valid_time": times,
                 "latitude": latitude,
                 "longitude": longitude,
                 "source": [source.name for source in self.loaded],
+                "channel": self.channels,
             },
         )
 

@@ -240,7 +240,7 @@ Everything goes to `~/data/`:
 
 | Folder | Holds |
 | --- | --- |
-| `topo/`, `cmems/`, `cds/`, `eumetsat/`, `iip/` | Downloads: relief, currents, reanalysis, satellite data, iceberg limit |
+| `topo/`, `cmems/`, `cds/`, `eumetsat/`, `wms/`, `iip/` | Downloads: relief, currents, reanalysis, satellite data, satellite images (by server, layer and box), iceberg limit |
 | `route_library/`, `route_sets/`, `passage_plans/`, `exclusion_zones/` | Your saved routes, plans and zones |
 | `routes/` | Reports saved by `ReportCollection.save`, read by the viewer |
 
