@@ -12,7 +12,7 @@ dependencies:
   - cython
   - pip
   - pip:
-      - casadi
+      - casadi>=3.7
       - xarray
       - geojson
       - pillow

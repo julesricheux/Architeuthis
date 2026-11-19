@@ -187,6 +187,7 @@ and this project follows Semantic Versioning https://semver.org
 - `plot_report` draws `total_power`, else `hourly_consumption`, on its power panel when the report has no `bhp`, and says so on the sails panel when the report has no `sails_contribution`.
 
 ### Changed
+- casadi is required from 3.7 (`casadi>=3.7` in `pyproject.toml`, `environment.yaml` and `requirements.txt`). 3.7 and 3.8 are both supported.
 - `verbose` now controls the information messages of every object (📦 reading, ⬇️ downloading, ➕ added, ➖ removed, 🟦 already there, the routing banner...): `verbose=False` silences them through the new `ArchiteuthisObject.info`. Warnings (⚠️) and errors (💔) are still always reported, including the ⚠️ of `Topography` about a skipped exclusion zone, formerly hidden by `verbose=False`. `ReportCollection.save` takes `verbose` too.
 - `max_bhp` and `sails_contribution` are no longer required: a vessel needs only a consumption model, and they are computed and reported when listed in `variables`, as any other vessel model: `RoutingAnalysis(..., variables=["max_bhp", "sails_contribution"])`. The examples and the quick start list them.
 - The default constraints limit `max_bhp` when it is in the variables, else `bhp`, else `total_power`, to `max_power`, and only if it is not None. `Vessel(max_power=None)` gives no power limit.
@@ -205,6 +206,8 @@ and this project follows Semantic Versioning https://semver.org
 - `report["avg_bhp"]`, `ctx["avg_bhp"]`, `report.get("avg_bhp")` and `"avg_bhp" in report` still give the brake power, with a `DeprecationWarning`: use `bhp`.
 
 ### Fixed
+- `requirements.txt` still pinned `dash==3.2.0`, unsupported since 0.3, and lacked `keyring`: it now asks for `dash==4.5.0` and `dash-mantine-components>=3,<4`, as `environment.yaml`, and `keyring`.
+- With casadi 3.8, a vessel table optimized without wave or atmospheric forecast failed with a CasADi reshape error: the calm fields were DM zeros, which NumPy functions turn into NumPy columns from casadi 3.8, broadcast to a square by the table query. They are MX zeros for a symbolic query.
 - `WAVE_COMPONENTS_OFFSET` is back to 1e-2 m² from 0: the wave direction had no gradient where the wave components vanish (a calm sea, land cells, the steps past the forecast horizon), so IPOPT stopped at its first iteration with `Invalid_Number_Detected` for any vessel model taking `hs` or `wa`, such as a polar table.
 
 ---

@@ -650,7 +650,7 @@ class TestCalmForecast:
             assert calm.input_names(key) == ["valid_time", "latitude", "longitude"]
             assert np.array(calm(key, query)).ravel().tolist() == [0.0, 0.0, 0.0]
 
-    def test_its_fields_are_numeric_constants_of_a_symbolic_query(self):
+    def test_its_fields_are_symbolic_constants_of_a_symbolic_query(self):
         import casadi as ca
 
         calm = forecast_module.calm_forecast("atmosphere")
@@ -660,6 +660,9 @@ class TestCalmForecast:
         direction = ca.atan2(u10, calm("v10", {"valid_time": 0.0, "latitude": latitude, "longitude": latitude}))
 
         assert u10.shape == (4, 1)
+        # Symbolic, so that the routing does not hand DM to NumPy functions
+        assert isinstance(u10, ca.MX)
+        assert float(ca.evalf(u10[0])) == 0.0
         assert ca.jacobian(direction, latitude).nnz() == 0
 
     def test_other_models_can_be_added(self):

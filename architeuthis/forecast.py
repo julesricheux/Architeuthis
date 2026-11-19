@@ -491,17 +491,21 @@ ENVIRONMENT_FIELDS = {
 
 def _calm_field(x: dict):
     """
-    Zero at each point of a query, as a numeric column.
+    Zero at each point of a query, as a column.
 
-    It does not depend on the query symbolically, so the routing takes
-    no derivative of it, even where the direction of a zero vector, the
-    wind or the waves, is undefined.
+    The zeros do not depend on the query, so the routing takes no
+    derivative of them, even where the direction of a zero vector, the
+    wind or the waves, is undefined. They are MX for a symbolic query,
+    so that the routing computes with CasADi only: NumPy functions turn
+    DM into NumPy arrays from casadi 3.8, which a table query would then
+    broadcast to a square. DM otherwise.
     """
     size = max(
         value.shape[0] if isinstance(value, (ca.MX, ca.SX, ca.DM)) else int(np.size(value))
         for value in x.values()
     )
-    return ca.DM.zeros(size, 1)
+    symbolic = next((value for value in x.values() if isinstance(value, (ca.MX, ca.SX))), None)
+    return ca.DM.zeros(size, 1) if symbolic is None else type(symbolic).zeros(size, 1)
 
 
 def calm_forecast(
