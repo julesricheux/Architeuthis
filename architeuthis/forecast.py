@@ -525,7 +525,7 @@ def calm_forecast(
         source: "atmosphere" (`u10`, `v10`), "wave" (`swh`, `uw`, `vw`)
             or "current" (`uo`, `vo`).
         name: Name of the forecast, by default `calm_<source>`.
-        verbose: Whether to report the models added.
+        verbose: Whether to report progress, as for any forecast.
 
     Returns:
         A `Forecast` whose `data` is None.

@@ -189,6 +189,7 @@ and this project follows Semantic Versioning https://semver.org
 ### Changed
 - `max_bhp` and `sails_contribution` are no longer required: a vessel needs only a consumption model, and they are computed and reported when listed in `variables`, as any other vessel model: `RoutingAnalysis(..., variables=["max_bhp", "sails_contribution"])`. The examples and the quick start list them.
 - The default constraints limit `max_bhp` when it is in the variables, else `bhp`, else `total_power`, to `max_power`, and only if it is not None. `Vessel(max_power=None)` gives no power limit.
+- `examples/wind_only_routing.py` routes with the IFS wind alone and a dummy function polar, the waves and the current left out.
 - `passage_planning.py`, `function_polar_routing.py` and `vessel_definitions.py` leave out the current (and the waves for the last one) instead of filling a forecast with zeros.
 - The fuel is computed as `sum(hourly_consumption * dt) / 1e3`, which gives the same value as before for a `bhp` model.
 - The brake power is `bhp` in reports, in `ctx` and in the default table columns, the key of its vessel model, instead of `avg_bhp`. The y label of `plot_power_and_weather` is `BHP / kW`. Saved reports with `avg_bhp` are read with `bhp`.

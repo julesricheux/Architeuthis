@@ -65,7 +65,7 @@ The environment may be incomplete. `atmosphere`, `wave` and `current` are option
 analysis = RoutingAnalysis("analysis", vessel, voyage, atmosphere, topography=topography)  # no waves, no current
 ```
 
-`examples/passage_planning.py` and `examples/function_polar_routing.py` route without current, and `examples/vessel_definitions.py` with the wind only.
+`examples/passage_planning.py` and `examples/function_polar_routing.py` route without current, and `examples/wind_only_routing.py` and `examples/vessel_definitions.py` with the wind only.
 
 The wave direction is not interpolated itself, because it jumps from 360 to 0 deg. `wave.add_wave_components()` adds `uw = -swh**2 * sin(mwd)` and `vw = -swh**2 * cos(mwd)` to the data, the components of where the waves go weighted by their energy, and the routing takes the direction back from them, as for the wind. The weight lets the larger seas, not calm cells or land, set the direction between grid points. `swh` is still interpolated on its own for the height. For GFS, whose direction is `dirpw`, call `add_wave_components(mwd_dim="dirpw")`. The routing needs `swh`, `uw` and `vw`, and reports `mwd` as before.
 
