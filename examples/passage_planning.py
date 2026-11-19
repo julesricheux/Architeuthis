@@ -65,11 +65,10 @@ print(f"Remaining {rest_of_voyage.distance:.0f} nm at {rest_of_voyage.transit_so
 
 #%% 3. OPTIMIZE WITH IFS AND STORE THE PASSAGE PLAN
 
-import xarray as xr
 
 from architeuthis.core import DEFAULT_SOLVER_OPTIONS, RoutingAnalysis
 from architeuthis.icebergs import berg_zone
-from architeuthis.forecast import DeterministicHerbieForecast, Forecast, Topography
+from architeuthis.forecast import DeterministicHerbieForecast, Topography
 from architeuthis.vessel import Vessel
 
 domain = {"min_lon": -60.0, "max_lon": 0.0, "min_lat": 38.0, "max_lat": 56.0}
@@ -92,7 +91,7 @@ def herbie_fields(name, keys, wave_direction=None, **herbie):
 def build_vessel(name, polar=POLAR, **performance):
     vessel = Vessel(name, filepath=polar, **performance)
     vessel.load_data()
-    for key in ("bhp", "max_bhp", "sails_contribution"):
+    for key in ("bhp", "max_bhp"):
         vessel.add_interpolator(key, "stw", "tws", "twa", "hs", "wa", method="linear")
     return vessel
 
@@ -101,13 +100,9 @@ ifs_wind = herbie_fields("wind_ifs", {"u10": "u10", "v10": "v10"}, model="ifs", 
 WAVE_KEYS = {"swh": "swh", "uw": "uw", "vw": "vw"}
 
 ifs_wave = herbie_fields("wave_ifs", WAVE_KEYS, wave_direction="mwd", model="ifs", product="wave", regex=r":swh:|:mwd:")
-# Calm water on the IFS grid, so that no credentials are needed. For real currents use
-# CopernicusForecast (Mercator SMOC, CMEMS credentials) as in post_leg_rewind.py.
-calm = xr.zeros_like(ifs_wind.data["u10"])
-current = Forecast("calm_current", date=None, fxx=None, **domain)
-current.data = xr.Dataset({"uo": calm, "vo": calm})
-for key in ("uo", "vo"):
-    current.add_interpolator(key, "valid_time", "latitude", "longitude")
+# No current, so that no credentials are needed: the routing takes it as zero. For real
+# currents use CopernicusForecast (Mercator SMOC, CMEMS credentials) as in post_leg_rewind.py.
+current = None
 
 # Your exclusion zones: lists of [lat, lon] points (or ExclusionZone objects, see architeuthis.exclusion).
 north_america = [
@@ -162,9 +157,10 @@ topography = Topography("topography", exclusion_zones=exclusion_zones, **domain)
 topography.load_data()
 topography.add_interpolator("distance_to_iso0", "lat", "lon", var_key="z")
 
-vessel = build_vessel("vessel", sfc=196.0, hotel_load=172.0, max_power=3e3)
+vessel = build_vessel("vessel", sfoc=196.0, hotel_load=172.0, max_power=3e3)
 
-analysis = RoutingAnalysis("ifs", vessel, rest_of_voyage, ifs_wind, ifs_wave, current, topography)
+# max_bhp is a vessel model that the fuel does not need: listed, the default constraints limit it
+analysis = RoutingAnalysis("ifs", vessel, rest_of_voyage, ifs_wind, ifs_wave, current, topography, variables=["max_bhp"])
 report = analysis.run(
     max_iter=1000,
     solver_options={"ipopt": DEFAULT_SOLVER_OPTIONS["ipopt"] | {"linear_solver": "mumps"}},
@@ -182,7 +178,7 @@ plan = PassagePlan.load(plans.path(plan.name))
 gfs_wind = herbie_fields("wind_gfs", {"u10": "u10", "v10": "v10"}, model="gfs", product="pgrb2.0p25", regex=r"(?:U|V)GRD:10 m")
 gfs_wave = herbie_fields("wave_gfs", WAVE_KEYS, wave_direction="dirpw", model="gfs_wave", product="global.0p25", regex=r":HTSGW:|:DIRPW:")
 
-heavier_hotel_load = build_vessel("vessel_hotel_250", sfc=196.0, hotel_load=250.0, max_power=3e3)
+heavier_hotel_load = build_vessel("vessel_hotel_250", sfoc=196.0, hotel_load=250.0, max_power=3e3)
 
 scenarios = {
     "IFS (as optimized)": (vessel, ifs_wind, ifs_wave),
@@ -191,7 +187,9 @@ scenarios = {
 }
 
 for label, (scenario_vessel, wind, wave) in scenarios.items():
-    evaluation = RoutingAnalysis(label, scenario_vessel, plan.voyage(), wind, wave, current, topography, verbose=False).evaluate(plan)
+    evaluation = RoutingAnalysis(
+        label, scenario_vessel, plan.voyage(), wind, wave, current, topography, variables=["max_bhp"], verbose=False,
+    ).evaluate(plan)
     print(
         f"{label:<24} {evaluation['fuel']:7.2f} t"
         f"  ({evaluation['fuel'] / report['fuel'] - 1:+.1%})"

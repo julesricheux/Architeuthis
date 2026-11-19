@@ -130,7 +130,7 @@ def get_steps(report, quantity):
     """
     Times and values of a per-segment quantity, to plot it as steps.
 
-    Use it with `plt.plot(*get_steps(report, "avg_bhp"))`: each value is
+    Use it with `plt.plot(*get_steps(report, "bhp"))`: each value is
     held from one node to the next.
     """
     tim = pd.to_datetime(report["tim"], unit="s")
@@ -282,7 +282,7 @@ def draw(reports, barbs=True, sails_threshold=None, ax=None, save_as=None, show=
         barbs: Whether wind barbs are drawn at segment centers.
         sails_threshold: If given, a dot marks the segments whose sails
             contribution is above this value, in %, instead of every
-            node.
+            node. It needs `sails_contribution` in every report.
         ax: Cartopy axes to draw in. By default, the current figure is
             cleared.
         save_as: File to write. Its extension gives the format, PDF if
@@ -303,7 +303,8 @@ def draw(reports, barbs=True, sails_threshold=None, ax=None, save_as=None, show=
     twd = [r["twd"] for r in reports]
 
     kwargs = dict(ax=ax, save_as=save_as, show=show)
-    if sails_threshold is not None:
+    # The sails contribution is in reports when the routing lists it in its variables
+    if sails_threshold is not None and all("sails_contribution" in r for r in reports):
         kwargs |= dict(sails_contribution=[r["sails_contribution"] for r in reports], sails_threshold=sails_threshold)
 
     return plot_route(lons, lats, clons, clats, tws, twd, barbs, **kwargs)
@@ -374,6 +375,16 @@ def _plot_gust_panel(ax, ctim, report, key, color, fill_alpha):
         ax.legend(loc="upper right", fontsize=8)
 
 
+def _not_in_report(ax, key):
+    """
+    Say on a panel that the report has no `key`.
+    """
+    ax.text(
+        0.5, 0.5, f"No {key} in this report: list it in the variables",
+        transform=ax.transAxes, ha="center", va="center", fontsize=8, color="grey",
+    )
+
+
 def plot_report(report, save_as=None, show=True, figsize=A4_PORTRAIT, dpi=300, ylim=None):
     """
     One route on an A4 page.
@@ -389,7 +400,7 @@ def plot_report(report, save_as=None, show=True, figsize=A4_PORTRAIT, dpi=300, y
     `sog`   `sog`                Speed over ground, kt
     `sails` `sails_contribution` Sails contribution, % (axis from 0
                                  to 100)
-    `bhp`   `avg_bhp`, `max_bhp` Average BHP, kW, with load
+    `bhp`   `bhp`, `max_bhp`     Average BHP, kW, with load
                                  fluctuations: dashed lines and a
                                  band at average +/- (max - average)
     `swh`   `swh`                Significant wave height, m
@@ -400,7 +411,10 @@ def plot_report(report, save_as=None, show=True, figsize=A4_PORTRAIT, dpi=300, y
     Values are per segment and drawn as steps centered on `ctim`. The
     time axis runs from the first to the last node of `tim`. The gust
     lines are left out if the report has no gust, which happens with
-    `options={}` without `"gust"` in `variables`.
+    `options={}` without `"gust"` in `variables`. Likewise, the load
+    fluctuations need `max_bhp` in `variables`, and the `sails` panel
+    `sails_contribution`, else it says so. Without `bhp`, the
+    `bhp` panel draws `total_power`, else `hourly_consumption`.
 
     Args:
         report: A report of `RoutingAnalysis.run` or `evaluate`, or the
@@ -446,21 +460,32 @@ def plot_report(report, save_as=None, show=True, figsize=A4_PORTRAIT, dpi=300, y
         panels["sog"].set_ylabel("SOG / kts")
 
         # 2. Sails contribution (0-100 %)
-        panels["sails"].step(ctim, onp.asarray(report["sails_contribution"], dtype=float), color=C2, **step_kw)
+        if "sails_contribution" in report:
+            panels["sails"].step(ctim, onp.asarray(report["sails_contribution"], dtype=float), color=C2, **step_kw)
+        else:
+            _not_in_report(panels["sails"], "sails_contribution")
         panels["sails"].set_ylabel("Sails contribution / %")
         panels["sails"].set_ylim(0., 100.)
 
-        # 3. BHP with load fluctuations
-        avg_bhp = onp.asarray(report["avg_bhp"], dtype=float)
-        max_bhp = onp.asarray(report["max_bhp"], dtype=float)
-        osc = max_bhp - avg_bhp
-        panels["bhp"].step(ctim, avg_bhp, color=C0, label="Average BHP", **step_kw)
-        panels["bhp"].step(ctim, max_bhp, color=C1, ls="--", lw=0.8, label="Load fluctuations", **step_kw)
-        panels["bhp"].step(ctim, avg_bhp - osc, color=C1, ls="--", lw=0.8, **step_kw)
-        panels["bhp"].fill_between(ctim, avg_bhp - osc, avg_bhp + osc, step="mid", alpha=0.15, color=C1)
-        panels["bhp"].set_ylabel("BHP / kW")
+        # 3. BHP with load fluctuations, else the power or the consumption
+        if "bhp" in report:
+            bhp = onp.asarray(report["bhp"], dtype=float)
+            panels["bhp"].step(ctim, bhp, color=C0, label="Average BHP", **step_kw)
+            if "max_bhp" in report:
+                max_bhp = onp.asarray(report["max_bhp"], dtype=float)
+                osc = max_bhp - bhp
+                panels["bhp"].step(ctim, max_bhp, color=C1, ls="--", lw=0.8, label="Load fluctuations", **step_kw)
+                panels["bhp"].step(ctim, bhp - osc, color=C1, ls="--", lw=0.8, **step_kw)
+                panels["bhp"].fill_between(ctim, bhp - osc, bhp + osc, step="mid", alpha=0.15, color=C1)
+            panels["bhp"].set_ylabel("BHP / kW")
+            panels["bhp"].legend(loc="upper right", fontsize=8)
+        elif "total_power" in report:
+            panels["bhp"].step(ctim, onp.asarray(report["total_power"], dtype=float), color=C0, **step_kw)
+            panels["bhp"].set_ylabel("Total power / kW")
+        else:
+            panels["bhp"].step(ctim, onp.asarray(report["hourly_consumption"], dtype=float), color=C0, **step_kw)
+            panels["bhp"].set_ylabel("Consumption / kg/h")
         panels["bhp"].set_ylim(0., None)
-        panels["bhp"].legend(loc="upper right", fontsize=8)
 
         # 4. SWH
         panels["swh"].step(ctim, onp.asarray(report["swh"], dtype=float), color=C3, **step_kw)
@@ -558,7 +583,7 @@ def plot_variable(reports, variable, unit="", labels=None, ylim=(0., None), lege
     Args:
         reports: The reports to compare, one viridis color each.
         variable: Report entry, for example `sog`, `tws`, `swh`,
-            `sails_contribution`, `avg_bhp`.
+            `sails_contribution`, `bhp`.
         unit: Unit shown in the axis label.
         labels: Legend text by `init_fac`, for example `{-1.: "North",
             0.: "Ortho", 1.: "South"}`.
@@ -602,7 +627,7 @@ def plot_power_and_weather(reports, labels=None, max_bhp=False, figsize=(12, 10)
         labels: Legend text by `init_fac`, for example `{-1.: "North",
             0.: "Ortho", 1.: "South"}`.
         max_bhp: Whether to add `max_bhp` as dashed lines on the top
-            panel.
+            panel, for the reports that have it.
         figsize, dpi: Size in inches and resolution.
         save_as: File to write. Its extension gives the format, PDF if
             it has none.
@@ -618,13 +643,13 @@ def plot_power_and_weather(reports, labels=None, max_bhp=False, figsize=(12, 10)
         fig, axes = plt.subplots(nrows=3, ncols=1, figsize=figsize, dpi=dpi, sharex=True)
         for color, report in zip(colors, reports):
             label = labels.get(report["init_fac"], f"Route {report.get('init_fac')}")
-            axes[0].plot(*get_steps(report, "avg_bhp"), label=label, color=color)
-            if max_bhp:
+            axes[0].plot(*get_steps(report, "bhp"), label=label, color=color)
+            if max_bhp and "max_bhp" in report:
                 axes[0].plot(*get_steps(report, "max_bhp"), ls="--", color=color)
             axes[1].plot(*get_steps(report, "swh"), label=label, color=color)
             axes[2].plot(*get_steps(report, "tws"), label=label, color=color)
 
-        axes[0].set_ylabel("AVG_BHP / kW")
+        axes[0].set_ylabel("BHP / kW")
         axes[0].legend(loc="upper right")
         axes[1].set_ylabel("SWH / m")
         axes[2].set_ylabel("TWS / kts")
@@ -648,7 +673,7 @@ def plot_quantiles(reports, variable, unit="", prefix="", title=None, ylim=None,
 
     Args:
         reports: Reports on the same `ctim`, typically ensemble members.
-        variable: Report entry, for example `avg_bhp`, `tws`, `swh`,
+        variable: Report entry, for example `bhp`, `tws`, `swh`,
             `sog`.
         unit: Unit shown in the axis label.
         prefix: Text before the band labels, for example `"IFS ensemble
@@ -739,19 +764,20 @@ def plot_ensemble_along_route(report, atmosphere, wave, ylim=None, figsize=(10, 
         "tws": (onp.sqrt(u10**2. + v10**2.) * 3600. / 1852., "TWS / kts"),
     }
 
-    avg_bhp = onp.asarray(report["avg_bhp"], dtype=float)
-    max_bhp = onp.asarray(report["max_bhp"], dtype=float)
-    osc = max_bhp - avg_bhp
+    bhp = onp.asarray(report["bhp"], dtype=float)
 
     with plot_style():
         fig, axes = plt.subplots(nrows=3, ncols=1, figsize=figsize, sharex=True)
         panels = dict(zip(("bhp", "swh", "tws"), axes))
 
         C0, C1, C2 = (to_rgba(f"C{i}") for i in range(3))
-        panels["bhp"].plot(ctim, avg_bhp, color=C0, label="Average BHP")
-        panels["bhp"].plot(ctim, max_bhp, color=C1, ls="--", label="Load fluctuations")
-        panels["bhp"].plot(ctim, avg_bhp - osc, color=C2, ls="--")
-        panels["bhp"].fill_between(ctim, avg_bhp - osc, avg_bhp + osc, alpha=0.1, color=C0)
+        panels["bhp"].plot(ctim, bhp, color=C0, label="Average BHP")
+        if "max_bhp" in report:
+            max_bhp = onp.asarray(report["max_bhp"], dtype=float)
+            osc = max_bhp - bhp
+            panels["bhp"].plot(ctim, max_bhp, color=C1, ls="--", label="Load fluctuations")
+            panels["bhp"].plot(ctim, bhp - osc, color=C2, ls="--")
+            panels["bhp"].fill_between(ctim, bhp - osc, bhp + osc, alpha=0.1, color=C0)
         panels["bhp"].set_ylabel("BHP / kW")
         panels["bhp"].set_xlim((tim[0], tim[-1]))
         panels["bhp"].legend(loc="upper right")

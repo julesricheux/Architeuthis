@@ -635,3 +635,43 @@ def test_hrdps_reads_and_regrids_with_the_projection_of_its_run():
     # Epoch seconds, and two steps past the horizon where the field fades to zero.
     assert forecast.data["valid_time"].values[0] == pd.Timestamp("2026-02-24").timestamp()
     assert forecast.data["valid_time"].size == 3 + 2
+
+
+class TestCalmForecast:
+    @pytest.mark.parametrize("source", ["atmosphere", "wave", "current"])
+    def test_its_fields_are_zero_at_each_point(self, source):
+        calm = forecast_module.calm_forecast(source)
+        query = {"valid_time": np.array([0.0, 3600.0, 7200.0]), "latitude": np.array([45.0, 46.0, 47.0]), "longitude": -5.0}
+
+        assert calm.data is None
+        assert calm.name == f"calm_{source}"
+        assert set(calm.models) == set(forecast_module.ENVIRONMENT_FIELDS[source])
+        for key in forecast_module.ENVIRONMENT_FIELDS[source]:
+            assert calm.input_names(key) == ["valid_time", "latitude", "longitude"]
+            assert np.array(calm(key, query)).ravel().tolist() == [0.0, 0.0, 0.0]
+
+    def test_its_fields_are_symbolic_constants_of_a_symbolic_query(self):
+        import casadi as ca
+
+        calm = forecast_module.calm_forecast("atmosphere")
+        latitude = ca.MX.sym("latitude", 4, 1)
+        u10 = calm("u10", {"valid_time": ca.DM.zeros(4, 1), "latitude": latitude, "longitude": latitude})
+        # No derivative, even of the direction of this zero wind
+        direction = ca.atan2(u10, calm("v10", {"valid_time": 0.0, "latitude": latitude, "longitude": latitude}))
+
+        assert u10.shape == (4, 1)
+        # Symbolic, so that the routing does not hand DM to NumPy functions
+        assert isinstance(u10, ca.MX)
+        assert float(ca.evalf(u10[0])) == 0.0
+        assert ca.jacobian(direction, latitude).nnz() == 0
+
+    def test_other_models_can_be_added(self):
+        calm = forecast_module.calm_forecast("atmosphere", name="still_air")
+        calm.add_constant("t2m", 288.0)
+
+        assert calm.name == "still_air"
+        assert float(calm("t2m", {"valid_time": 0.0, "latitude": 45.0, "longitude": -5.0})) == 288.0
+
+    def test_an_unknown_source_is_refused(self):
+        with pytest.raises(ValueError, match="atmosphere"):
+            forecast_module.calm_forecast("topography")

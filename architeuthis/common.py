@@ -103,7 +103,7 @@ _banner = """
 
 # North-going offset added to the wave components before arctan2, in m²
 # (swh**2): it biases the direction by less than 0.6 deg from swh = 1 m.
-WAVE_COMPONENTS_OFFSET = 0.
+WAVE_COMPONENTS_OFFSET = 1e-2
 
 GUST_DEFAULT_RATIO = 1.23 # (https://cimmse.wordpress.com/2013/09/20/a-wind-gust-factor-database-of-marine-observations-from-10-tropical-cyclones-2/)
 
@@ -144,6 +144,13 @@ def to_timestamp(value: Union[Datetime, float, int]) -> float:
     if timestamp.tzinfo is None:
         timestamp = timestamp.tz_localize("UTC")
     return float(timestamp.timestamp())
+
+
+def _constant(x: dict, value: float) -> float:
+    """
+    The function of a constant model: `value`, whatever `x`.
+    """
+    return value
 
 
 class FunctionModel:
@@ -249,8 +256,20 @@ class ArchiteuthisObject(ABC):
     ):
         self.name = name
         self.verbose = verbose
-    
-    
+
+    def info(self, message: str) -> None:
+        """
+        Report an information `status`, only if `verbose`.
+
+        Warnings and errors go to `status` whatever `verbose`.
+
+        Args:
+            message: The message, starting with its emoji.
+        """
+        if self.verbose:
+            status(message)
+
+
 class ArchiteuthisData(ArchiteuthisObject):
     """
     Base class of the objects backed by data or by models.
@@ -301,9 +320,9 @@ class ArchiteuthisData(ArchiteuthisObject):
         self._locate_data()
         self._download_data()
         
-        status(f"📦 Reading {self.name} data ...")
+        self.info(f"📦 Reading {self.name} data ...")
         self._read_data()
-        status("✅ Reading completed.")
+        self.info("✅ Reading completed.")
         
         self._convert_data()
         self._extend_data()
@@ -359,7 +378,7 @@ class ArchiteuthisData(ArchiteuthisObject):
                 with these keys.
         """
         if var_key in self.var_keys:
-            status(f"🟦 {var_key} already in {self.name} models.")
+            self.info(f"🟦 {var_key} already in {self.name} models.")
             return
 
         if coord_keys is None:
@@ -431,6 +450,33 @@ class ArchiteuthisData(ArchiteuthisObject):
         )
         self.add_model(var_key, model, description=getattr(function, "__name__", None))
 
+    def add_constant(
+        self,
+        var_key: str,
+        value: float,
+    ):
+        """
+        Register a constant as the model of a variable.
+
+        The model takes no input and returns `value` for any query, a
+        brake power or a hotel load for example. A `var_key` that
+        already exists is left as it is.
+
+        Args:
+            var_key: Key of the model when calling this object.
+            value: The value of the variable.
+
+        Example:
+            >>> vessel.add_constant("hotel_load", 180.)
+        """
+        model = FunctionModel(
+            function=_constant,
+            inputs=(),
+            args={"value": float(value)},
+            name=f"{self.name}_{var_key}",
+        )
+        self.add_model(var_key, model, description=f"constant {float(value):g}")
+
     def add_model(
         self,
         var_key: str,
@@ -451,14 +497,14 @@ class ArchiteuthisData(ArchiteuthisObject):
             description: What the model is, for the status message.
         """
         if var_key in self.var_keys:
-            status(f"🟦 {var_key} already in {self.name} models.")
+            self.info(f"🟦 {var_key} already in {self.name} models.")
             return
 
         self.models[var_key] = model
         self.var_keys.add(var_key)
 
         what = f": {description}" if description else ""
-        status(f"➕ Added {var_key}{what} to {self.name} models.")
+        self.info(f"➕ Added {var_key}{what} to {self.name} models.")
 
     def remove_model(
         self,
@@ -473,7 +519,7 @@ class ArchiteuthisData(ArchiteuthisObject):
         if var_key in self.var_keys:
             del self.models[var_key]
             self.var_keys.remove(var_key)
-            status(f"➖ Removed {var_key} from {self.name} models.")
+            self.info(f"➖ Removed {var_key} from {self.name} models.")
         else:
             status(f"💔 {var_key} not found in {self.name} models.")
 

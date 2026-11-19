@@ -57,6 +57,8 @@ WINDOWS = {
     "comparison_ascat_models.py": (TODAY - pd.Timedelta(days=4), TODAY + pd.Timedelta(days=2)),
     "function_polar_routing.py": SOON,
     "sky_along_route.py": SOON,
+    "vessel_definitions.py": SOON,
+    "wind_only_routing.py": SOON,
 }
 QUICK_START = "readme_quick_start.py"
 
@@ -366,3 +368,25 @@ def test_sky_along_route_describes_each_point_with_both_models(example):
     assert {"sky IFS", "sky GFS"} <= set(table.columns)
     assert all(isinstance(line, str) and line for line in table["sky IFS"])
     assert {"cloud_low", "cloud_middle", "cloud_high"} <= set(variables["skies"]["gfs"])
+
+
+def test_vessel_definitions_of_the_same_vessel_burn_the_same_fuel(example):
+    reports = example("vessel_definitions.py").variables["reports"]
+    reference = {report["vessel"]: report for report in reports.select(solve=0)}
+
+    assert set(reference) == {"bhp_function", "bhp_table", "sfoc_curve", "total_power", "hourly_consumption"}
+    for name in ("total_power", "hourly_consumption"):
+        assert reference[name]["fuel"] == pytest.approx(reference["bhp_function"]["fuel"], rel=1e-9)
+    assert reference["bhp_table"]["fuel"] == pytest.approx(reference["bhp_function"]["fuel"], rel=5e-2)
+    assert reference["sfoc_curve"]["fuel"] > reference["bhp_function"]["fuel"]
+    assert "bhp" not in reference["hourly_consumption"]
+
+
+def test_wind_only_routing_has_a_calm_sea_and_no_current(example):
+    reports = example("wind_only_routing.py").variables["reports"]
+
+    assert [report["solve"] for report in reports] == [0, 1]
+    for report in reports:
+        for key in ("swh", "cs"):
+            assert np.ravel(report[key]) == pytest.approx(0.0)
+        assert np.max(np.ravel(report["tws"])) > 0.0

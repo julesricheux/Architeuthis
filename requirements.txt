@@ -4,7 +4,7 @@ pandas
 matplotlib
 sympy
 cython
-casadi
+casadi>=3.7
 xarray
 geojson
 pillow
@@ -13,9 +13,9 @@ flask
 herbie-data
 copernicusmarine
 requests
-dash==3.2.0
+dash==4.5.0
 dash-leaflet
-dash-mantine-components
+dash-mantine-components>=3,<4
 dash-iconify
 cartopy
 metpy
@@ -29,5 +29,6 @@ dash-extensions
 pyproj
 sortedcontainers
 tqdm
+keyring
 pytest
 pytest-cov

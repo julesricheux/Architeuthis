@@ -76,12 +76,12 @@ print(f"{voyage.distance:.0f} nm at {voyage.transit_sog:.1f} kt on average.")
 vessel = Vessel(
     "vessel",
     filepath=VESSEL_FILE,
-    sfc=220.,
+    sfoc=220.,
     hotel_load=194.,
     max_power=4100.,
 )
 vessel.load_data()
-for key in ("bhp", "max_bhp", "sails_contribution"):
+for key in ("bhp", "max_bhp"):
     vessel.add_interpolator(key, "stw", "tws", "twa", "hs", "wa", method="linear")
 
 #%% FORECASTS: IFS AND GFS WIND AND WAVES, MERCATOR CURRENTS, TOPOGRAPHY
@@ -208,6 +208,7 @@ ifs_analysis = RoutingAnalysis(
     WAVE["ifs"],
     current,
     topo,
+    variables=["max_bhp"],  # a vessel model that the fuel does not need
 )
 ifs_report = ifs_analysis.run(max_iter=1000, solver_options=solver_options)
 
@@ -233,6 +234,7 @@ gfs_analysis = RoutingAnalysis(
     WAVE["gfs"],
     current,
     topo,
+    variables=["max_bhp"],
 )
 gfs_report = gfs_analysis.evaluate(plan) # no optimization: positions and times are kept
 
