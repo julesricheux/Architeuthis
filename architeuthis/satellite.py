@@ -127,7 +127,7 @@ class EUMETSATData(ArchiteuthisSatelliteData):
         zipfiles=[]
         
         
-        status(f'🛰️ Download of {len(self.products)} product(s)...')
+        self.info(f'🛰️ Download of {len(self.products)} product(s)...')
         for product in tqdm.tqdm(self.products):
             with product.open() as fsrc, \
                     open(os.path.join(self.output_path, fsrc.name), mode='wb') as fdst:
@@ -138,11 +138,11 @@ class EUMETSATData(ArchiteuthisSatelliteData):
                     # print(f'Download of product {product} finished.')
                 # else:
                 #     print("Already in memory")
-        status('✅ Downloads completed.')
+        self.info('✅ Downloads completed.')
 
     
         # Unzip products
-        status('📦 Unzipping downloaded files...')
+        self.info('📦 Unzipping downloaded files...')
         nc_files = []
 
         for zip_path in zipfiles:
@@ -169,7 +169,7 @@ class EUMETSATData(ArchiteuthisSatelliteData):
             # # Delete ZIP only if extraction succeeded
             # if extracted_nc:
             #     os.remove(zip_path)
-        status('✅ Finished unzipping.')
+        self.info('✅ Finished unzipping.')
         
         self.path = nc_files
         

@@ -187,6 +187,7 @@ and this project follows Semantic Versioning https://semver.org
 - `plot_report` draws `total_power`, else `hourly_consumption`, on its power panel when the report has no `bhp`, and says so on the sails panel when the report has no `sails_contribution`.
 
 ### Changed
+- `verbose` now controls the information messages of every object (📦 reading, ⬇️ downloading, ➕ added, ➖ removed, 🟦 already there, the routing banner...): `verbose=False` silences them through the new `ArchiteuthisObject.info`. Warnings (⚠️) and errors (💔) are still always reported, including the ⚠️ of `Topography` about a skipped exclusion zone, formerly hidden by `verbose=False`. `ReportCollection.save` takes `verbose` too.
 - `max_bhp` and `sails_contribution` are no longer required: a vessel needs only a consumption model, and they are computed and reported when listed in `variables`, as any other vessel model: `RoutingAnalysis(..., variables=["max_bhp", "sails_contribution"])`. The examples and the quick start list them.
 - The default constraints limit `max_bhp` when it is in the variables, else `bhp`, else `total_power`, to `max_power`, and only if it is not None. `Vessel(max_power=None)` gives no power limit.
 - `examples/wind_only_routing.py` routes with the IFS wind alone and a dummy function polar, the waves and the current left out.

@@ -290,7 +290,7 @@ class Vessel(ArchiteuthisData):
     def _locate_data(self):
         assert self.path is not None, f"💔 {self.name} has no polar file: use add_function."
         assert os.path.exists(self.path), f"💔 '{self.path}' does not exist."
-        status(f"✅ {self.name} data found.")
+        self.info(f"✅ {self.name} data found.")
 
     def _read_data(self):
         self.data = xr.open_dataset(self.path) # TODO add columns selection to save memory

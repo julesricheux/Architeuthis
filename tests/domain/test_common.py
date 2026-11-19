@@ -263,11 +263,50 @@ def test_objects_report_through_status(default_sink):
     messages = []
     set_status_sink(messages.append)
     table = Table()
+    table.verbose = True
     table.add_interpolator("value", ["x", "y"], [slice(None), slice(None)], "value", "linear")
 
     table.remove_interpolator("value")
 
     assert any("value" in message for message in messages)
+
+
+def test_quiet_objects_report_only_their_errors(default_sink):
+    messages = []
+    set_status_sink(messages.append)
+    table = Table()
+
+    table.add_interpolator("value", ["x", "y"], [slice(None), slice(None)], "value", "linear")
+    table.add_constant("offset", 1.0)
+    table.remove_interpolator("offset")
+    assert messages == []
+
+    table.remove_interpolator("missing")
+    assert messages == ["💔 missing not found in table models."]
+
+
+def test_info_follows_verbose(default_sink):
+    messages = []
+    set_status_sink(messages.append)
+    table = Table()
+
+    table.info("ℹ️ quiet")
+    table.verbose = True
+    table.info("ℹ️ loud")
+
+    assert messages == ["ℹ️ loud"]
+
+
+def test_calm_forecasts_are_quiet_by_default(default_sink):
+    from architeuthis.forecast import calm_forecast
+
+    messages = []
+    set_status_sink(messages.append)
+
+    calm_forecast("wave")
+    assert messages == []
+    calm_forecast("current", verbose=True)
+    assert len(messages) == 2
 
 
 # ------------------------------------------------------------------------------

@@ -338,12 +338,16 @@ class ReportCollection(list):
     # Storage
     # --------------------------------------------------------------------------
 
-    def save(self, path: Optional[str] = None) -> str:
+    def save(self, path: Optional[str] = None, verbose: bool = True) -> str:
         """
         Write the reports as JSON and return the path.
 
         The default path, `~/data/routes/output_<today>.json`, is the
         one that `ui.py` displays.
+
+        Args:
+            path: The file to write, by default the one above.
+            verbose: Whether to report the file written.
         """
         if path is None:
             path = os.path.join(ROUTES_DIRECTORY, f"output_{datetime.now():%Y-%m-%d}.json")
@@ -352,7 +356,8 @@ class ReportCollection(list):
         with open(path, "w") as file:
             json.dump(self, file, cls=CustomEncoder, indent=2)
 
-        status(f"➕ {len(self)} reports saved to {path}.")
+        if verbose:
+            status(f"➕ {len(self)} reports saved to {path}.")
         return path
 
     @classmethod

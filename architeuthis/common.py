@@ -256,8 +256,20 @@ class ArchiteuthisObject(ABC):
     ):
         self.name = name
         self.verbose = verbose
-    
-    
+
+    def info(self, message: str) -> None:
+        """
+        Report an information `status`, only if `verbose`.
+
+        Warnings and errors go to `status` whatever `verbose`.
+
+        Args:
+            message: The message, starting with its emoji.
+        """
+        if self.verbose:
+            status(message)
+
+
 class ArchiteuthisData(ArchiteuthisObject):
     """
     Base class of the objects backed by data or by models.
@@ -308,9 +320,9 @@ class ArchiteuthisData(ArchiteuthisObject):
         self._locate_data()
         self._download_data()
         
-        status(f"📦 Reading {self.name} data ...")
+        self.info(f"📦 Reading {self.name} data ...")
         self._read_data()
-        status("✅ Reading completed.")
+        self.info("✅ Reading completed.")
         
         self._convert_data()
         self._extend_data()
@@ -366,7 +378,7 @@ class ArchiteuthisData(ArchiteuthisObject):
                 with these keys.
         """
         if var_key in self.var_keys:
-            status(f"🟦 {var_key} already in {self.name} models.")
+            self.info(f"🟦 {var_key} already in {self.name} models.")
             return
 
         if coord_keys is None:
@@ -485,14 +497,14 @@ class ArchiteuthisData(ArchiteuthisObject):
             description: What the model is, for the status message.
         """
         if var_key in self.var_keys:
-            status(f"🟦 {var_key} already in {self.name} models.")
+            self.info(f"🟦 {var_key} already in {self.name} models.")
             return
 
         self.models[var_key] = model
         self.var_keys.add(var_key)
 
         what = f": {description}" if description else ""
-        status(f"➕ Added {var_key}{what} to {self.name} models.")
+        self.info(f"➕ Added {var_key}{what} to {self.name} models.")
 
     def remove_model(
         self,
@@ -507,7 +519,7 @@ class ArchiteuthisData(ArchiteuthisObject):
         if var_key in self.var_keys:
             del self.models[var_key]
             self.var_keys.remove(var_key)
-            status(f"➖ Removed {var_key} from {self.name} models.")
+            self.info(f"➖ Removed {var_key} from {self.name} models.")
         else:
             status(f"💔 {var_key} not found in {self.name} models.")
 

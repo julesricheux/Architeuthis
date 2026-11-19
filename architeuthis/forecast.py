@@ -155,9 +155,9 @@ class Topography(ArchiteuthisSpatialData):
         url = _TOPOGRAPHY_URL
         
         if os.path.exists(self.path):
-            status("🗺️ Topography already downloaded.")
+            self.info("🗺️ Topography already downloaded.")
         else:
-            status("🗺️ Downloading topography...")
+            self.info("🗺️ Downloading topography...")
             try:
                 # Send a GET request with stream=True to handle large files efficiently
                 with requests.get(url, stream=True) as response:
@@ -220,9 +220,8 @@ class Topography(ArchiteuthisSpatialData):
         for polygon_coords in self.exclusion_zones:
             if len(polygon_coords) < 3:
                 # e.g. the iceberg zone when no IIP bulletin could be fetched
-                if self.verbose:
-                    zone_name = getattr(polygon_coords, "name", "an exclusion zone")
-                    status(f"⚠️ Warning: skipping {zone_name}, which has fewer than 3 points.")
+                zone_name = getattr(polygon_coords, "name", "an exclusion zone")
+                status(f"⚠️ Warning: skipping {zone_name}, which has fewer than 3 points.")
                 continue
             poly_path = Path(polygon_coords)
             mask_total |= poly_path.contains_points(points).reshape(LATS.shape)
@@ -231,8 +230,8 @@ class Topography(ArchiteuthisSpatialData):
         z_exclude = 1e3
         topo[mask_total] = z_exclude
         
-        if self.verbose and mask_total.sum():
-            status(f"⛔ Updated {mask_total.sum()} points inside exclusion zones.")
+        if mask_total.sum():
+            self.info(f"⛔ Updated {mask_total.sum()} points inside exclusion zones.")
             
         # =====================================================================
         # COMPUTE DISTANCE TO SHORE
@@ -478,7 +477,7 @@ class Forecast(ArchiteuthisSpatialData):
         for dim in (u_dim, v_dim):
             self.data[dim].attrs = {"units": "m**2"}
 
-        status(f"➕ Added {u_dim} and {v_dim}: {swh_dim}² components along {mwd_dim} to {self.name} data.")
+        self.info(f"➕ Added {u_dim} and {v_dim}: {swh_dim}² components along {mwd_dim} to {self.name} data.")
 
 
 # The fields that the routing reads from each source of the environment, in m/s
@@ -525,7 +524,7 @@ def calm_forecast(
         source: "atmosphere" (`u10`, `v10`), "wave" (`swh`, `uw`, `vw`)
             or "current" (`uo`, `vo`).
         name: Name of the forecast, by default `calm_<source>`.
-        verbose: Whether to report progress, as for any forecast.
+        verbose: Whether to report the models added.
 
     Returns:
         A `Forecast` whose `data` is None.
@@ -593,7 +592,7 @@ class HerbieForecast(Forecast):
         super().__init__(name, date, fxx, min_lon, max_lon, min_lat, max_lat, time_unit, verbose)
         
     def _find_latest(self):
-        status(f"📅 Date is not specified. Retrieving latest {self.model.upper()} {ANSI.orange}GRIB2 files.{ANSI.reset}")
+        self.info(f"📅 Date is not specified. Retrieving latest {self.model.upper()} {ANSI.orange}GRIB2 files.{ANSI.reset}")
         # print(f"📅 Date is not specified. Retrieving latest {self.model.upper()} {self.product.upper()} {ANSI.orange}GRIB2 files.{ANSI.reset}")
         return HerbieLatest(model=self.model, product=self.product).valid_date
         
@@ -608,9 +607,9 @@ class HerbieForecast(Forecast):
     def _download_data(self):
         if self.__FH is None:
             self.locate_data()
-        status(f"⬇️ Downloading {self.name} data ...")
+        self.info(f"⬇️ Downloading {self.name} data ...")
         self.path = self.__FH.download(self.regex,)
-        status("✅ Download completed.")
+        self.info("✅ Download completed.")
         
     def _convert_data(self):
         self.data["longitude"] = ((self.data["longitude"] + 180.) % 360.) - 180.
@@ -812,7 +811,7 @@ class HRDPSForecast(DeterministicHerbieForecast):
         pass
 
     def _download_data(self):
-        status(f"⬇️ Downloading {self.name} data ...")
+        self.info(f"⬇️ Downloading {self.name} data ...")
         self.path = [
             FastHerbie(
                 [self.f00],
@@ -824,7 +823,7 @@ class HRDPSForecast(DeterministicHerbieForecast):
             ).download()
             for variable in self.VARIABLES
         ]
-        status("✅ Download completed.")
+        self.info("✅ Download completed.")
 
     def _read_data(self):
         data = xr.merge([
@@ -1038,7 +1037,7 @@ class CopernicusForecast(Forecast):
         super().__init__(name, date, None, min_lon, max_lon, min_lat, max_lat, time_unit, verbose)
         
     def _find_latest(self):
-        status(f"📅 Date is not specified. Retrieving latest {self.dataset} {ANSI.orange}NetCDF4 files.{ANSI.reset}")
+        self.info(f"📅 Date is not specified. Retrieving latest {self.dataset} {ANSI.orange}NetCDF4 files.{ANSI.reset}")
         return pd.Timestamp.today().normalize()
         
     def _download_data(self):
@@ -1165,7 +1164,7 @@ class CDSForecast(Forecast):
             self.f99 = end
         
     def _find_latest(self):
-        status(f"📅 Date is not specified. Retrieving latest {self.dataset} {ANSI.orange}NetCDF4 files{ANSI.reset}.")
+        self.info(f"📅 Date is not specified. Retrieving latest {self.dataset} {ANSI.orange}NetCDF4 files{ANSI.reset}.")
         return (pd.Timestamp.today() - pd.Timedelta("5d")).floor("6h").normalize()
     
     def _generate_request(self):
@@ -1201,9 +1200,9 @@ class CDSForecast(Forecast):
 
         # Check existence locally
         if os.path.exists(path):
-            status(f"💾 {self.name} data already downloaded.")
+            self.info(f"💾 {self.name} data already downloaded.")
         else:
-            status(f"⬇️ Downloading {self.name} data ...")
+            self.info(f"⬇️ Downloading {self.name} data ...")
             # Talk to the server
             os.makedirs(directory, exist_ok=True)
             
@@ -1216,7 +1215,7 @@ class CDSForecast(Forecast):
             client = cdsapi.Client() if key is None else cdsapi.Client(url=_CDS_URL, key=key)
             client.retrieve(self.dataset, self.request).download(target=path)
             
-            status("✅ Download completed.")
+            self.info("✅ Download completed.")
             
         self.path = path
         

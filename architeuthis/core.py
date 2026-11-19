@@ -854,7 +854,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             if "gust" in self.atmosphere.models:
                 value = self.atmosphere("gust", atmosphere_query) * KNOTS_PER_METER_PER_SECOND
             else:
-                status("🌪️ Info: gust not found in interpolators. Defaulting to the standard ratio.")
+                self.info("🌪️ Info: gust not found in interpolators. Defaulting to the standard ratio.")
                 value = passage["tws"] * GUST_DEFAULT_RATIO
         elif key == "aws_gust":
             tws_gust = self._derived_variable("tws_gust", passage, derived, atmosphere_query, forecast_queries)
@@ -1163,8 +1163,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             opti.subject_to(cons)
             opti.minimize(passage["fuel"])
 
-        # if self.verbose:
-        status(_banner)
+        self.info(_banner)
 
         if solve:
             sol = opti.solve(
