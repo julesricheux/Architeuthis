@@ -380,8 +380,8 @@ for solve, vessel, model, fac, eta, m in (
     ctime = pd.to_datetime(report["ctim"], unit="s")
         
     # plt.clf()
-    # # plt.scatter(ctime, unit="s"), report["avg_bhp"])
-    # plt.plot(*get_steps(report, "avg_bhp"))
+    # # plt.scatter(ctime, unit="s"), report["bhp"])
+    # plt.plot(*get_steps(report, "bhp"))
     # plt.plot(*get_steps(report, "max_bhp"))
     # plt.plot(*get_steps(report, "swh"))
     # # plt.plot(ctime, report["sails_contribution"])

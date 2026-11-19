@@ -256,8 +256,8 @@ for m in range(1,51,50):
     ctime = pd.to_datetime(report["ctim"], unit="s")
     
     # plt.clf()
-    # # plt.scatter(ctime, unit="s"), report["avg_bhp"])
-    # plt.plot(*get_steps(report, "avg_bhp"))
+    # # plt.scatter(ctime, unit="s"), report["bhp"])
+    # plt.plot(*get_steps(report, "bhp"))
     # # plt.plot(ctime, report["sails_contribution"])
     # # plt.plot(ctime, report["sails_contribution"])
     # plt.xticks(rotation=45)

@@ -586,8 +586,8 @@ for solve, tf, model, vessel, fac, m in (
     ctime = pd.to_datetime(report["ctim"], unit="s")
         
     # plt.clf()
-    # # plt.scatter(ctime, unit="s"), report["avg_bhp"])
-    # plt.plot(*get_steps(report, "avg_bhp"))
+    # # plt.scatter(ctime, unit="s"), report["bhp"])
+    # plt.plot(*get_steps(report, "bhp"))
     # plt.plot(*get_steps(report, "max_bhp"))
     # plt.plot(*get_steps(report, "swh"))
     # # plt.plot(ctime, report["sails_contribution"])
@@ -683,7 +683,7 @@ print(eval_table)
 
 #%% FIGURES
 
-# Any quantity per segment can be plotted: sog, stw, tws, swh, avg_bhp, max_bhp, sails_contribution...
+# Any quantity per segment can be plotted: sog, stw, tws, swh, bhp, max_bhp, sails_contribution...
 options = {-1.: "South route", 0.: "Ortho cst speed", 1.: "North route"}
 
 solved = reports.select(solve=1)
@@ -691,12 +691,12 @@ prefix = "IFS ensemble "
 
 plot_fuel_vs_etd(reports)
 plot_variable(reports, "sog", unit="kts", labels=options, figsize=(8, 4), dpi=100)
-plot_variable(reports, "avg_bhp", unit="kW", ylim=(0., maxBHP), figsize=(10, 3.5), dpi=100)
+plot_variable(reports, "bhp", unit="kW", ylim=(0., maxBHP), figsize=(10, 3.5), dpi=100)
 plot_fuel_distribution(
     {"Optimised routes": solved, "Ortho cst. speed": reports.select(solve=0)},
     horizontal=True,
 )
-plot_quantiles(reports, "avg_bhp", unit="kW", prefix=prefix, figsize=(8, 4))
+plot_quantiles(reports, "bhp", unit="kW", prefix=prefix, figsize=(8, 4))
 plot_quantiles(solved, "swh", unit="m", title="SWH distribution along optimised routes for all scenarios", figsize=(9, 4))
 plot_quantiles(
     solved,
@@ -742,7 +742,7 @@ reports = ReportCollection.latest()
 # unit = "%"
 # variable = "mwa"
 # unit = "deg"
-# variable = "avg_bhp"
+# variable = "bhp"
 # variable = "max_bhp"
 # unit = "kW"
 
@@ -830,7 +830,7 @@ reports = ReportCollection.latest()
 #     stw, tws, np.abs(twa), swh, np.abs(mwa),
 # ], axis=1)
 # hotel_load = self.vessel.hotel_load # KW
-# avg_bhp = self.vessel("bhp", vessel_query)
+# bhp = self.vessel("bhp", vessel_query)
 # max_bhp = self.vessel("max_bhp", vessel_query)
 # # leeway = vessel("leeway", vessel_query)
 # sc = self.vessel("sails_contribution", vessel_query)
@@ -853,7 +853,7 @@ reports = ReportCollection.latest()
 # unit = "%"
 # variable = "mwa"
 # unit = "deg"
-# variable = "avg_bhp"
+# variable = "bhp"
 # # # variable = "max_bhp"
 # unit = "kW"
 # [r["fuel"] for r in reports if (r["vessel"] == "_eff90")],
@@ -879,7 +879,7 @@ reports = ReportCollection.latest()
 # variable = "tws"
 # unit = "kts"
 # vmax=50.
-# variable = "avg_bhp"
+# variable = "bhp"
 
 # vmax = maxBHP *1.066
 # variable = "sog"

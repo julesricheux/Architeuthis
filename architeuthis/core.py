@@ -26,7 +26,7 @@ from architeuthis.vessel import CONSUMPTION_QUANTITIES, Vessel
 from architeuthis.common import _banner, status
 from architeuthis.optimization import Opti
 from architeuthis.forecast import Forecast, Topography
-from architeuthis.report import RoutingReport
+from architeuthis.report import RoutingReport, _RenamedEntries
 from architeuthis.common import ArchiteuthisObject, GUST_DEFAULT_RATIO, WAVE_COMPONENTS_OFFSET
 # Route and voyage classes live in their own modules, which work without network
 # access; they are re-exported here for compatibility.
@@ -89,7 +89,7 @@ IMPLICIT_VESSEL_VARIABLES = ("max_bhp", "sails_contribution")
 
 # Powers that the default constraints keep below `Vessel.max_power`: the first
 # of them in the context.
-POWER_LIMITED_QUANTITIES = ("max_bhp", "avg_bhp", "total_power")
+POWER_LIMITED_QUANTITIES = ("max_bhp", "bhp", "total_power")
 
 
 def default_routing_constraints(ctx: dict) -> list:
@@ -98,7 +98,7 @@ def default_routing_constraints(ctx: dict) -> list:
 
     Every position is at sea, `z < 0`. If the vessel has a
     `max_power`, the first of `max_bhp` (when listed in the
-    variables), `avg_bhp` and `total_power` that the passage has stays
+    variables), `bhp` and `total_power` that the passage has stays
     below it.
 
     Args:
@@ -182,10 +182,9 @@ class ArchiteuthisAnalysis(ArchiteuthisObject):
         super().__init__(name, verbose)
 
 
-# Names of the consumption quantities of the vessel in passages and reports, the
-# brake power being `avg_bhp`. Which of them a passage has depends on the vessel.
-_CONSUMPTION_NAMES = {"bhp": "avg_bhp"}
-_CONSUMPTION_QUANTITIES = tuple(_CONSUMPTION_NAMES.get(key, key) for key in CONSUMPTION_QUANTITIES)
+# The consumption quantities of the vessel in passages and reports, under the
+# keys of its models. Which of them a passage has depends on the vessel.
+_CONSUMPTION_QUANTITIES = CONSUMPTION_QUANTITIES
 
 # Quantities computed on a passage and returned in reports, in addition to positions and times.
 _REPORT_QUANTITIES = (
@@ -394,12 +393,12 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
     The objective is the fuel, in tonnes, from the consumption of the
     vessel in kg/h: its `hourly_consumption` model, or its
     `total_power` or its `bhp` plus hotel load, burnt at its `sfoc`
-    (see `Vessel`). These quantities are in the report, the brake
-    power as `avg_bhp`. Other vessel models, such as `max_bhp` or
-    `sails_contribution`, are computed only when listed in
-    `variables`. Until 0.4.0, `max_bhp` and `sails_contribution` are
-    still computed when the vessel has them, with a
-    `DeprecationWarning`: list them.
+    (see `Vessel`). These quantities are in the report, under the
+    keys of the vessel models (`bhp` for the brake power). Other
+    vessel models, such as `max_bhp` or `sails_contribution`, are
+    computed only when listed in `variables`. Until 0.4.0, `max_bhp`
+    and `sails_contribution` are still computed when the vessel has
+    them, with a `DeprecationWarning`: list them.
 
     Each vessel model is queried with the inputs it names among
     `stw`, `sog`, `tws`, `twa`, `hs` or `swh`, `wa` or `mwa`, `aws` and
@@ -612,8 +611,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         variables = {} if variables is None else variables
 
         # The consumption quantities depend on the models of the vessel
-        consumption_names = [_CONSUMPTION_NAMES.get(key, key) for key in self.vessel.consumption_quantities()]
-        quantities = _PASSAGE_QUANTITIES | frozenset(consumption_names)
+        quantities = _PASSAGE_QUANTITIES | frozenset(self.vessel.consumption_quantities())
         plan = [
             (name, *self._resolve_variable(name, specification, quantities))
             for name, specification in variables.items()
@@ -758,7 +756,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
 
         passage = {
             "fuel": fuel,
-            **{_CONSUMPTION_NAMES.get(key, key): value for key, value in consumption.items()},
+            **consumption,
             "z": z,
             "sog": sog,
             "stw": stw,
@@ -1112,7 +1110,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         passage = self._passage(tim, ctim, lat, lon, run_variables)
 
         # --- Dynamic Constraints Context ---
-        ctx = {"vessel": self.vessel, "opti": opti} | passage
+        ctx = _RenamedEntries({"vessel": self.vessel, "opti": opti} | passage)
         cons = self._resolve_constraints(constraints, ctx)
 
         if solve:
@@ -1232,7 +1230,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
 
         passage = self._passage(tim, ctim, lat, lon, evaluation_variables)
 
-        ctx = {"vessel": self.vessel, "opti": None} | passage
+        ctx = _RenamedEntries({"vessel": self.vessel, "opti": None} | passage)
         violations = [
             violation
             for violation in map(_constraint_violation, self._resolve_constraints(constraints, ctx))

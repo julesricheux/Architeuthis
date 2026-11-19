@@ -107,8 +107,8 @@ vessel_files = [
     r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_28up_28down_7buff_5m_eff1.nc",
     # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff15.nc",
     # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_28up_28down_7buff_5m_eff30.nc",
-    r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_28up_28down_7buff_5m_eff45.nc",
-    r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_28up_28down_7buff_5m_eff60.nc",
+    # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_28up_28down_7buff_5m_eff45.nc",
+    # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_28up_28down_7buff_5m_eff60.nc",
     # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff75.nc",
     r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff90.nc",
     # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff100.nc",
@@ -758,8 +758,8 @@ for solve, tf, model, vessel, fac, m, tpg in (
     ctime = pd.to_datetime(report["ctim"], unit="s")
         
     # plt.clf()
-    # # plt.scatter(ctime, unit="s"), report["avg_bhp"])
-    # plt.plot(*get_steps(report, "avg_bhp"))
+    # # plt.scatter(ctime, unit="s"), report["bhp"])
+    # plt.plot(*get_steps(report, "bhp"))
     # plt.plot(*get_steps(report, "max_bhp"))
     # plt.plot(*get_steps(report, "swh"))
     # # plt.plot(ctime, report["sails_contribution"])
@@ -865,7 +865,7 @@ print(eval_table)
 #%% FIGURES: COMPARING ROUTES
 
 # Any quantity per segment can be plotted: sog, stw, cog, tws, twa, aws, awa, swh, mwa,
-# avg_bhp, max_bhp, sails_contribution, tws_gust, aws_gust...
+# bhp, max_bhp, sails_contribution, tws_gust, aws_gust...
 options = {-1.: "Port route", 0.: "Ortho cst speed", 1.: "Starboard route"}
 # options = {-0.5: "North coast", 0.:"Ortho cst speed", 0.75: "North offshore", 3.: "South"}
 
@@ -885,14 +885,14 @@ solved = reports.select(solve=1)
 
 converged = solved.select(status=1)
 
-plot_quantiles(reports, "avg_bhp", unit="kW")
+plot_quantiles(reports, "bhp", unit="kW")
 plot_quantiles(solved, "sog", unit="kts", title="SOG distribution along optimised routes for all scenarios")
 
 for eta in sorted({report["eta"] for report in converged}):
     same_eta = converged.select(eta=eta)
     plot_quantiles(
         same_eta,
-        "avg_bhp",
+        "bhp",
         unit="kW",
         title=f"ETD {same_eta[0].etd_time} UTC - ETA {same_eta[0].eta_time} UTC",
         ylim=(0., 1000.),
@@ -913,7 +913,7 @@ reports = ReportCollection.latest() # or ReportCollection.load(path)
 #%% TABLE TO PASTE IN A DOCUMENT
 
 table = reports.select(solve=1)[:1].table(
-    variables=("sog", "cog", "avg_bhp", "tws", "twa", "aws", "awa", "swh", "mwa")
+    variables=("sog", "cog", "bhp", "tws", "twa", "aws", "awa", "swh", "mwa")
 )
 table.to_clipboard(index=False, excel=True)
 print("Table copied to clipboard. Paste directly into Word.")
@@ -963,7 +963,7 @@ for report in reports.select(vessel="eff45"):
 # unit = "%"
 # variable = "mwa"
 # unit = "deg"
-# variable = "avg_bhp"
+# variable = "bhp"
 # variable = "max_bhp"
 # unit = "kW"
 
@@ -1009,7 +1009,7 @@ for report in reports.select(vessel="eff45"):
 # variable = "sog"
 # variable = "swh"
 # unit = "m"
-# variable = "avg_bhp"
+# variable = "bhp"
 # variable = "max_bhp"
 # unit = "kW"
 # variable = "sails_contribution"
@@ -1027,7 +1027,7 @@ for report in reports.select(vessel="eff45"):
 
 # variable = "mwa"
 # unit = "deg"
-# variable = "avg_bhp"
+# variable = "bhp"
 # variable = "max_bhp"
 # unit = "kW"
 # vmin = 0.
@@ -1095,7 +1095,7 @@ for report in reports.select(vessel="eff45"):
 # unit = "%"
 # variable = "mwa"
 # unit = "deg"
-# variable = "avg_bhp"
+# variable = "bhp"
 # variable = "max_bhp"
 # unit = "kW"
 # [r["fuel"] for r in reports if (r["vessel"] == "_eff90")],
@@ -1142,7 +1142,7 @@ for report in reports.select(vessel="eff45"):
 
 #     if col.startswith("sog"):
 #         table_fmt[col] = table_fmt[col].map(lambda x: f"{x:.1f}" if pd.notna(x) else "")
-#     elif col.startswith(("cog", "avg_bhp", "twa")):
+#     elif col.startswith(("cog", "bhp", "twa")):
 #         table_fmt[col] = table_fmt[col].map(lambda x: f"{x:.0f}" if pd.notna(x) else "")
 
 # (reports.index(r) in [len(reports) - 3]) &

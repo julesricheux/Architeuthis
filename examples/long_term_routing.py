@@ -624,8 +624,8 @@ for solve, tf, model, vessel, fac, m, tpg in (
     ctime = pd.to_datetime(report["ctim"], unit="s")
         
     # plt.clf()
-    # # plt.scatter(ctime, unit="s"), report["avg_bhp"])
-    # plt.plot(*get_steps(report, "avg_bhp"))
+    # # plt.scatter(ctime, unit="s"), report["bhp"])
+    # plt.plot(*get_steps(report, "bhp"))
     # plt.plot(*get_steps(report, "max_bhp"))
     # plt.plot(*get_steps(report, "swh"))
     # # plt.plot(ctime, report["sails_contribution"])
@@ -747,7 +747,7 @@ plot_fuel_distribution({
     "Ortho references": reports.select(init_fac=0.),
 })
 plot_quantiles(reports.select(lambda report: report["init_fac"] != 0.), "swh", unit="m", ylim=(0., 9.))
-plot_quantiles(solved, "avg_bhp", unit="kW", title="AVG_BHP distribution along optimised routes for all scenarios")
+plot_quantiles(solved, "bhp", unit="kW", title="BHP distribution along optimised routes for all scenarios")
 plot_fuel_quantiles(reports)
 plot_fuel_quantiles(reports, daily=True)
 plot_convergence(reports)
@@ -781,7 +781,7 @@ table = reports.select(solve=1)[:2].table()
 for column in table.columns:
     if column.startswith("sog"):
         table[column] = table[column].map(lambda value: f"{value:.1f}" if pd.notna(value) else "")
-    elif column.startswith(("cog", "avg_bhp", "twa")):
+    elif column.startswith(("cog", "bhp", "twa")):
         table[column] = table[column].map(lambda value: f"{value:.0f}" if pd.notna(value) else "")
 
 table.to_clipboard(index=False, excel=True)
@@ -809,7 +809,7 @@ print("Table copied to clipboard. Paste directly into Word.")
 # unit = "%"
 # variable = "mwa"
 # unit = "deg"
-# variable = "avg_bhp"
+# variable = "bhp"
 # variable = "max_bhp"
 # unit = "kW"
 
@@ -842,7 +842,7 @@ print("Table copied to clipboard. Paste directly into Word.")
 # (r["eta"] < 1772049600.0) &
 
 # variable = "tws"
-# variable = "avg_bhp"
+# variable = "bhp"
 # variable = "sails_contribution"
 
 # variable = "swh"
@@ -854,7 +854,7 @@ print("Table copied to clipboard. Paste directly into Word.")
 # vmax=101.
 # variable = "mwa"
 # unit = "deg"
-# variable = "avg_bhp"
+# variable = "bhp"
 # variable = "max_bhp"
 # unit = "kW"
 # vmin = 0.
@@ -911,7 +911,7 @@ print("Table copied to clipboard. Paste directly into Word.")
 # variable = "tws"
 # unit = "kts"
 # vmax=50.
-# variable = "avg_bhp"
+# variable = "bhp"
 # variable = "max_bhp"
 # unit = "kW"
 # vmax = maxBHP *1.066

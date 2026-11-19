@@ -150,7 +150,7 @@ class TestBaseline:
         assert report["dist_rel"] == pytest.approx(1.0, abs=1e-3)
 
     def test_fuel_is_the_integral_of_power_and_consumption(self, report):
-        power = np.ravel(report["avg_bhp"]) + HOTEL_LOAD
+        power = np.ravel(report["bhp"]) + HOTEL_LOAD
         duration_h = np.diff(np.ravel(report["tim"])) / HOUR
 
         assert report["fuel"] == pytest.approx(np.sum(power * duration_h * SFC) / 1e6)
@@ -323,7 +323,7 @@ class TestEvaluation:
         assert evaluation["init_fac"] is None
         for key in ("fuel", "dist", "dist_rel", "transit_sog"):
             assert evaluation[key] == pytest.approx(report[key], rel=1e-9)
-        for key in ("lat", "lon", "tim", "ctim", "avg_bhp", "z", "sog", "tws_gust"):
+        for key in ("lat", "lon", "tim", "ctim", "bhp", "z", "sog", "tws_gust"):
             assert np.ravel(evaluation[key]) == pytest.approx(np.ravel(report[key]), rel=1e-9, abs=1e-9)
 
     def test_a_report_can_be_evaluated_directly(self, optimized):
@@ -352,7 +352,7 @@ class TestEvaluation:
         evaluation = analyse(island, vessel=heavier).evaluate(analysis.passage_plan)
 
         assert np.ravel(evaluation["lat"]) == pytest.approx(np.ravel(report["lat"]))
-        assert np.ravel(evaluation["avg_bhp"]) == pytest.approx(2.0 * np.ravel(report["avg_bhp"]), rel=1e-6)
+        assert np.ravel(evaluation["bhp"]) == pytest.approx(2.0 * np.ravel(report["bhp"]), rel=1e-6)
         assert evaluation["fuel"] > report["fuel"]
 
     def test_constraint_violations_are_reported(self, route, analyse, open_sea, island):
@@ -361,7 +361,7 @@ class TestEvaluation:
 
         evaluation = analyse(island).evaluate(straight.passage_plan)
 
-        # The default constraints are avg_bhp < max_power and z < 0.
+        # The default constraints are bhp < max_power and z < 0.
         assert len(evaluation["constraint_violations"]) == 2
         assert evaluation["max_constraint_violation"] == pytest.approx(np.max(evaluation["z"]))
         assert evaluation["max_constraint_violation"] > 50.0
@@ -533,8 +533,8 @@ def test_function_polar_reads_its_inputs_from_the_forecasts(vessel, atmosphere, 
     at_22 = baseline(function_vessel(), 22.0)
 
     # The table interpolates the cubic law linearly between whole knots.
-    assert np.ravel(at_12["avg_bhp"]) == pytest.approx(np.ravel(table["avg_bhp"]), rel=1e-2)
-    assert np.ravel(at_22["avg_bhp"]) == pytest.approx(1.1 * np.ravel(at_12["avg_bhp"]), rel=1e-9)
+    assert np.ravel(at_12["bhp"]) == pytest.approx(np.ravel(table["bhp"]), rel=1e-2)
+    assert np.ravel(at_22["bhp"]) == pytest.approx(1.1 * np.ravel(at_12["bhp"]), rel=1e-9)
     assert at_22["fuel"] > at_12["fuel"]
 
 
@@ -617,8 +617,8 @@ def test_wind_at_another_height_is_relative_to_the_vessel(wave, current, open_se
     stronger_wind = baseline(wind_vessel("100"), atmosphere_with_wind_at_100_m(1.5))
 
     # Same wind at 100 m as at 10 m: the same quantities, so the same power.
-    assert np.ravel(same_wind["avg_bhp"]) == pytest.approx(np.ravel(with_ten["avg_bhp"]), rel=1e-9)
-    assert not np.allclose(np.ravel(stronger_wind["avg_bhp"]), np.ravel(same_wind["avg_bhp"]))
+    assert np.ravel(same_wind["bhp"]) == pytest.approx(np.ravel(with_ten["bhp"]), rel=1e-9)
+    assert not np.allclose(np.ravel(stronger_wind["bhp"]), np.ravel(same_wind["bhp"]))
 
 
 def test_wind_at_a_height_without_its_components_is_reported(atmosphere, wave, current, open_sea):
@@ -892,15 +892,15 @@ class TestConsumption:
         hourly = baseline(consumption_vessel("hourly_consumption"))
         segments = len(np.ravel(reference["ctim"]))
 
-        for key in ("avg_bhp", "hotel_load", "total_power", "sfoc", "hourly_consumption"):
+        for key in ("bhp", "hotel_load", "total_power", "sfoc", "hourly_consumption"):
             assert len(np.ravel(reference[key])) == segments
         assert np.ravel(reference["hotel_load"]) == pytest.approx(HOTEL_LOAD)
-        assert np.ravel(reference["total_power"]) == pytest.approx(np.ravel(reference["avg_bhp"]) + HOTEL_LOAD)
+        assert np.ravel(reference["total_power"]) == pytest.approx(np.ravel(reference["bhp"]) + HOTEL_LOAD)
         assert np.ravel(reference["sfoc"]) == pytest.approx(SFC)
         assert {"total_power", "sfoc", "hourly_consumption"} <= set(total)
-        assert not {"avg_bhp", "hotel_load"} & set(total)
+        assert not {"bhp", "hotel_load"} & set(total)
         assert "hourly_consumption" in hourly
-        assert not {"avg_bhp", "hotel_load", "total_power", "sfoc"} & set(hourly)
+        assert not {"bhp", "hotel_load", "total_power", "sfoc"} & set(hourly)
 
     def test_optional_vessel_variables_are_computed_when_listed(self, vessel, baseline):
         import warnings
@@ -910,7 +910,7 @@ class TestConsumption:
             listed = baseline(vessel, variables=["max_bhp", "sails_contribution"])
             other = baseline(consumption_vessel("bhp", hotel_load=HOTEL_LOAD, sfoc=SFC, max_power=None))
 
-        assert np.ravel(listed["max_bhp"]) == pytest.approx(np.ravel(listed["avg_bhp"]))
+        assert np.ravel(listed["max_bhp"]) == pytest.approx(np.ravel(listed["bhp"]))
         assert np.ravel(listed["sails_contribution"]) == pytest.approx(0.0)
         assert not {"max_bhp", "sails_contribution"} & set(other)
 
@@ -922,6 +922,37 @@ class TestConsumption:
         assert "max_bhp," not in str(record[0].message)
         assert {"max_bhp", "sails_contribution"} <= set(default)
 
+    def test_avg_bhp_is_the_deprecated_name_of_bhp(self, reference, baseline):
+        import json
+
+        from architeuthis.report import ReportCollection, RoutingReport
+        from architeuthis.toolbox.json_utils import CustomEncoder
+
+        assert "avg_bhp" not in dict(reference)
+        with pytest.warns(DeprecationWarning, match="use 'bhp'"):
+            assert np.ravel(reference["avg_bhp"]) == pytest.approx(np.ravel(reference["bhp"]))
+        with pytest.warns(DeprecationWarning, match="use 'bhp'"):
+            assert "avg_bhp" in reference
+        with pytest.warns(DeprecationWarning, match="use 'bhp'"):
+            assert reference.get("avg_bhp") is reference["bhp"]
+
+        # Reports saved under the former name are read under the current one
+        saved = {("avg_bhp" if key == "bhp" else key): value for key, value in reference.items()}
+        loaded = ReportCollection(json.loads(json.dumps([saved], cls=CustomEncoder)))[0]
+        assert isinstance(loaded, RoutingReport)
+        assert "bhp" in dict(loaded) and "avg_bhp" not in dict(loaded)
+
+        # Constraints written with the former name still work
+        seen = {}
+
+        def constraints(ctx):
+            with pytest.warns(DeprecationWarning, match="use 'bhp'"):
+                seen["avg_bhp"] = ctx["avg_bhp"]
+            return [ctx["z"] < 0.0]
+
+        baseline(consumption_vessel("bhp", hotel_load=HOTEL_LOAD, sfoc=SFC), constraints=constraints)
+        assert "avg_bhp" in seen
+
     def test_a_constant_brake_power(self, baseline):
         from architeuthis.vessel import Vessel
 
@@ -930,7 +961,7 @@ class TestConsumption:
 
         report = baseline(vessel)
 
-        assert np.ravel(report["avg_bhp"]) == pytest.approx(1000.0)
+        assert np.ravel(report["bhp"]) == pytest.approx(1000.0)
         assert report["fuel"] == pytest.approx((1000.0 + HOTEL_LOAD) * ETA / HOUR * SFC / 1e6)
 
     def test_sfoc_and_hotel_load_can_be_models(self, baseline, reference):
@@ -949,7 +980,7 @@ class TestConsumption:
 
         report = baseline(vessel, variables=["load"])
 
-        assert np.ravel(report["load"]) == pytest.approx(np.ravel(report["avg_bhp"]) / 1e4)
+        assert np.ravel(report["load"]) == pytest.approx(np.ravel(report["bhp"]) / 1e4)
 
     def test_a_vessel_without_consumption_is_reported(self, baseline):
         from architeuthis.vessel import Vessel
@@ -986,10 +1017,10 @@ class TestConsumption:
 
         from architeuthis.core import default_routing_constraints
 
-        powers = {key: ca.MX.sym(key) for key in ("max_bhp", "avg_bhp", "total_power")}
+        powers = {key: ca.MX.sym(key) for key in ("max_bhp", "bhp", "total_power")}
         ctx = {"vessel": SimpleNamespace(max_power=100.0), "z": ca.MX.sym("z"), **powers}
 
-        for key in ("max_bhp", "avg_bhp", "total_power"):
+        for key in ("max_bhp", "bhp", "total_power"):
             limit, at_sea = default_routing_constraints(ctx)
             assert ca.is_equal(limit.dep(0), powers[key])
             assert ca.is_equal(at_sea.dep(0), ctx["z"])

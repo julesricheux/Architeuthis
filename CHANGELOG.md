@@ -181,13 +181,14 @@ and this project follows Semantic Versioning https://semver.org
 - The vessel consumption has three formulations, and the routing only needs one of them, the first that the vessel has: `hourly_consumption` (kg/h), `total_power` (kW, propulsion and hotel) burnt at `sfoc`, or `bhp` plus `hotel_load` burnt at `sfoc`. Each is a table, a function or a constant. `Vessel.consumption(query)` computes them, `Vessel.consumption_model`, `consumption_keys()` and `consumption_quantities()` describe them, and `vessel.CONSUMPTION_KEYS` lists the three models.
 - `hotel_load` and `sfoc` can be vessel models, which take precedence over the numbers or functions given to `Vessel` and can take `bhp`, `hotel_load` or `total_power` as inputs: an sfoc curve of the engine load, for example. Any vessel model listed in `variables` can take them too.
 - `add_constant(var_key, value)` registers a constant model without input on any data object, a constant brake power or hotel load for example.
-- Reports hold the consumption quantities of the formulation: `hourly_consumption` always, and `avg_bhp`, `hotel_load`, `total_power` and `sfoc` when the formulation computes them. They are in `ctx` for the constraints.
-- `plot_report` draws `total_power`, else `hourly_consumption`, on its power panel when the report has no `avg_bhp`, and says so on the sails panel when the report has no `sails_contribution`.
+- Reports hold the consumption quantities of the formulation: `hourly_consumption` always, and `bhp`, `hotel_load`, `total_power` and `sfoc` when the formulation computes them. They are in `ctx` for the constraints.
+- `plot_report` draws `total_power`, else `hourly_consumption`, on its power panel when the report has no `bhp`, and says so on the sails panel when the report has no `sails_contribution`.
 
 ### Changed
 - `max_bhp` and `sails_contribution` are no longer required: a vessel needs only a consumption model, and they are computed and reported when listed in `variables`, as any other vessel model: `RoutingAnalysis(..., variables=["max_bhp", "sails_contribution"])`. The examples and the quick start list them.
-- The default constraints limit `max_bhp` when it is in the variables, else `avg_bhp`, else `total_power`, to `max_power`, and only if it is not None. `Vessel(max_power=None)` gives no power limit.
+- The default constraints limit `max_bhp` when it is in the variables, else `bhp`, else `total_power`, to `max_power`, and only if it is not None. `Vessel(max_power=None)` gives no power limit.
 - The fuel is computed as `sum(hourly_consumption * dt) / 1e3`, which gives the same value as before for a `bhp` model.
+- The brake power is `bhp` in reports, in `ctx` and in the default table columns, the key of its vessel model, instead of `avg_bhp`. The y label of `plot_power_and_weather` is `BHP / kW`. Saved reports with `avg_bhp` are read with `bhp`.
 - The examples follow the new vessel definition: the sfoc and hotel load curves are vessel models of `total_power` and `bhp` (active in `ensemble_routing.py`, as commented alternatives in `simple_routing.py` and `long_term_routing.py`), `function_polar_routing.py` shows the other consumption formulations as commented alternatives, and the unused `columns` lists are gone.
 - `plot_power_and_weather(max_bhp=True)`, `plot_ensemble_along_route`, `draw(sails_threshold=...)` and the tooltips of the UI map skip `max_bhp` and `sails_contribution` when a report has none.
 
@@ -196,6 +197,7 @@ and this project follows Semantic Versioning https://semver.org
 - A vessel with `max_bhp` or `sails_contribution` models still has them computed when `variables` does not list them, so that the default constraints and existing scripts work as before, with a `DeprecationWarning`. From 0.4.0, they are computed only when listed.
 - `Vessel` without `max_power` still has 1e12 kW, with a `DeprecationWarning`. From 0.4.0, the default is None, no power limit.
 - A `bhp` or `total_power` model without `sfoc` still burns at 0 g/kWh, a zero objective, with a `DeprecationWarning`. From 0.4.0, it raises an error.
+- `report["avg_bhp"]`, `ctx["avg_bhp"]`, `report.get("avg_bhp")` and `"avg_bhp" in report` still give the brake power, with a `DeprecationWarning`: use `bhp`.
 
 ---
 
@@ -204,6 +206,7 @@ and this project follows Semantic Versioning https://semver.org
 ### Removed
 - `RoutingAnalysis(options={"include_gusts": ...})`, deprecated since 0.3.1: give `variables=["gust"]`. An analysis then computes `tws_gust` and `aws_gust` only when `"gust"` is in its variables, no longer by default.
 - `Vessel(sfc=...)` and `Vessel.sfc`, deprecated in favour of `sfoc`.
+- The former report and `ctx` name `avg_bhp` of the brake power, deprecated in favour of `bhp`. Saved reports with `avg_bhp` are still read with `bhp`.
 
 ### Changed
 - Vessel models other than the consumption, `max_bhp` and `sails_contribution` included, are computed only when listed in `variables`.

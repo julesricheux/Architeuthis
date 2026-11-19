@@ -125,7 +125,7 @@ The objective is the fuel, in tonnes: the integral over the passage of the consu
 | --- | --- | --- |
 | `hourly_consumption`, kg/h | the model itself | `hourly_consumption` |
 | `total_power`, kW: propulsion and hotel | `total_power * sfoc / 1e3` | `total_power`, `sfoc`, `hourly_consumption` |
-| `bhp`, kW: propulsion | `(bhp + hotel_load) * sfoc / 1e3` | `avg_bhp`, `hotel_load`, `total_power`, `sfoc`, `hourly_consumption` |
+| `bhp`, kW: propulsion | `(bhp + hotel_load) * sfoc / 1e3` | `bhp`, `hotel_load`, `total_power`, `sfoc`, `hourly_consumption` |
 
 Each model is a table, a function or a constant: `vessel.add_constant("bhp", 1500.)` registers a model without input. `hotel_load` (kW) and `sfoc` (g/kWh) are given to `Vessel` as numbers or as functions of the power, the brake power for `hotel_load` and the total power for `sfoc`. A model of the same key takes precedence, and may name `bhp`, `hotel_load` or `total_power` among its inputs, so an sfoc curve of the engine load is a table or a function of `total_power`:
 
@@ -137,7 +137,7 @@ vessel.add_function("sfoc", lambda x: 175. + 2e-6 * (x["total_power"] - 3000.)**
 
 `vessel.consumption(query)` gives these quantities for a query, and `vessel.consumption_model` the model it uses. Without any of the three models, the routing raises an error that says so. Without `sfoc` when it is needed, it is still 0 g/kWh until 0.4.0, a zero objective, with a `DeprecationWarning`; from 0.4.0 this is an error too. The entries of the table are in the report and in `ctx`, so a constraint can limit the consumption or the total power. `sfc`, the former name of `sfoc`, still works with a `DeprecationWarning` until 0.4.0.
 
-`max_power`, in kW, is the power limit of the default constraints: `max_bhp` when `variables` lists it, else `avg_bhp`, else `total_power` stays below it. `max_power=None` leaves the power free. Left out, it is still 1e12 kW until 0.4.0, with a `DeprecationWarning`, and None from 0.4.0.
+`max_power`, in kW, is the power limit of the default constraints: `max_bhp` when `variables` lists it, else `bhp`, else `total_power` stays below it. `max_power=None` leaves the power free. Left out, it is still 1e12 kW until 0.4.0, with a `DeprecationWarning`, and None from 0.4.0.
 
 Until 0.4.0, `max_bhp` and `sails_contribution` are still computed when the vessel has these models and `variables` does not list them, with a `DeprecationWarning`, so that the default constraints and existing scripts work as before. List them to keep them from 0.4.0.
 
@@ -290,7 +290,7 @@ Six stacked panels share a time axis in UTC, which runs from the first to the la
 | --- | --- | --- | --- | --- |
 | 1 | `sog` | `sog` | Speed over ground, kt | Automatic |
 | 2 | `sails` | `sails_contribution` | Sails contribution, %. Without it, the panel says so | 0 to 100 |
-| 3 | `bhp` | `avg_bhp`, `max_bhp` | Average BHP, kW. With `max_bhp`, load fluctuations are dashed lines and a band at average ± (max − average). Without `avg_bhp`, `total_power` (kW), else `hourly_consumption` (kg/h) | From 0 |
+| 3 | `bhp` | `bhp`, `max_bhp` | Average BHP, kW. With `max_bhp`, load fluctuations are dashed lines and a band at average ± (max − average). Without `bhp`, `total_power` (kW), else `hourly_consumption` (kg/h) | From 0 |
 | 4 | `swh` | `swh` | Significant wave height, m | From 0 |
 | 5 | `tws` | `tws`, `tws_gust` | True wind, kt: average, and gust as a dashed line with a band | From 0 |
 | 6 | `aws` | `aws`, `aws_gust` | Apparent wind, kt: average, and gust as a dashed line with a band | From 0 |
@@ -364,7 +364,7 @@ plot_variable(reports, variable, unit="", labels=None, ylim=(0.0, None), legend=
 plot_power_and_weather(reports, labels=None, max_bhp=False, figsize=(12, 10), dpi=300, save_as=None, show=True)
 ```
 
-Both draw per-segment quantities against time, as steps, with one viridis color per report. `plot_variable` draws one quantity. `plot_power_and_weather` draws `avg_bhp`, `swh` and `tws` on three panels, and `max_bhp=True` adds `max_bhp` as dashed lines on the top panel, for the reports that have it.
+Both draw per-segment quantities against time, as steps, with one viridis color per report. `plot_variable` draws one quantity. `plot_power_and_weather` draws `bhp`, `swh` and `tws` on three panels, and `max_bhp=True` adds `max_bhp` as dashed lines on the top panel, for the reports that have it.
 
 `labels` gives the legend text by `init_fac`, so reports need this entry. Without a label, the text is `Route <init_fac>`.
 
@@ -382,7 +382,7 @@ plot_power_and_weather(reports, labels=sides, max_bhp=True, save_as="comparison.
 | `plot_fuel_quantiles(reports, daily=False, converged_only=True, figsize=(8, 4), save_as=None, show=True)` | The same bands for the fuel against ETA. `daily` shows tons per day of transit. `converged_only` leaves out the reports with a `status` other than 1. | `eta`, `fuel`, `transit_time`, `status` |
 | `plot_convergence(reports, figsize=(8, 4), save_as=None, show=True)` | Share of the reports with `status` 1 for each ETA, in %: the probability that this ETA is possible, when reports are ensemble members. | `eta`, `status` |
 | `plot_fuel_distribution(groups, horizontal=False, figsize=(8, 3), save_as=None, show=True)` | Violins with box plots, one per group. `groups` gives reports by label, and `horizontal` lays them on their side. | `fuel` |
-| `plot_ensemble_along_route(report, atmosphere, wave, ylim=None, figsize=(10, 8), save_as=None, show=True)` | One route, whatever the member it was optimized for, on three panels: BHP with load fluctuations, then SWH and TWS with their quantile bands over the members. `atmosphere` and `wave` are ensemble forecasts with the `u10`, `v10` and `swh` interpolators. `ylim` gives limits by panel: `bhp`, `swh` or `tws`. | `ctim`, `tim`, `clat`, `clon`, `avg_bhp`, `max_bhp` |
+| `plot_ensemble_along_route(report, atmosphere, wave, ylim=None, figsize=(10, 8), save_as=None, show=True)` | One route, whatever the member it was optimized for, on three panels: BHP with load fluctuations, then SWH and TWS with their quantile bands over the members. `atmosphere` and `wave` are ensemble forecasts with the `u10`, `v10` and `swh` interpolators. `ylim` gives limits by panel: `bhp`, `swh` or `tws`. | `ctim`, `tim`, `clat`, `clon`, `bhp`, `max_bhp` |
 | `plot_fuel_vs_etd(reports, models_colors=None, ylim=None, figsize=(10, 3.5), show=True)` | Fuel against ETD, one figure per vessel: one color per model, crosses for `solve` 0 and dots for `solve` 1. `models_colors` gives a color by model, and the default `ylim` is rounded to 2 t around the points. Returns a list of figures. | `solve`, `vessel`, `model`, `etd`, `fuel` |
 
 ```python
@@ -421,7 +421,7 @@ sky.draw(columns, valid_time, style="smooth", latitude=latitude, longitude=longi
 
 | Helper | Use |
 | --- | --- |
-| `get_steps(report, quantity)` | Times and values of a per-segment quantity, to draw it as steps: `plt.plot(*get_steps(report, "avg_bhp"))`. Also `report.steps(quantity)`. |
+| `get_steps(report, quantity)` | Times and values of a per-segment quantity, to draw it as steps: `plt.plot(*get_steps(report, "bhp"))`. Also `report.steps(quantity)`. |
 | `add_map_background(ax)` | Land, ocean, coastline and gridlines of the maps above, on cartopy axes. Returns the gridlines. |
 | `set_plot_style()` | Applies the Architeuthis style to every figure from now on, for scripts that draw their own figures. Importing `plot_utils` no longer does this. |
 | `plot_style()` | The same style inside a `with` block only. |

@@ -64,7 +64,7 @@ def members(baseline_report):
             member=member,
             init_fac=float(member),
             tws=baseline_report["tws"] * factor,
-            avg_bhp=baseline_report["avg_bhp"] * factor,
+            bhp=baseline_report["bhp"] * factor,
             fuel=baseline_report["fuel"] * factor,
         )
         reports.append(RoutingReport(report))
@@ -121,7 +121,7 @@ class TestPlotReport:
         [
             ("sog", "sog"),
             ("sails", "sails_contribution"),
-            ("bhp", "avg_bhp"),
+            ("bhp", "bhp"),
             ("swh", "swh"),
             ("tws", "tws"),
             ("aws", "aws"),
@@ -135,7 +135,7 @@ class TestPlotReport:
     def test_power_panel_shows_load_fluctuations_around_the_average(self, baseline_report):
         ax = plot_report(baseline_report, show=False).axes[REPORT_PANELS.index("bhp")]
 
-        average = baseline_report["avg_bhp"]
+        average = baseline_report["bhp"]
         maximum = baseline_report["max_bhp"]
         np.testing.assert_allclose(step_values(ax, 1), maximum)
         np.testing.assert_allclose(step_values(ax, 2), average - (maximum - average))
@@ -170,7 +170,7 @@ class TestPlotReport:
         assert len(sails.lines) == 0
         assert "sails_contribution" in sails.texts[0].get_text()
         assert len(power.lines) == 1
-        np.testing.assert_allclose(step_values(power), report["avg_bhp"])
+        np.testing.assert_allclose(step_values(power), report["bhp"])
         assert [text.get_text() for text in power.get_legend().get_texts()] == ["Average BHP"]
 
     @pytest.mark.parametrize(
@@ -178,7 +178,7 @@ class TestPlotReport:
         [("total_power", "Total power / kW"), ("hourly_consumption", "Consumption / kg/h")],
     )
     def test_power_panel_falls_back_on_the_consumption(self, baseline_report, key, label):
-        report = {k: v for k, v in baseline_report.items() if k not in ("avg_bhp", "total_power")}
+        report = {k: v for k, v in baseline_report.items() if k not in ("bhp", "total_power")}
         report[key] = baseline_report[key]
 
         ax = plot_report(report, show=False).axes[REPORT_PANELS.index("bhp")]
@@ -488,7 +488,7 @@ def test_plot_variable_has_a_default_label_and_no_legend_by_default(baseline_rep
 def test_power_and_weather_has_three_panels(baseline_report):
     fig = plot_power_and_weather([baseline_report], labels={0.0: "Ortho"}, show=False)
 
-    assert [ax.get_ylabel() for ax in fig.axes] == ["AVG_BHP / kW", "SWH / m", "TWS / kts"]
+    assert [ax.get_ylabel() for ax in fig.axes] == ["BHP / kW", "SWH / m", "TWS / kts"]
     assert len(fig.axes[0].lines) == 1
 
 
