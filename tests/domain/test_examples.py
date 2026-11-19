@@ -32,7 +32,7 @@ from architeuthis.forecast import (
 )
 from architeuthis.report import ReportCollection
 from architeuthis.route import RouteLibrary
-from architeuthis.satellite import CopernicusASCATData, EUMETSATASCATData
+from architeuthis.satellite import CopernicusASCATData, EUMETSATASCATData, GIBSData, WMSImageryData
 from architeuthis.vessel import Vessel
 from architeuthis.voyage import PassagePlanLibrary
 
@@ -56,6 +56,7 @@ WINDOWS = {
     "ifs_route_tested_with_gfs.py": SOON,
     "comparison_ascat_models.py": (TODAY - pd.Timedelta(days=4), TODAY + pd.Timedelta(days=2)),
     "ascat_sources.py": (TODAY - pd.Timedelta(days=2), TODAY),
+    "cloud_imagery.py": SOON,
     "function_polar_routing.py": SOON,
     "sky_along_route.py": SOON,
     "vessel_definitions.py": SOON,
@@ -125,6 +126,23 @@ def ascat_dataset():
     })
 
 
+def imagery_dataset(imagery):
+    """
+    Brightness temperatures every 10 min over the period and the grid of
+    an imagery source: clouds moving east over a warm sea, GOES-East
+    1.5 K warmer than Meteosat.
+    """
+    latitude, longitude = imagery.grid()
+    times = pd.date_range(pd.Timestamp(imagery.start).ceil("10min"), pd.Timestamp(imagery.end), freq="10min")
+    hours = (times - times[0]).total_seconds().values / 3600.0
+    shift = 1.5 if isinstance(imagery, GIBSData) else 0.0
+    clouds = np.cos(np.radians(longitude[None, None, :] * 6.0 - hours[:, None, None] * 30.0)) * np.cos(np.radians(latitude[None, :, None] * 8.0))
+    return xr.Dataset(
+        {"bt": (("valid_time", "latitude", "longitude"), (255.0 + 30.0 * clouds + shift).astype(np.float32))},
+        coords={"valid_time": times.asi8 / 1e9, "latitude": latitude, "longitude": longitude},
+    )
+
+
 def with_wind(data):
     return data.assign(
         si10=np.hypot(data.u10, data.v10),
@@ -179,6 +197,9 @@ def run_script(script, folder):
     def load_ascat(ascat):
         ascat.data = ascat_dataset()
 
+    def load_imagery(imagery):
+        imagery.data = imagery_dataset(imagery)
+
     add_interpolator = ArchiteuthisData.add_interpolator
 
     def add_any_interpolator(data, var_dim, coord_dims, *args, **kwargs):
@@ -199,6 +220,8 @@ def run_script(script, folder):
         source = quick_start_of_readme()
     else:
         source = (EXAMPLES / script).read_text(encoding="utf-8").replace("members = list(range(1,51,1))", "members = [1, 2]")
+        # Pixels of 1 deg rather than 0.05: the same script, 400 times fewer pixels
+        source = source.replace("resolution = 0.05", "resolution = 1.0")
     run_file = folder / script
     run_file.write_text(source, encoding="utf-8")
 
@@ -214,12 +237,15 @@ def run_script(script, folder):
             patch.object(Vessel, "load_data", load_vessel),
             patch.object(EUMETSATASCATData, "load_data", load_ascat),
             patch.object(CopernicusASCATData, "load_data", load_ascat),
+            patch.object(WMSImageryData, "load_data", load_imagery),
             patch.object(ArchiteuthisData, "add_interpolator", add_any_interpolator),
             patch.object(type(xr.Dataset().herbie), "with_wind", lambda accessor: with_wind(accessor._obj), create=True),
             patch.object(RoutingAnalysis, "run", few_iterations),
             patch("architeuthis.forecast.HerbieLatest", lambda **kwargs: SimpleNamespace(valid_date=TODAY)),
             patch.object(pd.DataFrame, "to_clipboard", lambda *args, **kwargs: None),
             patch.object(plt, "show", lambda *args, **kwargs: None),
+            # Drawing a map would download Natural Earth
+            patch.object(plt.Figure, "savefig", lambda *args, **kwargs: None),
         ):
             return runpy.run_path(str(run_file), run_name="__main__")
     finally:
@@ -334,6 +360,20 @@ def test_ascat_sources_uses_both_sources_and_matches_them(example):
     # The same synthetic measurements from both: every one matches, identical
     assert len(variables["pairs"]) > 0
     assert (variables["pairs"]["wind_speed_cmems"] == variables["pairs"]["wind_speed_eumetsat"]).all()
+
+
+def test_cloud_imagery_joins_both_satellites_into_one_layer(example):
+    run = example("cloud_imagery.py")
+    variables = run.variables
+    clouds = variables["clouds"]
+
+    assert list(clouds.data["source"].values) == ["clouds_eumetview", "clouds_gibs"]
+    assert np.isfinite(clouds.data["bt"].values).all()
+    # The overlap check finds the 1.5 K of the synthetic sources
+    assert np.median(variables["difference"]) == pytest.approx(1.5, abs=1e-3)
+    assert len(variables["frames"]) == len(clouds.times()) > 1
+    assert variables["frames"][0].shape == (25, 80, 4)
+    assert (run.folder / "cloud_imagery.gif").exists()
 
 
 def test_function_polar_routing_reads_the_air_temperature(example):

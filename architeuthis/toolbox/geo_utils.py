@@ -571,6 +571,29 @@ def poly_deviated_route(lats, lons, divergences=None):
     return route
 
 
+def central_angle(lat, lon, lat0, lon0):
+    """
+    Angle at the centre of the Earth between positions and a point.
+
+    Numeric. The angle from the sub-satellite point of a geostationary
+    satellite (`lat0 = 0`) tells how obliquely it sees a position: the
+    images are coarser and the clouds displaced towards the limb.
+
+    Args:
+        lat: Latitudes, in degrees.
+        lon: Longitudes, in degrees.
+        lat0: Latitude of the point, in degrees.
+        lon0: Longitude of the point, in degrees.
+
+    Returns:
+        The angles, in degrees.
+    """
+    lat, lon = np.radians(lat), np.radians(lon)
+    lat0, lon0 = np.radians(lat0), np.radians(lon0)
+    cosine = np.sin(lat) * np.sin(lat0) + np.cos(lat) * np.cos(lat0) * np.cos(lon - lon0)
+    return np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))
+
+
 def lonlat_to_web_mercator(lon, lat):
     """
     Convert lon/lat in degrees to Web Mercator (EPSG:3857).

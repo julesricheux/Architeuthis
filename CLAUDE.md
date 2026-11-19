@@ -36,7 +36,7 @@ A single test: `python -m pytest tests/optimization/test_opti_rosenbrock.py::tes
 
 Credentials are handled by `architeuthis/credentials.py`, and each is only needed for its provider: `CDS_API_KEY`, `CMEMS_USER`, `CMEMS_PWD`, `EUMDAC_KEY`, `EUMDAC_SECRET` (`CREDENTIALS`). Users save them once with `python -m architeuthis.credentials set NAME...`, which stores them in the OS credential store through `keyring` (service `architeuthis`), reads them back, and removes from `os.environ` the variables of that credential, which would otherwise hide the saved value (⚠️ status naming them, never the value). They are read when a download needs them, never at import: environment variables first (the names above, then aliases: `CDSAPI_KEY`, `COPERNICUSMARINE_SERVICE_USERNAME`/`_PASSWORD`, the former `EUMDAC_USER`/`EUMDAC_PWD`), then the store. Data sources call `require_credentials` in their download hook and keep no secret on the object; a missing one raises `MissingCredentialError` after a ⚠️ status. Herbie sources (IFS, GFS, HRDPS) need none. The README has a tutorial per provider. Never write a real value in a tracked file, including in a comment.
 
-Downloads are cached under `~/data/` (`common._HOME`, moved by `ARCHITEUTHIS_HOME`, read at import) in `topo/`, `cmems/`, `cds/`, `eumetsat/` and `iip/`. `RouteLibrary`, `RouteSetLibrary`, `PassagePlanLibrary` and `ExclusionZoneLibrary` store JSON in `route_library/`, `route_sets/`, `passage_plans/` and `exclusion_zones/`. The UI reads route reports from `routes/`, a different format, written by `ReportCollection.save`. Vessel polars are NetCDF files that are not in the repository.
+Downloads are cached under `~/data/` (`common._HOME`, moved by `ARCHITEUTHIS_HOME`, read at import) in `topo/`, `cmems/`, `cds/`, `eumetsat/`, `wms/` (imagery PNGs, by host, layer and box) and `iip/`. `RouteLibrary`, `RouteSetLibrary`, `PassagePlanLibrary` and `ExclusionZoneLibrary` store JSON in `route_library/`, `route_sets/`, `passage_plans/` and `exclusion_zones/`. The UI reads route reports from `routes/`, a different format, written by `ReportCollection.save`. Vessel polars are NetCDF files that are not in the repository.
 
 Development is Spyder-based: scripts use `#%%` cells and many modules have a `__main__` block used as a manual check.
 
@@ -59,7 +59,9 @@ copernicus.py  CopernicusMarineData mixin (subset + credentials), shared by Cope
         +-- forecast.py   Topography; Forecast > Herbie (deterministic, HRDPS, ensemble),
         |                 Copernicus (CMEMS), CDS (ERA5); calm_forecast (zero fields)
         +-- satellite.py  EUMETSATData > EUMETSATASCATData, PoseidonData; CopernicusSatelliteData >
-        |                 CopernicusASCATData; ASCATData: first of EUMETSAT, CMEMS that works (validation)
+        |                 CopernicusASCATData; ASCATData: first of EUMETSAT, CMEMS that works (validation);
+        |                 SatelliteImagery > WMSImageryData > EUMETViewData, GIBSData (IR images as bt, K);
+        |                 GeostationaryImagery: sources joined into one layer (cloud imagery)
         |
 icebergs.py    IIP iceberg limit, fetched on first use: berg_zone polygon, berg_geojson
         |
@@ -73,14 +75,15 @@ core.py        RoutingAnalysis (run, evaluate); re-exports the above
         |
 ui.py          Dash/Leaflet viewer of forecast fields and saved route reports
 
-toolbox/       geo_utils (route geometry), plot_utils (figures, documented in docs/user_guide.md),
-               json_utils (report JSON codec), inspect_tools, string_formatting...
+toolbox/       geo_utils (route geometry, central_angle), plot_utils (figures, documented in docs/user_guide.md),
+               json_utils (report JSON codec), wms_utils (WMS requests, GIBS times and colormaps),
+               image_utils (PNG, palette inversion, colour scales, blending, GIF), inspect_tools, string_formatting...
 data/          package data: cloud_genera.json (the 10 WMO genera, étages, precipitation)
 wrappers/      json_wrapper (GeoJSON), leaflet_wrapper (zone layers), legacy provider wrappers
 examples/      simple_routing, long_term_routing, ensemble_routing, post_leg_rewind,
                passage_planning, ifs_route_tested_with_gfs, short_term_routing, comparison_ascat_models,
                function_polar_routing, sky_along_route, vessel_definitions, wind_only_routing,
-               ascat_sources;
+               ascat_sources, cloud_imagery;
                they define their own sources and zones, and keep past settings as commented lines
 tests/         numpy, optimization, modeling (AeroSandbox), domain (Architeuthis)
 ```
@@ -195,6 +198,8 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 - `EUMDAC_KEY` and `EUMDAC_SECRET` hold the EUMETSAT Consumer Key and Secret, not a login. When neither CMEMS credential is found, `CopernicusForecast` passes `None` to the toolbox only if the `copernicusmarine login` file exists (`COPERNICUSMARINE_CREDENTIALS_DIRECTORY` or `~/.copernicusmarine/`), else it raises; likewise `CDSForecast` falls back to `cdsapi.Client()` only if `CDSAPI_RC` or `~/.cdsapirc` exists. Architeuthis never writes `~/.cdsapirc` any more. Without a credential store (Linux server), `keyring` errors are treated as "not found", so environment variables still work.
 - `copernicusmarine` takes naive dates as **local** times, not UTC. `CopernicusSatelliteData` passes UTC-aware timestamps; `CopernicusForecast` passes `date` and `end` as given. Its `"strict-inside"` selection refuses a period past the end of a dataset, so satellite data uses `"inside"`, which clips. Importing `copernicusmarine` takes about 3 s, which is why `architeuthis/copernicus.py` exists rather than this code living in `common.py`; mock it with `patch("architeuthis.copernicus.copernicusmarine.subset")`.
 - `ASCATData` is not an `EUMETSATData`: it builds an `EUMETSATASCATData` or a `CopernicusASCATData` per source in `load_data` and keeps the data of the first that loads, catching any exception of the others. ASCAT `wind_dir` is where the wind goes, unlike the meteorological convention of the models.
+- Imagery servers send rendered PNGs, which `WMSImageryData` turns back into brightness temperatures (`bt`, K) with the palette of the layer. EUMETView's grey ramp is calibrated in `EUMETVIEW_CALIBRATIONS`, fitted once against FCI L1c data; another layer needs its own fit. The GIBS IR colormap draws 195-203 K in the greys of 261-328 K: `GIBSData.secondary` marks those entries and `image_utils.invert_palette` reads such pixels from their neighbours (`tolerance` 3, a wider one makes most mid-grey sea ambiguous and turns it cold). Past about 70 deg from GOES-East (east of 5 W), GIBS reads cold; `GeostationaryImagery` gives Meteosat all the weight there.
+- The WMS capabilities of GIBS may lag by an hour or more, depending on the server answering: `GIBSData` takes its times from DescribeDomains (`wms_utils.gibs_time_domain`), falling back on the capabilities. An entirely transparent image (not produced yet) is left out with a ⚠️ status and not cached. GIBS is about an hour behind EUMETView, so `GeostationaryImagery` (all sources' times by default) ends about an hour ago.
 - `core.berg_zone` and `icebergs.berg_zone` are computed when they are read (module `__getattr__`), so `from architeuthis.icebergs import berg_zone` fetches the iceberg limit at that line.
 
 ## Testing
@@ -204,7 +209,7 @@ Tests live in `tests/`, configured in `pyproject.toml`. `.github/workflows/tests
 CI installs the latest dependencies, so it can differ from a local environment. In particular, casadi 3.7 and 3.8 do not always converge the same way, so keep test objectives reasonably well conditioned.
 
 - **`tests/numpy`, `tests/optimization`, `tests/modeling`:** vendored from AeroSandbox, including the `import architeuthis as asb` style.
-- **`tests/domain`:** Architeuthis code. `test_route.py` covers routes, voyages and passage plans offline. `test_routing.py` runs `RoutingAnalysis.run` and `evaluate` end to end, marked `integration`. `test_plots.py` draws every figure from real reports with Agg. `test_ui.py` runs the real `ui.py` without its server, with forecasts and downloads replaced. `test_examples.py` runs every example and the quick start of the README from start to finish on synthetic data, so a new example must be added to its `WINDOWS`. `test_readme.py` checks the README and its links, and `test_plots.py` checks that `docs/user_guide.md` gives the signature of each figure. `test_import_side_effects.py` checks imports in a new interpreter with the network cut off. `test_satellite.py` covers the ASCAT sources and their fallback with a mocked Data Store and toolbox. `test_credentials.py` covers the credential lookup, the store and the command line, and `test_packaging.py` the single source of the version. Download tests set credentials with `monkeypatch.setenv`.
+- **`tests/domain`:** Architeuthis code. `test_route.py` covers routes, voyages and passage plans offline. `test_routing.py` runs `RoutingAnalysis.run` and `evaluate` end to end, marked `integration`. `test_plots.py` draws every figure from real reports with Agg. `test_ui.py` runs the real `ui.py` without its server, with forecasts and downloads replaced. `test_examples.py` runs every example and the quick start of the README from start to finish on synthetic data, so a new example must be added to its `WINDOWS`. `test_readme.py` checks the README and its links, and `test_plots.py` checks that `docs/user_guide.md` gives the signature of each figure. `test_import_side_effects.py` checks imports in a new interpreter with the network cut off. `test_satellite.py` covers the ASCAT sources and their fallback with a mocked Data Store and toolbox, and the imagery with synthetic PNGs, replaced `wms_utils` requests and sources whose `load_data` gives a `bt` directly. `test_examples.py` replaces `WMSImageryData.load_data`, runs `cloud_imagery.py` at 1 deg and makes `Figure.savefig` a no-op, since a saved map would download Natural Earth. `test_credentials.py` covers the credential lookup, the store and the command line, and `test_packaging.py` the single source of the version. Download tests set credentials with `monkeypatch.setenv`.
 - **Expected failure:** `test_black_box_nonsmooth_function` is `xfail` because IPOPT can fail on the kink of `abs()`.
 
 Rules for new tests:
@@ -215,7 +220,7 @@ Rules for new tests:
 - **Keep the checkout clean.** Importing `wrappers/json_wrapper.py` or `ui.py` writes `assets/dashExtensions_default.js` to the working directory, so import them from a temporary folder, as `tests/domain/test_toolbox.py` does.
 - **Do not change `--tb=native`.** Other traceback styles parse `casadi.py`, which raises `MemoryError` and aborts the session.
 
-Not covered: the real IIP server (`test_icebergs.py` replaces `requests.get`), `ui.py` with real forecasts and in a browser, the rendering of cartopy maps, the real EUMETSAT and Copernicus Marine servers for `satellite.py`, the real credential stores of each OS (only checked by hand on Windows), and the default `spral` solver options.
+Not covered: the real IIP server (`test_icebergs.py` replaces `requests.get`), `ui.py` with real forecasts and in a browser, the rendering of cartopy maps, the real EUMETSAT, Copernicus Marine, EUMETView and GIBS servers for `satellite.py`, the real credential stores of each OS (only checked by hand on Windows), and the default `spral` solver options.
 
 ## Deprecations
 
