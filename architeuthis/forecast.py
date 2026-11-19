@@ -20,6 +20,7 @@ import cdsapi
 import requests
 import copernicusmarine
 
+import casadi as ca
 import xarray as xr
 import pandas as pd
 import architeuthis.numpy as np
@@ -154,9 +155,9 @@ class Topography(ArchiteuthisSpatialData):
         url = _TOPOGRAPHY_URL
         
         if os.path.exists(self.path):
-            status("🗺️ Topography already downloaded.")
+            self.info("🗺️ Topography already downloaded.")
         else:
-            status("🗺️ Downloading topography...")
+            self.info("🗺️ Downloading topography...")
             try:
                 # Send a GET request with stream=True to handle large files efficiently
                 with requests.get(url, stream=True) as response:
@@ -219,9 +220,8 @@ class Topography(ArchiteuthisSpatialData):
         for polygon_coords in self.exclusion_zones:
             if len(polygon_coords) < 3:
                 # e.g. the iceberg zone when no IIP bulletin could be fetched
-                if self.verbose:
-                    zone_name = getattr(polygon_coords, "name", "an exclusion zone")
-                    status(f"⚠️ Warning: skipping {zone_name}, which has fewer than 3 points.")
+                zone_name = getattr(polygon_coords, "name", "an exclusion zone")
+                status(f"⚠️ Warning: skipping {zone_name}, which has fewer than 3 points.")
                 continue
             poly_path = Path(polygon_coords)
             mask_total |= poly_path.contains_points(points).reshape(LATS.shape)
@@ -230,8 +230,8 @@ class Topography(ArchiteuthisSpatialData):
         z_exclude = 1e3
         topo[mask_total] = z_exclude
         
-        if self.verbose and mask_total.sum():
-            status(f"⛔ Updated {mask_total.sum()} points inside exclusion zones.")
+        if mask_total.sum():
+            self.info(f"⛔ Updated {mask_total.sum()} points inside exclusion zones.")
             
         # =====================================================================
         # COMPUTE DISTANCE TO SHORE
@@ -477,9 +477,79 @@ class Forecast(ArchiteuthisSpatialData):
         for dim in (u_dim, v_dim):
             self.data[dim].attrs = {"units": "m**2"}
 
-        status(f"➕ Added {u_dim} and {v_dim}: {swh_dim}² components along {mwd_dim} to {self.name} data.")
-    
-    
+        self.info(f"➕ Added {u_dim} and {v_dim}: {swh_dim}² components along {mwd_dim} to {self.name} data.")
+
+
+# The fields that the routing reads from each source of the environment, in m/s
+# for the wind and current, m and m² for the waves (see add_wave_components).
+ENVIRONMENT_FIELDS = {
+    "atmosphere": ("u10", "v10"),
+    "wave": ("swh", "uw", "vw"),
+    "current": ("uo", "vo"),
+}
+
+
+def _calm_field(x: dict):
+    """
+    Zero at each point of a query, as a column.
+
+    The zeros do not depend on the query, so the routing takes no
+    derivative of them, even where the direction of a zero vector, the
+    wind or the waves, is undefined. They are MX for a symbolic query,
+    so that the routing computes with CasADi only: NumPy functions turn
+    DM into NumPy arrays from casadi 3.8, which a table query would then
+    broadcast to a square. DM otherwise.
+    """
+    size = max(
+        value.shape[0] if isinstance(value, (ca.MX, ca.SX, ca.DM)) else int(np.size(value))
+        for value in x.values()
+    )
+    symbolic = next((value for value in x.values() if isinstance(value, (ca.MX, ca.SX))), None)
+    return ca.DM.zeros(size, 1) if symbolic is None else type(symbolic).zeros(size, 1)
+
+
+def calm_forecast(
+    source: str,
+    name: str = None,
+    verbose: bool = False,
+) -> Forecast:
+    """
+    A forecast without data whose routing fields are zero.
+
+    It stands for a missing source of the environment: a calm wind, a
+    flat sea or no current. Its models are the fields that the routing
+    reads from that source, `ENVIRONMENT_FIELDS[source]`, defined with
+    `add_function` on the `valid_time`, `latitude` and `longitude` of
+    the queries. `RoutingAnalysis` builds one for each of `atmosphere`,
+    `wave` and `current` left to None. Other models can be added to
+    it, a constant air temperature for example.
+
+    Args:
+        source: "atmosphere" (`u10`, `v10`), "wave" (`swh`, `uw`, `vw`)
+            or "current" (`uo`, `vo`).
+        name: Name of the forecast, by default `calm_<source>`.
+        verbose: Whether to report the models added.
+
+    Returns:
+        A `Forecast` whose `data` is None.
+
+    Example:
+        >>> wave = calm_forecast("wave")
+        >>> wave("swh", {
+        ...     "valid_time": t,
+        ...     "latitude": 47.,
+        ...     "longitude": -5.,
+        ... })
+    """
+    if source not in ENVIRONMENT_FIELDS:
+        raise ValueError(f"calm_forecast: source is one of {list(ENVIRONMENT_FIELDS)}, not {source!r}.")
+
+    forecast = Forecast(f"calm_{source}" if name is None else name, date=None, fxx=None, verbose=verbose)
+    for key in ENVIRONMENT_FIELDS[source]:
+        forecast.add_function(key, _calm_field, FORECAST_KEYS)
+    return forecast
+
+
 class HerbieForecast(Forecast):
     """
     Base class of the GRIB2 forecasts downloaded with Herbie.
@@ -526,7 +596,7 @@ class HerbieForecast(Forecast):
         super().__init__(name, date, fxx, min_lon, max_lon, min_lat, max_lat, time_unit, verbose)
         
     def _find_latest(self):
-        status(f"📅 Date is not specified. Retrieving latest {self.model.upper()} {ANSI.orange}GRIB2 files.{ANSI.reset}")
+        self.info(f"📅 Date is not specified. Retrieving latest {self.model.upper()} {ANSI.orange}GRIB2 files.{ANSI.reset}")
         # print(f"📅 Date is not specified. Retrieving latest {self.model.upper()} {self.product.upper()} {ANSI.orange}GRIB2 files.{ANSI.reset}")
         return HerbieLatest(model=self.model, product=self.product).valid_date
         
@@ -541,9 +611,9 @@ class HerbieForecast(Forecast):
     def _download_data(self):
         if self.__FH is None:
             self.locate_data()
-        status(f"⬇️ Downloading {self.name} data ...")
+        self.info(f"⬇️ Downloading {self.name} data ...")
         self.path = self.__FH.download(self.regex,)
-        status("✅ Download completed.")
+        self.info("✅ Download completed.")
         
     def _convert_data(self):
         self.data["longitude"] = ((self.data["longitude"] + 180.) % 360.) - 180.
@@ -745,7 +815,7 @@ class HRDPSForecast(DeterministicHerbieForecast):
         pass
 
     def _download_data(self):
-        status(f"⬇️ Downloading {self.name} data ...")
+        self.info(f"⬇️ Downloading {self.name} data ...")
         self.path = [
             FastHerbie(
                 [self.f00],
@@ -757,7 +827,7 @@ class HRDPSForecast(DeterministicHerbieForecast):
             ).download()
             for variable in self.VARIABLES
         ]
-        status("✅ Download completed.")
+        self.info("✅ Download completed.")
 
     def _read_data(self):
         data = xr.merge([
@@ -971,7 +1041,7 @@ class CopernicusForecast(Forecast):
         super().__init__(name, date, None, min_lon, max_lon, min_lat, max_lat, time_unit, verbose)
         
     def _find_latest(self):
-        status(f"📅 Date is not specified. Retrieving latest {self.dataset} {ANSI.orange}NetCDF4 files.{ANSI.reset}")
+        self.info(f"📅 Date is not specified. Retrieving latest {self.dataset} {ANSI.orange}NetCDF4 files.{ANSI.reset}")
         return pd.Timestamp.today().normalize()
         
     def _download_data(self):
@@ -1098,7 +1168,7 @@ class CDSForecast(Forecast):
             self.f99 = end
         
     def _find_latest(self):
-        status(f"📅 Date is not specified. Retrieving latest {self.dataset} {ANSI.orange}NetCDF4 files{ANSI.reset}.")
+        self.info(f"📅 Date is not specified. Retrieving latest {self.dataset} {ANSI.orange}NetCDF4 files{ANSI.reset}.")
         return (pd.Timestamp.today() - pd.Timedelta("5d")).floor("6h").normalize()
     
     def _generate_request(self):
@@ -1134,9 +1204,9 @@ class CDSForecast(Forecast):
 
         # Check existence locally
         if os.path.exists(path):
-            status(f"💾 {self.name} data already downloaded.")
+            self.info(f"💾 {self.name} data already downloaded.")
         else:
-            status(f"⬇️ Downloading {self.name} data ...")
+            self.info(f"⬇️ Downloading {self.name} data ...")
             # Talk to the server
             os.makedirs(directory, exist_ok=True)
             
@@ -1149,7 +1219,7 @@ class CDSForecast(Forecast):
             client = cdsapi.Client() if key is None else cdsapi.Client(url=_CDS_URL, key=key)
             client.retrieve(self.dataset, self.request).download(target=path)
             
-            status("✅ Download completed.")
+            self.info("✅ Download completed.")
             
         self.path = path
         

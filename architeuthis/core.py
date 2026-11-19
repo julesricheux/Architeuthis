@@ -22,11 +22,11 @@ import architeuthis.numpy as np
 
 from abc import abstractmethod
 from typing import Callable, Mapping, Optional, Sequence, Union
-from architeuthis.vessel import POLAR_KEYS, Vessel
+from architeuthis.vessel import CONSUMPTION_QUANTITIES, Vessel
 from architeuthis.common import _banner, status
 from architeuthis.optimization import Opti
-from architeuthis.forecast import Forecast, Topography
-from architeuthis.report import RoutingReport
+from architeuthis.forecast import ENVIRONMENT_FIELDS, Forecast, Topography, calm_forecast
+from architeuthis.report import RoutingReport, _RenamedEntries
 from architeuthis.common import ArchiteuthisObject, GUST_DEFAULT_RATIO, WAVE_COMPONENTS_OFFSET
 # Route and voyage classes live in their own modules, which work without network
 # access; they are re-exported here for compatibility.
@@ -83,15 +83,48 @@ def transform(x, delta):
     # return 2 * (np.sigmoid(x) - 0.5) * delta
     return (sigmoid(x)) * tall(delta)
 
+# Vessel models still computed when the vessel has them and they are not listed
+# in the variables, with a DeprecationWarning: only when listed from 0.4.0.
+IMPLICIT_VESSEL_VARIABLES = ("max_bhp", "sails_contribution")
+
+# Powers that the default constraints keep below `Vessel.max_power`: the first
+# of them in the context.
+POWER_LIMITED_QUANTITIES = ("max_bhp", "bhp", "total_power")
+
+
 def default_routing_constraints(ctx: dict) -> list:
     """
     Default constraints function for RoutingAnalysis.
+
+    Every position is at sea, `z < 0`. If the vessel has a
+    `max_power`, the first of `max_bhp` (when listed in the
+    variables), `bhp` and `total_power` that the passage has stays
+    below it.
+
+    Args:
+        ctx: The quantities of the passage, with `vessel`.
+
+    Returns:
+        The list of constraints.
     """
-    return [
-        ctx["max_bhp"] < ctx["vessel"].max_power,
-        # (wide(ctx["z"]) @ tall(ctx["z"])) == 0.,
-        ctx["z"] < 0.,
-    ]
+    constraints = []
+    max_power = ctx["vessel"].max_power
+    power = next((key for key in POWER_LIMITED_QUANTITIES if key in ctx), None)
+    if max_power is not None and power is not None:
+        constraints.append(ctx[power] < max_power)
+    constraints.append(ctx["z"] < 0.)
+    return constraints
+
+
+def _column(value, like):
+    """
+    A CasADi column as long as `like`: a scalar is repeated.
+    """
+    if not isinstance(value, (ca.MX, ca.SX, ca.DM)):
+        value = ca.DM(onp.asarray(value, dtype=float))
+    if value.shape == (1, 1) and like.shape[0] != 1:
+        value = ca.repmat(value, like.shape[0], 1)
+    return value
 
 DEFAULT_SOLVER_OPTIONS = {
     "ipopt":{
@@ -149,15 +182,20 @@ class ArchiteuthisAnalysis(ArchiteuthisObject):
         super().__init__(name, verbose)
 
 
+# The consumption quantities of the vessel in passages and reports, under the
+# keys of its models. Which of them a passage has depends on the vessel.
+_CONSUMPTION_QUANTITIES = CONSUMPTION_QUANTITIES
+
 # Quantities computed on a passage and returned in reports, in addition to positions and times.
 _REPORT_QUANTITIES = (
-    "fuel", "stw", "sog", "cog", "ctw", "tws", "twd", "twa", "aws", "awa",
-    "swh", "mwd", "mwa", "z", "cs", "cd", "avg_bhp", "max_bhp", "sails_contribution",
+    "fuel", *_CONSUMPTION_QUANTITIES, "stw", "sog", "cog", "ctw", "tws", "twd", "twa",
+    "aws", "awa", "swh", "mwd", "mwa", "z", "cs", "cd",
     "tim", "lat", "lon", "ctim", "clat", "clon", "d",
 )
 _GUST_QUANTITIES = ("tws_gust", "aws_gust")
-# Every quantity of `_passage`, which a variable may only name as itself.
-_PASSAGE_QUANTITIES = frozenset(_REPORT_QUANTITIES)
+# The quantities of every passage, which a variable may only name as itself, as
+# the consumption quantities that the vessel gives.
+_PASSAGE_QUANTITIES = frozenset(_REPORT_QUANTITIES) - frozenset(_CONSUMPTION_QUANTITIES)
 
 # Vessel inputs of the wind at a height, `twa100` for example: computed from the
 # forecast variables `u100` and `v100`, as the 10 m wind is from `u10` and `v10`.
@@ -165,6 +203,9 @@ _WIND_AT_HEIGHT = re.compile(r"^(tws|twd|twa|aws|awa)(\d+)$")
 
 # The variable that asks for the gusts, in kt: the true and apparent wind gusts.
 GUST_VARIABLE = "gust"
+
+# Step of the time grid when no forecast has data, in seconds.
+DEFAULT_TIME_STEP = 3. * 3600.
 
 # Where a variable named by a model key is looked for, in this order, unless
 # its specification names the source: "wave.slope".
@@ -315,7 +356,7 @@ def _numeric(value):
     return array.ravel()
 
 
-def _describe(obj, attributes=("model", "product", "dataset", "f00", "path", "label", "max_power", "members")):
+def _describe(obj, attributes=("model", "product", "dataset", "f00", "path", "label", "consumption_model", "max_power", "members")):
     """
     A JSON-friendly description of a data object.
 
@@ -352,10 +393,29 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
     two added by `Forecast.add_wave_components`: the wave direction is
     interpolated through its components, as the wind is.
 
-    The vessel needs the models `bhp`, `max_bhp` and
-    `sails_contribution`, each queried with the inputs it names among
+    The environment may be incomplete: `atmosphere`, `wave` and
+    `current` are None by default, and each one left to None is a
+    `calm_forecast` of that source, whose fields are zero: a calm
+    wind (`u10`, `v10`), a flat sea (`swh`, `uw`, `vw`) or no current
+    (`uo`, `vo`). The time grid comes from the first of them with
+    data, the atmosphere normally, or is every `DEFAULT_TIME_STEP`
+    without any. The topography is required.
+
+    The objective is the fuel, in tonnes, from the consumption of the
+    vessel in kg/h: its `hourly_consumption` model, or its
+    `total_power` or its `bhp` plus hotel load, burnt at its `sfoc`
+    (see `Vessel`). These quantities are in the report, under the
+    keys of the vessel models (`bhp` for the brake power). Other
+    vessel models, such as `max_bhp` or `sails_contribution`, are
+    computed only when listed in `variables`. Until 0.4.0, `max_bhp`
+    and `sails_contribution` are still computed when the vessel has
+    them, with a `DeprecationWarning`: list them.
+
+    Each vessel model is queried with the inputs it names among
     `stw`, `sog`, `tws`, `twa`, `hs` or `swh`, `wa` or `mwa`, `aws` and
-    `awa` (angles in absolute value). Any other input, a water
+    `awa` (angles in absolute value), and the consumption quantities
+    computed before it, such as `bhp` or `total_power` for an `sfoc`
+    model. Any other input, a water
     temperature or a wave period for example, is a forecast variable:
     it is read from the first of `atmosphere`, `wave` and `current`
     that has a model with that key. The wind at another height,
@@ -400,6 +460,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         ...     "analysis", vessel, voyage, atmosphere, wave, current,
         ...     topography,
         ...     variables=[
+        ...         "max_bhp",
         ...         "gust",
         ...         "slope",
         ...         {"excess": lambda c: c["tws_gust"] - c["tws"]},
@@ -417,10 +478,10 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         name: str,
         vessel: Vessel,
         voyage: Optional[Voyage],
-        atmosphere: Forecast,
-        wave: Forecast,
-        current: Forecast,
-        topography: Topography,
+        atmosphere: Optional[Forecast] = None,
+        wave: Optional[Forecast] = None,
+        current: Optional[Forecast] = None,
+        topography: Topography = None,
         atmosphere_member: float = None,
         wave_member: float = None,
         constraints: Optional[Callable[[dict], list]] = default_routing_constraints,
@@ -428,12 +489,16 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         variables: Variables = None,
         verbose: bool = True,
     ):
+        if topography is None:
+            raise TypeError(f"RoutingAnalysis {name!r} needs a topography.")
+
         self.vessel = vessel
         self.voyage = voyage
-        self.atmosphere = atmosphere
-        self.wave = wave
-        self.current = current
         self.topography = topography
+        # A source left to None is calm: its routing fields are zero
+        self.atmosphere = self._source("atmosphere", atmosphere, verbose)
+        self.wave = self._source("wave", wave, verbose)
+        self.current = self._source("current", current, verbose)
 
         self.atmosphere_member = atmosphere_member
         self.wave_member = wave_member
@@ -455,6 +520,29 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         super().__init__(name, verbose)
 
 
+    @staticmethod
+    def _source(source: str, forecast: Optional[Forecast], verbose: bool) -> Forecast:
+        """
+        The forecast of a source, a `calm_forecast` if None.
+        """
+        if forecast is not None:
+            return forecast
+        if verbose:
+            status(f"➖ No {source} given: {', '.join(ENVIRONMENT_FIELDS[source])} are zero.")
+        return calm_forecast(source)
+
+    def _forecasts(self) -> list:
+        """
+        The forecasts with data, among the atmosphere, wave and current.
+
+        A `calm_forecast` has none.
+        """
+        return [
+            forecast
+            for forecast in (self.atmosphere, self.wave, self.current)
+            if forecast.data is not None
+        ]
+
     def check_valid_time(self, etd: float = None, eta: float = None):
         """
         Warn if the schedule is outside a forecast.
@@ -469,7 +557,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         etd = self.voyage.etd if etd is None else etd
         eta = self.voyage.eta if eta is None else eta
 
-        for forecast in [self.atmosphere, self.wave, self.current]:
+        for forecast in self._forecasts():
             f00 = forecast.data["valid_time"].values[0]
             f99 = forecast.data["valid_time"].values[-3]
 
@@ -483,17 +571,35 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         Additional variables of a run or an evaluation.
 
         These are the gusts of `options["include_gusts"]` (deprecated),
-        then the variables of this analysis, then `variables`.
+        the vessel models of `IMPLICIT_VESSEL_VARIABLES` that are not
+        listed (deprecated), then the variables of this analysis, then
+        `variables`.
         """
         gusts = {key: key for key in _GUST_QUANTITIES} if self.options.get("include_gusts", False) else {}
-        return gusts | normalize_variables(self.variables) | normalize_variables(variables)
+        listed = normalize_variables(self.variables) | normalize_variables(variables)
+        implicit = {
+            key: key for key in IMPLICIT_VESSEL_VARIABLES
+            if key in self.vessel.models and key not in listed
+        }
+        if implicit:
+            names = ", ".join(implicit)
+            warnings.warn(
+                f"RoutingAnalysis computes {names} because the vessel has these "
+                "models. This is deprecated: from 0.4.0, vessel models other than "
+                f"the consumption are computed only when listed, as in "
+                f"variables={list(implicit)}.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        return gusts | implicit | listed
 
-    def _resolve_variable(self, name: str, specification) -> tuple:
+    def _resolve_variable(self, name: str, specification, quantities=_PASSAGE_QUANTITIES) -> tuple:
         """
         How a variable is computed: `(kind, source, key)`.
 
-        `kind` is "function", "quantity" (of the passage), "derived"
-        (gusts, wind at a height) or "model" (of `source`).
+        `kind` is "function", "quantity" (of the passage, among
+        `quantities`), "derived" (gusts, wind at a height) or "model"
+        (of `source`).
         """
         if name in _RESERVED_NAMES:
             raise ValueError(f"{name!r} is a reserved report entry: give this variable another name.")
@@ -510,7 +616,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
                         f"model {key!r}. Add it with add_interpolator or add_function."
                     )
                 resolved = ("model", source, key)
-            elif key in _PASSAGE_QUANTITIES:
+            elif key in quantities:
                 resolved = ("quantity", None, key)
             elif key in _GUST_QUANTITIES or _WIND_AT_HEIGHT.match(key):
                 resolved = ("derived", None, key)
@@ -525,7 +631,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
                     )
                 resolved = ("model", source, key)
 
-        if name in _PASSAGE_QUANTITIES and resolved != ("quantity", None, name):
+        if name in quantities and resolved != ("quantity", None, name):
             raise ValueError(
                 f"{name!r} is already computed by the routing: give the variable "
                 f"{specification!r} another name."
@@ -541,7 +647,13 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         to the quantities, in their order.
         """
         variables = {} if variables is None else variables
-        plan = [(name, *self._resolve_variable(name, specification)) for name, specification in variables.items()]
+
+        # The consumption quantities depend on the models of the vessel
+        quantities = _PASSAGE_QUANTITIES | frozenset(self.vessel.consumption_quantities())
+        plan = [
+            (name, *self._resolve_variable(name, specification, quantities))
+            for name, specification in variables.items()
+        ]
 
         clon = midpoints(lon)
         clat = midpoints(lat)
@@ -633,7 +745,8 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         cd = np.mod(np.arctan2d(uc, vc), 360.) # current going to from 0 to 360 deg
 
         # Every vessel model takes the inputs it names: polar tables the first
-        # five, semi-empirical functions possibly others. Angles are absolute.
+        # five, semi-empirical functions possibly others, and the consumption
+        # quantities computed before it. Angles are absolute.
         vessel_query = {
             "stw": stw,
             "tws": tws,
@@ -657,12 +770,13 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             (self.wave, wave_query),
             (self.current, environment_query),
         )
-        vessel_keys = list(POLAR_KEYS) + [
+        consumption_keys = self.vessel.consumption_keys()
+        vessel_keys = consumption_keys + [
             key for _, kind, source, key in plan
-            if kind == "model" and source == "vessel" and key not in POLAR_KEYS
+            if kind == "model" and source == "vessel" and key not in consumption_keys
         ]
         for key in self._vessel_inputs(vessel_keys):
-            if key in vessel_query:
+            if key in vessel_query or key in CONSUMPTION_QUANTITIES:
                 continue
             wind = _WIND_AT_HEIGHT.match(key)
             if wind is not None:
@@ -670,23 +784,17 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             else:
                 vessel_query[key] = self._forecast_variable(key, forecast_queries)
 
-        avg_bhp = self.vessel("bhp", vessel_query)
-        max_bhp = self.vessel("max_bhp", vessel_query)
-        sc = self.vessel("sails_contribution", vessel_query)
-
-        hotel_load = self.vessel.hotel_load(avg_bhp) # kW
-
-        sfc = self.vessel.sfc(avg_bhp+hotel_load) # g/kWh
-
-        consumption = np.abs(avg_bhp + hotel_load) * dt # kWh
-
-        fuel = np.sum(consumption * sfc) / 1e6 # tons # TODO get rid of sfc to rather have f(power) = cons
+        # The objective: kg/h over each segment, in tonnes
+        consumption = {
+            key: _column(value, dt)
+            for key, value in self.vessel.consumption(vessel_query).items()
+        }
+        vessel_query |= consumption
+        fuel = np.sum(consumption["hourly_consumption"] * dt) / 1e3
 
         passage = {
             "fuel": fuel,
-            "max_bhp": max_bhp,
-            "avg_bhp": avg_bhp,
-            "sails_contribution": sc,
+            **consumption,
             "z": z,
             "sog": sog,
             "stw": stw,
@@ -746,7 +854,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             if "gust" in self.atmosphere.models:
                 value = self.atmosphere("gust", atmosphere_query) * KNOTS_PER_METER_PER_SECOND
             else:
-                status("🌪️ Info: gust not found in interpolators. Defaulting to the standard ratio.")
+                self.info("🌪️ Info: gust not found in interpolators. Defaulting to the standard ratio.")
                 value = passage["tws"] * GUST_DEFAULT_RATIO
         elif key == "aws_gust":
             tws_gust = self._derived_variable("tws_gust", passage, derived, atmosphere_query, forecast_queries)
@@ -764,7 +872,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         derived[key] = value
         return value
 
-    def _vessel_inputs(self, var_keys: Sequence[str] = POLAR_KEYS) -> list:
+    def _vessel_inputs(self, var_keys: Sequence[str]) -> list:
         """
         Inputs of the vessel models that routing queries, in order.
         """
@@ -841,7 +949,11 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             "transit_time": transit_time,
             "init_fac": init_fac,
         })
-        report |= {key: values[key] for key in _REPORT_QUANTITIES if key not in ("tim", "lat", "lon", "ctim", "clat", "clon", "d")}
+        report |= {
+            key: values[key]
+            for key in _REPORT_QUANTITIES
+            if key in values and key not in ("tim", "lat", "lon", "ctim", "clat", "clon", "d")
+        }
         report |= {
             "pos": [[la, lo] for la, lo in zip(onp.ravel(values["lat"]), onp.ravel(values["lon"]))],
             "tim": values["tim"],
@@ -900,12 +1012,20 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         """
         Segment centers `ctim` and nodes `tim` of the passage.
 
-        They come from the atmospheric forecast.
+        They come from the first forecast with data, the atmospheric
+        one normally, or are every `DEFAULT_TIME_STEP` without any.
         """
         etd = self.voyage.etd
         eta = self.voyage.eta
 
-        fxx = self.atmosphere.data.valid_time.values
+        forecasts = self._forecasts()
+        if forecasts:
+            fxx = forecasts[0].data.valid_time.values
+        else:
+            fxx = onp.arange(
+                onp.floor(etd / DEFAULT_TIME_STEP),
+                onp.ceil(eta / DEFAULT_TIME_STEP) + 1,
+            ) * DEFAULT_TIME_STEP
         ctim0 = fxx[(fxx > etd) * (fxx < eta)][skip_tim::1+skip_tim]
 
         tim0 = np.concatenate((
@@ -1036,15 +1156,14 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         passage = self._passage(tim, ctim, lat, lon, run_variables)
 
         # --- Dynamic Constraints Context ---
-        ctx = {"vessel": self.vessel, "opti": opti} | passage
+        ctx = _RenamedEntries({"vessel": self.vessel, "opti": opti} | passage)
         cons = self._resolve_constraints(constraints, ctx)
 
         if solve:
             opti.subject_to(cons)
             opti.minimize(passage["fuel"])
 
-        # if self.verbose:
-        status(_banner)
+        self.info(_banner)
 
         if solve:
             sol = opti.solve(
@@ -1156,7 +1275,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
 
         passage = self._passage(tim, ctim, lat, lon, evaluation_variables)
 
-        ctx = {"vessel": self.vessel, "opti": None} | passage
+        ctx = _RenamedEntries({"vessel": self.vessel, "opti": None} | passage)
         violations = [
             violation
             for violation in map(_constraint_violation, self._resolve_constraints(constraints, ctx))

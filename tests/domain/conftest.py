@@ -127,7 +127,7 @@ def vessel():
     ship = Vessel(
         "ship",
         filepath="unused.nc",
-        sfc=224.0,
+        sfoc=224.0,
         hotel_load=200.0,
         max_power=1e6,
         verbose=False,
@@ -159,7 +159,7 @@ def routing(vessel, atmosphere, wave, current, open_sea):
             current,
             open_sea,
             verbose=False,
-            **(analysis_options or {}),
+            **({"variables": ["max_bhp", "sails_contribution"]} | (analysis_options or {})),
         )
         return analysis.run(
             max_iter=30,

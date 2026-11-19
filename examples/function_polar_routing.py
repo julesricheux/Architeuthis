@@ -23,11 +23,10 @@ Created on Tue Nov 17 2026
 """
 
 import pandas as pd
-import xarray as xr
 import architeuthis.numpy as np
 
 from architeuthis.core import DEFAULT_SOLVER_OPTIONS, RoutingAnalysis, Voyage
-from architeuthis.forecast import DeterministicHerbieForecast, Forecast, Topography
+from architeuthis.forecast import DeterministicHerbieForecast, Topography
 from architeuthis.icebergs import berg_zone
 from architeuthis.report import ReportCollection
 from architeuthis.route import Route
@@ -84,8 +83,15 @@ def dummy_polar(x, p):
 # tws100 and twa100: the routing computes them from u100 and v100, as tws and twa from u10 and v10
 polar_inputs = ["stw", "tws", "twa", "tws100", "twa100", "swh", "mwa", "air_temperature"]
 
-vessel = Vessel("dummy_vessel", sfc=196., hotel_load=172., max_power=4100.)  # no file, no load_data
+vessel = Vessel("dummy_vessel", sfoc=196., hotel_load=172., max_power=4100.)  # no file, no load_data
+# The fuel only needs the consumption: here the brake power, plus the hotel load, burnt
+# at the sfoc. The other models are computed when the analysis lists them in its variables.
 vessel.add_function("bhp", dummy_polar, polar_inputs, args={"p": parameters})
+# Other ways to give the consumption, the first the vessel has being used:
+# vessel.add_function("sfoc", lambda x: 180. + 1e-6 * (x["total_power"] - 3000.)**2, ["total_power"])  # sfoc curve
+# vessel.add_constant("hotel_load", 172.)  # a model, as hotel_load=172.
+# vessel.add_function("total_power", lambda x: dummy_polar(x, parameters)[0] + 172., polar_inputs)  # with sfoc
+# vessel.add_function("hourly_consumption", lambda x: 196e-3 * (dummy_polar(x, parameters)[0] + 172.), polar_inputs)  # kg/h
 vessel.add_function("max_bhp", dummy_polar, polar_inputs, args={"p": parameters})
 vessel.add_function("sails_contribution", dummy_polar, polar_inputs, args={"p": parameters}, output="sails")
 vessel.add_function("leeway", dummy_polar, polar_inputs, args={"p": parameters}, output="leeway")
@@ -133,12 +139,8 @@ wave.add_function(
     inputs=["valid_time", "latitude", "longitude"],
 )
 
-# Calm water on the IFS grid, so that no credentials are needed
-calm = xr.zeros_like(atmosphere.data["u10"])
-current = Forecast("calm_current", date=None, fxx=None, **domain)
-current.data = xr.Dataset({"uo": calm, "vo": calm})
-for key in ("uo", "vo"):
-    current.add_interpolator(key, "valid_time", "latitude", "longitude")
+# No current, so that no credentials are needed: the routing takes it as zero
+current = None
 
 topography = Topography("topography", exclusion_zones=[berg_zone], **domain)  # berg_zone: the latest IIP iceberg limit
 topography.load_data()
@@ -175,12 +177,14 @@ def constraints(ctx):
 analysis = RoutingAnalysis(
     "ifs", vessel, voyage, atmosphere, wave, current, topography,
     constraints=constraints,
-    # Computed along the route, in ctx for the constraints and in the reports:
-    # "gust" gives tws_gust and aws_gust in kt (from the forecast "gust", else
+    # Computed along the route, in ctx for the constraints and in the reports: the
+    # fuel only needs bhp, so max_bhp and sails_contribution are listed; "gust" gives tws_gust and aws_gust in kt (from the forecast "gust", else
     # tws * GUST_DEFAULT_RATIO), then any model of the forecasts or vessel by its key
     # ("wave.slope" to name the source), the wind at 100 m, and functions of the
     # variables before them.
     variables=[
+        "max_bhp",  # vessel models that the fuel does not need: in ctx and the reports
+        "sails_contribution",
         "gust",
         "slope",
         "tws100",
