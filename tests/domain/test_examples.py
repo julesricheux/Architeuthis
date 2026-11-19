@@ -32,7 +32,7 @@ from architeuthis.forecast import (
 )
 from architeuthis.report import ReportCollection
 from architeuthis.route import RouteLibrary
-from architeuthis.satellite import ASCATData
+from architeuthis.satellite import CopernicusASCATData, EUMETSATASCATData
 from architeuthis.vessel import Vessel
 from architeuthis.voyage import PassagePlanLibrary
 
@@ -55,6 +55,7 @@ WINDOWS = {
     "passage_planning.py": SOON,
     "ifs_route_tested_with_gfs.py": SOON,
     "comparison_ascat_models.py": (TODAY - pd.Timedelta(days=4), TODAY + pd.Timedelta(days=2)),
+    "ascat_sources.py": (TODAY - pd.Timedelta(days=2), TODAY),
     "function_polar_routing.py": SOON,
     "sky_along_route.py": SOON,
     "vessel_definitions.py": SOON,
@@ -211,7 +212,8 @@ def run_script(script, folder):
             patch.object(CopernicusForecast, "load_data", load_current),
             patch.object(Topography, "load_data", load_topography),
             patch.object(Vessel, "load_data", load_vessel),
-            patch.object(ASCATData, "load_data", load_ascat),
+            patch.object(EUMETSATASCATData, "load_data", load_ascat),
+            patch.object(CopernicusASCATData, "load_data", load_ascat),
             patch.object(ArchiteuthisData, "add_interpolator", add_any_interpolator),
             patch.object(type(xr.Dataset().herbie), "with_wind", lambda accessor: with_wind(accessor._obj), create=True),
             patch.object(RoutingAnalysis, "run", few_iterations),
@@ -322,6 +324,16 @@ def test_examples_define_their_own_zones_and_their_own_sources():
         source = (EXAMPLES / script).read_text(encoding="utf-8")
         assert "presets" not in source
         assert "reference_data" not in source
+
+
+def test_ascat_sources_uses_both_sources_and_matches_them(example):
+    variables = example("ascat_sources.py").variables
+
+    assert variables["default"].source == "eumetsat"
+    assert variables["cmems_only"].source == "cmems"
+    # The same synthetic measurements from both: every one matches, identical
+    assert len(variables["pairs"]) > 0
+    assert (variables["pairs"]["wind_speed_cmems"] == variables["pairs"]["wind_speed_eumetsat"]).all()
 
 
 def test_function_polar_routing_reads_the_air_temperature(example):

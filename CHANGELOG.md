@@ -186,6 +186,7 @@ and this project follows Semantic Versioning https://semver.org
 - Reports hold the consumption quantities of the formulation: `hourly_consumption` always, and `bhp`, `hotel_load`, `total_power` and `sfoc` when the formulation computes them. They are in `ctx` for the constraints.
 - `plot_report` draws `total_power`, else `hourly_consumption`, on its power panel when the report has no `bhp`, and says so on the sails panel when the report has no `sails_contribution`.
 - ASCAT winds from Copernicus Marine: `satellite.CopernicusASCATData` reads the daily gridded swaths of Metop-B and -C (WIND_GLO_PHY_L3_NRT_012_002, 0.125 or 0.25 deg, ascending and descending orbits), subset by the server, with the CMEMS credentials. `satellite.CopernicusSatelliteData` reads any other Copernicus Marine observation dataset.
+- `examples/ascat_sources.py` downloads ASCAT winds through `ASCATData`, with its fallback and with Copernicus Marine only, then through each source class with its options, and compares both sources on the passes they share (on the Bay of Biscay, no bias and 0.27 m/s RMS difference).
 - `architeuthis.copernicus` holds what forecasts and satellite data share for Copernicus Marine: the `CopernicusMarineData` mixin, whose `_subset` downloads a subset with the credentials, and `copernicusmarine_credentials_file()`.
 
 ### Changed

@@ -12,6 +12,7 @@ Each script is self-contained. Its settings are at the top and it runs from the 
 | One optimization per ensemble member, and a fuel consumption that depends on the power | [`ensemble_routing.py`](ensemble_routing.py) |
 | High-resolution wind on a short leg | [`short_term_routing.py`](short_term_routing.py) |
 | Querying forecasts directly, to compare them with satellite observations | [`comparison_ascat_models.py`](comparison_ascat_models.py) |
+| ASCAT winds from EUMETSAT or Copernicus Marine: the default source with its fallback, one source only, each source with its options, and both compared on the same passes | [`ascat_sources.py`](ascat_sources.py) |
 | A polar written as functions, with no file, on the wind at 10 m and 100 m and the air temperature; gusts and wave slope computed as additional variables | [`function_polar_routing.py`](function_polar_routing.py) |
 | The clouds along a route, from IFS and GFS side by side, without routing | [`sky_along_route.py`](sky_along_route.py) |
 | A routing in the wind alone: the waves and the current left out read as zero | [`wind_only_routing.py`](wind_only_routing.py) |

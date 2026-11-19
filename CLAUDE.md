@@ -79,7 +79,8 @@ data/          package data: cloud_genera.json (the 10 WMO genera, étages, prec
 wrappers/      json_wrapper (GeoJSON), leaflet_wrapper (zone layers), legacy provider wrappers
 examples/      simple_routing, long_term_routing, ensemble_routing, post_leg_rewind,
                passage_planning, ifs_route_tested_with_gfs, short_term_routing, comparison_ascat_models,
-               function_polar_routing, sky_along_route, vessel_definitions, wind_only_routing;
+               function_polar_routing, sky_along_route, vessel_definitions, wind_only_routing,
+               ascat_sources;
                they define their own sources and zones, and keep past settings as commented lines
 tests/         numpy, optimization, modeling (AeroSandbox), domain (Architeuthis)
 ```
