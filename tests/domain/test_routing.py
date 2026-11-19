@@ -1057,3 +1057,60 @@ def test_a_polar_table_can_be_optimized_on_a_calm_sea(vessel, atmosphere, curren
 
     assert optimized["status"] == 1
     assert np.max(optimized["z"]) < 1e-2
+
+
+class TestIncompleteEnvironment:
+    def test_a_missing_source_is_calm(self, vessel, open_sea):
+        analysis = RoutingAnalysis("analysis", vessel, make_voyage(), topography=open_sea, verbose=False)
+
+        assert [analysis.atmosphere.name, analysis.wave.name, analysis.current.name] == [
+            "calm_atmosphere", "calm_wave", "calm_current",
+        ]
+
+    def test_the_topography_is_required(self, vessel, atmosphere):
+        with pytest.raises(TypeError, match="needs a topography"):
+            RoutingAnalysis("analysis", vessel, make_voyage(), atmosphere, verbose=False)
+
+    def test_a_missing_source_reads_as_zero_fields(self, atmosphere, current, open_sea):
+        from .conftest import uniform_forecast
+
+        vessel = consumption_vessel("bhp", hotel_load=HOTEL_LOAD, sfoc=SFC, max_power=None)
+        zero_wave = uniform_forecast("wave", swh=0.0, uw=0.0, vw=0.0)
+
+        given = evaluate_baseline(vessel, atmosphere, zero_wave, current, open_sea)
+        missing = evaluate_baseline(vessel, atmosphere, None, current, open_sea)
+
+        assert missing["fuel"] == pytest.approx(given["fuel"], rel=1e-12)
+        assert np.ravel(missing["swh"]) == pytest.approx(0.0)
+        # The time grid still comes from the atmosphere
+        assert np.ravel(missing["ctim"]) == pytest.approx(np.ravel(given["ctim"]))
+
+    def test_without_any_forecast_the_time_grid_is_regular(self, open_sea):
+        from architeuthis.core import DEFAULT_TIME_STEP
+
+        vessel = consumption_vessel("hourly_consumption")
+        report = evaluate_baseline(vessel, None, None, None, open_sea)
+
+        ctim = np.ravel(report["ctim"])
+        assert np.diff(ctim) == pytest.approx(DEFAULT_TIME_STEP)
+        assert ctim[0] == pytest.approx(DEFAULT_TIME_STEP)
+        assert ctim[-1] < ETA
+        for key in ("tws", "swh", "cs"):
+            assert np.ravel(report[key]) == pytest.approx(0.0)
+        assert np.ravel(report["sog"]) == pytest.approx(np.ravel(report["stw"]))
+        assert report["model"] == "calm_atmosphere"
+
+    @pytest.mark.integration
+    def test_a_polar_table_can_be_optimized_without_environment(self, vessel, island):
+        # Calm wind and flat sea: their directions have no derivative to take.
+        analysis = RoutingAnalysis(
+            "analysis", vessel, make_voyage(), topography=island, variables=["max_bhp"], verbose=False,
+        )
+
+        baseline = analysis.run(solve=False, solver_options=MUMPS)
+        optimized = analysis.run(max_iter=500, solver_options=MUMPS)
+
+        assert optimized["status"] == 1
+        assert np.max(optimized["z"]) < 1e-2
+        assert np.max(baseline["z"]) > 0.0
+        assert analysis.passage_plan.metadata["atmosphere"]["name"] == "calm_atmosphere"

@@ -59,7 +59,13 @@ for key in ("bhp", "max_bhp", "sails_contribution"):
 | `forecast.Topography` | The signed distance to land and to your exclusion zones. It needs only its box, and `exclusion_zones` if you have some. |
 | `vessel.Vessel` | A vessel, from its polar file, from functions (see [Polars as functions](#polars-as-functions)) or from constants. The routing only needs its consumption (see [Consumption](#consumption)). `label` comes from the file name by default, `eff45` for `..._eff45.nc`, or is the name without a file. |
 
-To route without a current provider, fill a `Forecast` with zeros on the grid of the wind, as `examples/passage_planning.py` does.
+The environment may be incomplete. `atmosphere`, `wave` and `current` are optional arguments of `RoutingAnalysis`, None by default, and each one left out is a calm source whose routing fields are zero: no wind (`u10`, `v10`), a flat sea (`swh`, `uw`, `vw`) or no current (`uo`, `vo`). `forecast.calm_forecast(source)` builds it: a `Forecast` without data whose models are these fields, functions of `valid_time`, `latitude` and `longitude` that return numeric zeros, so the routing takes no derivative of the undefined direction of a zero wind or sea. The time grid comes from the first source with data, the atmosphere normally, or is every 3 hours (`core.DEFAULT_TIME_STEP`) without any. The topography is required.
+
+```python
+analysis = RoutingAnalysis("analysis", vessel, voyage, atmosphere, topography=topography)  # no waves, no current
+```
+
+`examples/passage_planning.py` and `examples/function_polar_routing.py` route without current, and `examples/vessel_definitions.py` with the wind only.
 
 The wave direction is not interpolated itself, because it jumps from 360 to 0 deg. `wave.add_wave_components()` adds `uw = -swh**2 * sin(mwd)` and `vw = -swh**2 * cos(mwd)` to the data, the components of where the waves go weighted by their energy, and the routing takes the direction back from them, as for the wind. The weight lets the larger seas, not calm cells or land, set the direction between grid points. `swh` is still interpolated on its own for the height. For GFS, whose direction is `dirpw`, call `add_wave_components(mwd_dim="dirpw")`. The routing needs `swh`, `uw` and `vw`, and reports `mwd` as before.
 

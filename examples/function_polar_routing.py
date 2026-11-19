@@ -23,11 +23,10 @@ Created on Tue Nov 17 2026
 """
 
 import pandas as pd
-import xarray as xr
 import architeuthis.numpy as np
 
 from architeuthis.core import DEFAULT_SOLVER_OPTIONS, RoutingAnalysis, Voyage
-from architeuthis.forecast import DeterministicHerbieForecast, Forecast, Topography
+from architeuthis.forecast import DeterministicHerbieForecast, Topography
 from architeuthis.icebergs import berg_zone
 from architeuthis.report import ReportCollection
 from architeuthis.route import Route
@@ -140,12 +139,8 @@ wave.add_function(
     inputs=["valid_time", "latitude", "longitude"],
 )
 
-# Calm water on the IFS grid, so that no credentials are needed
-calm = xr.zeros_like(atmosphere.data["u10"])
-current = Forecast("calm_current", date=None, fxx=None, **domain)
-current.data = xr.Dataset({"uo": calm, "vo": calm})
-for key in ("uo", "vo"):
-    current.add_interpolator(key, "valid_time", "latitude", "longitude")
+# No current, so that no credentials are needed: the routing takes it as zero
+current = None
 
 topography = Topography("topography", exclusion_zones=[berg_zone], **domain)  # berg_zone: the latest IIP iceberg limit
 topography.load_data()

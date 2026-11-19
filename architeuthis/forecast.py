@@ -20,6 +20,7 @@ import cdsapi
 import requests
 import copernicusmarine
 
+import casadi as ca
 import xarray as xr
 import pandas as pd
 import architeuthis.numpy as np
@@ -478,8 +479,74 @@ class Forecast(ArchiteuthisSpatialData):
             self.data[dim].attrs = {"units": "m**2"}
 
         status(f"➕ Added {u_dim} and {v_dim}: {swh_dim}² components along {mwd_dim} to {self.name} data.")
-    
-    
+
+
+# The fields that the routing reads from each source of the environment, in m/s
+# for the wind and current, m and m² for the waves (see add_wave_components).
+ENVIRONMENT_FIELDS = {
+    "atmosphere": ("u10", "v10"),
+    "wave": ("swh", "uw", "vw"),
+    "current": ("uo", "vo"),
+}
+
+
+def _calm_field(x: dict):
+    """
+    Zero at each point of a query, as a numeric column.
+
+    It does not depend on the query symbolically, so the routing takes
+    no derivative of it, even where the direction of a zero vector, the
+    wind or the waves, is undefined.
+    """
+    size = max(
+        value.shape[0] if isinstance(value, (ca.MX, ca.SX, ca.DM)) else int(np.size(value))
+        for value in x.values()
+    )
+    return ca.DM.zeros(size, 1)
+
+
+def calm_forecast(
+    source: str,
+    name: str = None,
+    verbose: bool = False,
+) -> Forecast:
+    """
+    A forecast without data whose routing fields are zero.
+
+    It stands for a missing source of the environment: a calm wind, a
+    flat sea or no current. Its models are the fields that the routing
+    reads from that source, `ENVIRONMENT_FIELDS[source]`, defined with
+    `add_function` on the `valid_time`, `latitude` and `longitude` of
+    the queries. `RoutingAnalysis` builds one for each of `atmosphere`,
+    `wave` and `current` left to None. Other models can be added to
+    it, a constant air temperature for example.
+
+    Args:
+        source: "atmosphere" (`u10`, `v10`), "wave" (`swh`, `uw`, `vw`)
+            or "current" (`uo`, `vo`).
+        name: Name of the forecast, by default `calm_<source>`.
+        verbose: Whether to report the models added.
+
+    Returns:
+        A `Forecast` whose `data` is None.
+
+    Example:
+        >>> wave = calm_forecast("wave")
+        >>> wave("swh", {
+        ...     "valid_time": t,
+        ...     "latitude": 47.,
+        ...     "longitude": -5.,
+        ... })
+    """
+    if source not in ENVIRONMENT_FIELDS:
+        raise ValueError(f"calm_forecast: source is one of {list(ENVIRONMENT_FIELDS)}, not {source!r}.")
+
+    forecast = Forecast(f"calm_{source}" if name is None else name, date=None, fxx=None, verbose=verbose)
+    for key in ENVIRONMENT_FIELDS[source]:
+        forecast.add_function(key, _calm_field, FORECAST_KEYS)
+    return forecast
+
+
 class HerbieForecast(Forecast):
     """
     Base class of the GRIB2 forecasts downloaded with Herbie.

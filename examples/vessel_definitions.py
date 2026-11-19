@@ -13,8 +13,8 @@ crossing of the Bay of Biscay from Montoir to Bilbao: IFS wind, no waves and
 no current. Three definitions are the same vessel and burn the same fuel, the
 table is close to them, and the sfoc curve burns more.
 
-Needs no polar file and no credentials: IFS comes through Herbie, the waves
-and the current are calm. Run from the repository root, cell by cell (#%%) or
+Needs no polar file and no credentials: IFS comes through Herbie, and the
+waves and the current are left out, so the routing takes them as zero. Run from the repository root, cell by cell (#%%) or
 as a script.
 
 Created on Thu Nov 19 2026
@@ -27,7 +27,7 @@ import xarray as xr
 import architeuthis.numpy as np
 
 from architeuthis.core import RoutingAnalysis, Voyage
-from architeuthis.forecast import DeterministicHerbieForecast, Forecast, Topography
+from architeuthis.forecast import DeterministicHerbieForecast, Topography
 from architeuthis.report import ReportCollection
 from architeuthis.vessel import Vessel
 
@@ -122,7 +122,7 @@ vessels = [bhp_function, bhp_table, sfoc_model, total_power, hourly]
 for vessel in vessels:
     print(f"{vessel.name}: {vessel.consumption_model}, computes {vessel.consumption_quantities()}")
 
-#%% WIND, CALM SEA AND TOPOGRAPHY
+#%% WIND AND TOPOGRAPHY
 
 atmosphere = DeterministicHerbieForecast(
     "wind_ifs", model="ifs", product="oper", regex=r":10[uv]:",
@@ -131,16 +131,6 @@ atmosphere = DeterministicHerbieForecast(
 atmosphere.load_data()
 for key in ("u10", "v10"):
     atmosphere.add_interpolator(key, "valid_time", "latitude", "longitude")
-
-# No waves and no current, on the grid of the wind
-calm = xr.zeros_like(atmosphere.data["u10"])
-wave = Forecast("calm_sea", date=None, fxx=None, **domain)
-wave.data = xr.Dataset({"swh": calm, "uw": calm, "vw": calm})
-current = Forecast("calm_current", date=None, fxx=None, **domain)
-current.data = xr.Dataset({"uo": calm, "vo": calm})
-for forecast, keys in ((wave, ("swh", "uw", "vw")), (current, ("uo", "vo"))):
-    for key in keys:
-        forecast.add_interpolator(key, "valid_time", "latitude", "longitude")
 
 topography = Topography("topography", **domain)
 topography.load_data()
@@ -161,7 +151,8 @@ solver_options = {"ipopt": {"linear_solver": "mumps"}}
 
 reports = ReportCollection()
 for vessel in vessels:
-    analysis = RoutingAnalysis("biscay", vessel, voyage, atmosphere, wave, current, topography, verbose=False)
+    # No wave nor current given: a flat sea and no current, their fields being zero
+    analysis = RoutingAnalysis("biscay", vessel, voyage, atmosphere, topography=topography, verbose=False)
     reports.append(analysis.run(solve=False, solver_options=solver_options))  # the same reference route
     reports.append(analysis.run(max_iter=300, solver_options=solver_options))
 

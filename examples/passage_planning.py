@@ -65,11 +65,10 @@ print(f"Remaining {rest_of_voyage.distance:.0f} nm at {rest_of_voyage.transit_so
 
 #%% 3. OPTIMIZE WITH IFS AND STORE THE PASSAGE PLAN
 
-import xarray as xr
 
 from architeuthis.core import DEFAULT_SOLVER_OPTIONS, RoutingAnalysis
 from architeuthis.icebergs import berg_zone
-from architeuthis.forecast import DeterministicHerbieForecast, Forecast, Topography
+from architeuthis.forecast import DeterministicHerbieForecast, Topography
 from architeuthis.vessel import Vessel
 
 domain = {"min_lon": -60.0, "max_lon": 0.0, "min_lat": 38.0, "max_lat": 56.0}
@@ -101,13 +100,9 @@ ifs_wind = herbie_fields("wind_ifs", {"u10": "u10", "v10": "v10"}, model="ifs", 
 WAVE_KEYS = {"swh": "swh", "uw": "uw", "vw": "vw"}
 
 ifs_wave = herbie_fields("wave_ifs", WAVE_KEYS, wave_direction="mwd", model="ifs", product="wave", regex=r":swh:|:mwd:")
-# Calm water on the IFS grid, so that no credentials are needed. For real currents use
-# CopernicusForecast (Mercator SMOC, CMEMS credentials) as in post_leg_rewind.py.
-calm = xr.zeros_like(ifs_wind.data["u10"])
-current = Forecast("calm_current", date=None, fxx=None, **domain)
-current.data = xr.Dataset({"uo": calm, "vo": calm})
-for key in ("uo", "vo"):
-    current.add_interpolator(key, "valid_time", "latitude", "longitude")
+# No current, so that no credentials are needed: the routing takes it as zero. For real
+# currents use CopernicusForecast (Mercator SMOC, CMEMS credentials) as in post_leg_rewind.py.
+current = None
 
 # Your exclusion zones: lists of [lat, lon] points (or ExclusionZone objects, see architeuthis.exclusion).
 north_america = [

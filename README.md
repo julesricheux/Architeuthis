@@ -289,6 +289,7 @@ print(eumdac.AccessToken((get_credential("EUMDAC_KEY"), get_credential("EUMDAC_S
 
 - **Objective:** total fuel, `sum(hourly_consumption * dt) / 1e3`, in tonnes, where the consumption is `(bhp + hotel_load) * sfoc / 1e3` kg/h, `total_power * sfoc / 1e3` or your own `hourly_consumption`.
 - **Fixed:** departure, arrival, ETD and ETA. The schedule is a requirement, the speed an outcome.
+- **Environment:** the wind, waves and current you give; any of them left out is zero, so `RoutingAnalysis("analysis", vessel, voyage, atmosphere, topography=topography)` routes in the wind alone.
 - **Variables:** the positions along the route, and optionally a factor blending the reference route towards two alternatives.
 - **Constraints:** every position at sea and, if the vessel has a `max_power`, `max_bhp` (when listed), else `bhp` or `total_power`, below it. Or your own, on any quantity of the route or any additional variable (`variables=`).
 
