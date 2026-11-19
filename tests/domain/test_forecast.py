@@ -360,7 +360,7 @@ def cmems_credentials(monkeypatch):
     monkeypatch.setenv("CMEMS_PWD", "my-password")
 
 
-@patch("architeuthis.forecast.copernicusmarine.subset")
+@patch("architeuthis.copernicus.copernicusmarine.subset")
 def test_copernicus_downloads_the_requested_subset(subset, cmems_credentials):
     subset.return_value.file_path = "dummy.nc"
     forecast = copernicus_forecast()
@@ -377,7 +377,7 @@ def test_copernicus_downloads_the_requested_subset(subset, cmems_credentials):
     assert kwargs["skip_existing"] is True
 
 
-@patch("architeuthis.forecast.copernicusmarine.subset")
+@patch("architeuthis.copernicus.copernicusmarine.subset")
 def test_copernicus_credentials_are_read_when_downloading(subset, monkeypatch):
     forecast = copernicus_forecast()
     monkeypatch.setenv("COPERNICUSMARINE_SERVICE_USERNAME", "late-user")
@@ -394,7 +394,7 @@ def test_copernicus_object_holds_no_credential(cmems_credentials):
     assert "my-password" not in repr(vars(forecast))
 
 
-@patch("architeuthis.forecast.copernicusmarine.subset")
+@patch("architeuthis.copernicus.copernicusmarine.subset")
 def test_copernicus_without_credentials_stops_before_downloading(subset, capsys):
     with pytest.raises(MissingCredentialError, match="CMEMS_USER, CMEMS_PWD"):
         copernicus_forecast()._download_data()
@@ -403,7 +403,7 @@ def test_copernicus_without_credentials_stops_before_downloading(subset, capsys)
     assert "⚠️" in capsys.readouterr().out
 
 
-@patch("architeuthis.forecast.copernicusmarine.subset")
+@patch("architeuthis.copernicus.copernicusmarine.subset")
 def test_copernicus_login_file_is_left_to_the_toolbox(subset, monkeypatch, tmp_path):
     monkeypatch.setenv("COPERNICUSMARINE_CREDENTIALS_DIRECTORY", str(tmp_path))
     (tmp_path / ".copernicusmarine-credentials").write_text("")

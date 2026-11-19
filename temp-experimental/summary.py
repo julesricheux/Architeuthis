@@ -2,13 +2,16 @@
 """
 Shared output of the example scripts: data, metrics and a figure.
 
-Each example ends with `report`, which writes, in `output/`:
-`<case>_<library>.nc` (the data drawn), `<case>_<library>.json` (sizes,
-times) and `<case>_<library>.png` (the map with its metrics).
-`compare.py` redraws them all side by side from these files, with no
-download.
+Each example ends with `report`, which writes the figure
+`output/<case>_<library>.png` (the map with its metrics), the only files
+meant for git, and in `downloads/`, which the repository's .gitignore
+already ignores, `<case>_<library>.nc` (the data drawn) and
+`<case>_<library>.json` (sizes, times). Raw downloads go to `downloads/`
+too. `compare.py` redraws all the runs side by side from these files,
+with no download.
 """
 
+import io
 import os
 import json
 
@@ -22,11 +25,19 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUTPUT = os.path.join(HERE, "output")
+OUTPUT = os.path.join(HERE, "output")  # figures, committed
+DATA = os.path.join(HERE, "downloads")  # everything else, git-ignored
 
-# France for the IR image, Bay of Biscay for the winds, as [N, S, W, E]
+# Areas as [N, S, W, E]: France for Meteosat, the same size off
+# Newfoundland and Saint-Pierre for GOES, the Bay of Biscay for winds
 IR_NSWE = [51.5, 41.0, -5.5, 10.0]
+ATLANTIC_NSWE = [51.5, 41.0, -64.0, -48.5]
 WIND_NSWE = [52.0, 40.0, -20.0, 0.0]
+CASES = {
+    "ir": ("IR clouds, France", IR_NSWE),
+    "goes": ("IR clouds, NW Atlantic", ATLANTIC_NSWE),
+    "wind": ("ASCAT winds, Bay of Biscay", WIND_NSWE),
+}
 RESOLUTION = 0.01  # deg, ~1 km
 NO_DATA = "#e9dcc3"  # map background where there is no data
 
@@ -87,6 +98,89 @@ def wind_dataset(speed, direction, latitude, longitude, convention):
     })
 
 
+def image_dataset(rgba, nswe):
+    """
+    Standard image dataset: a rendered map from a WMS service.
+
+    Args:
+        rgba: Image, as (row, column, RGBA) uint8, north up.
+        nswe: Bounds of the image as [north, south, west, east].
+
+    Returns:
+        Dataset with `rgba`.
+    """
+    north, south, west, east = nswe
+    rows, columns = rgba.shape[:2]
+    return xr.Dataset(
+        {"rgba": (("latitude", "longitude", "band"), rgba)},
+        coords={
+            "latitude": np.linspace(north, south, rows),
+            "longitude": np.linspace(west, east, columns),
+        },
+    )
+
+
+def wms_times(url, layer):
+    """
+    Time extent of a WMS layer, from its capabilities.
+
+    Args:
+        url: WMS endpoint.
+        layer: Layer name.
+
+    Returns:
+        (first, last, step) of the last interval, as strings.
+    """
+    import re
+    import requests
+
+    capabilities = requests.get(
+        url,
+        params={"SERVICE": "WMS", "REQUEST": "GetCapabilities", "VERSION": "1.3.0"},
+        timeout=120,
+    ).text
+    block = capabilities[capabilities.index(f"<Name>{layer}</Name>"):]
+    block = block[:block.index("</Layer>")]
+    extent = re.search(r'<Dimension[^>]*name="time"[^>]*>([^<]*)', block).group(1)
+    return extent.strip().split(",")[-1].split("/")
+
+
+def wms_image(url, layer, nswe, time=None, resolution=RESOLUTION):
+    """
+    Map from a WMS 1.3.0 service, in EPSG:4326, at a given resolution.
+
+    Args:
+        url: WMS endpoint.
+        layer: Layer name.
+        nswe: Bounds as [north, south, west, east], in degrees.
+        time: ISO time, or None for the server default (often the latest).
+        resolution: Pixel size, in degrees.
+
+    Returns:
+        (image as RGBA uint8 array, bytes downloaded).
+    """
+    import requests
+    from PIL import Image
+
+    north, south, west, east = nswe
+    params = {
+        "SERVICE": "WMS", "REQUEST": "GetMap", "VERSION": "1.3.0",
+        "LAYERS": layer, "STYLES": "", "CRS": "EPSG:4326",
+        "BBOX": f"{south},{west},{north},{east}",  # lat/lon order in 1.3.0
+        "WIDTH": round((east - west) / resolution),
+        "HEIGHT": round((north - south) / resolution),
+        "FORMAT": "image/png", "TRANSPARENT": "TRUE",
+    }
+    if time is not None:
+        params["TIME"] = time
+    response = requests.get(url, params=params, timeout=120)
+    response.raise_for_status()
+    if not response.headers.get("content-type", "").startswith("image"):
+        raise RuntimeError(response.text[:500])
+    image = np.array(Image.open(io.BytesIO(response.content)).convert("RGBA"))
+    return image, len(response.content)
+
+
 def report(
     case,
     library,
@@ -102,15 +196,16 @@ def report(
     Save the data, the metrics and the summary figure of a run.
 
     Args:
-        case: "ir" or "wind".
-        library: "eumdac", "openeo" or "phidown".
+        case: Key of CASES.
+        library: Name of the library or service.
         source: Satellite and instrument.
         image_time: Time of the observation, as a string.
         downloaded: Bytes downloaded.
         full_product: Bytes of the whole products, without subsetting,
             or None if unknown.
         seconds: Wall time of the run.
-        data: Dataset from `ir_dataset` or `wind_dataset`.
+        data: Dataset from `ir_dataset`, `wind_dataset` or
+            `image_dataset`.
         notes: Free text shown on the figure.
 
     Returns:
@@ -127,11 +222,13 @@ def report(
         "notes": notes,
     }
     os.makedirs(OUTPUT, exist_ok=True)
-    stem = os.path.join(OUTPUT, f"{case}_{library}")
-    with open(stem + ".json", "w", encoding="utf-8") as file:
+    os.makedirs(DATA, exist_ok=True)
+    name = f"{case}_{library}"
+    with open(os.path.join(DATA, name + ".json"), "w", encoding="utf-8") as file:
         json.dump(metrics, file, indent=2)
     # h5netcdf: netCDF4 fails on Windows paths with accents
-    data.to_netcdf(stem + ".nc", engine="h5netcdf")
+    data.to_netcdf(os.path.join(DATA, name + ".nc"), engine="h5netcdf")
+    stem = os.path.join(OUTPUT, name)
 
     fig = plt.figure(figsize=(8, 6))
     ax = fig.add_axes([0.05, 0.2, 0.8, 0.7], projection=ccrs.PlateCarree())
@@ -172,20 +269,24 @@ def draw_panel(ax, metrics, data, colorbar=True):
     Args:
         ax: Cartopy axis.
         metrics: Dict written by `report`.
-        data: Dataset from `ir_dataset` or `wind_dataset`.
+        data: Dataset from `ir_dataset`, `wind_dataset` or
+            `image_dataset`.
         colorbar: Whether to add a colorbar.
 
     Returns:
         The mappable of the data, for a shared colorbar.
     """
-    north, south, west, east = IR_NSWE if metrics["case"] == "ir" else WIND_NSWE
+    north, south, west, east = CASES[metrics["case"]][1]
     ax.set_extent([west, east, south, north], crs=ccrs.PlateCarree())
     ax.patch.set_facecolor(NO_DATA)
-    if metrics["case"] == "ir":
+    if "rgba" in data:
+        mappable = draw_image(ax, data)
+        label = None  # the colours are the service's
+    elif "bt" in data:
         mappable = draw_ir(ax, data)
         label = "Brightness temperature (K)"
     else:
-        mappable = draw_wind(ax, data)
+        mappable = draw_wind(ax, data, CASES[metrics["case"]][1])
         label = "Wind speed (m/s)"
     ax.add_feature(cfeature.COASTLINE, linewidth=0.6, edgecolor="tab:orange")
     ax.add_feature(cfeature.BORDERS, linewidth=0.4, edgecolor="tab:orange")
@@ -193,9 +294,30 @@ def draw_panel(ax, metrics, data, colorbar=True):
         f"{metrics['library']}: {metrics['source']}\n{metrics['image_time']}",
         fontsize=9,
     )
-    if colorbar:
+    if colorbar and label:
         plt.colorbar(mappable, ax=ax, shrink=0.7, label=label)
-    return mappable
+    return mappable if label else None
+
+
+def draw_image(ax, data):
+    """
+    Rendered WMS map, as delivered.
+
+    Args:
+        ax: Cartopy axis.
+        data: Dataset from `image_dataset`.
+
+    Returns:
+        The image artist.
+    """
+    lat, lon = data["latitude"].values, data["longitude"].values
+    return ax.imshow(
+        data["rgba"].values,
+        extent=[lon[0], lon[-1], lat[-1], lat[0]],
+        origin="upper",
+        transform=ccrs.PlateCarree(),
+        interpolation="nearest",
+    )
 
 
 def draw_ir(ax, data):
@@ -216,13 +338,14 @@ def draw_ir(ax, data):
     )
 
 
-def draw_wind(ax, data, arrow_step=0.5):
+def draw_wind(ax, data, nswe, arrow_step=0.5):
     """
     Wind speed at each point, and mean wind arrows on a coarse grid.
 
     Args:
         ax: Cartopy axis.
         data: Dataset from `wind_dataset`.
+        nswe: Bounds of the map.
         arrow_step: Grid step of the averaged arrows, in degrees.
 
     Returns:
@@ -234,7 +357,7 @@ def draw_wind(ax, data, arrow_step=0.5):
         lon, lat, c=np.hypot(u, v), s=1, cmap="viridis", vmin=0, vmax=25,
         transform=ccrs.PlateCarree(), rasterized=True,
     )
-    north, south, west, east = WIND_NSWE
+    north, south, west, east = nswe
     bins = [np.arange(west, east + arrow_step, arrow_step),
             np.arange(south, north + arrow_step, arrow_step)]
     with np.errstate(invalid="ignore"):

@@ -27,13 +27,13 @@ import numpy as np
 import openeo
 import xarray as xr
 
-from summary import IR_NSWE, OUTPUT, RESOLUTION, ir_dataset, report
+from summary import DATA, IR_NSWE, RESOLUTION, ir_dataset, report
 
 
 if __name__ == "__main__":
     tic = time.time()
-    os.makedirs(OUTPUT, exist_ok=True)
-    path = os.path.join(OUTPUT, "openeo_raw.nc")
+    os.makedirs(DATA, exist_ok=True)
+    path = os.path.join(DATA, "openeo_raw.nc")
 
     connection = openeo.connect("https://openeo.dataspace.copernicus.eu")
     connection.authenticate_oidc()  # browser login the first time

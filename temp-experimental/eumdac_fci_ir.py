@@ -8,11 +8,10 @@ and only the result is downloaded. The Architeuthis wrapper
 `EUMETSATData` still provides the credentials, the token and the
 collection (`_locate_data`); only `_download_data` changes.
 
-Not working yet: with the current EUMETSAT key, every download of
-Meteosat imagery (FCI and SEVIRI) is refused with 403 Unauthorised, by
-eumdac directly and by the Data Tailor, while ASCAT downloads work. The
-NetCDF the Data Tailor returns has therefore never been seen: `to_bt`
-below assumes a latitude/longitude grid and is untested.
+Without an NRT licence on the EUMETSAT account, Meteosat imagery (FCI
+and SEVIRI) is refused with 403 Unauthorised for about an hour after
+sensing, directly and through the Data Tailor, then downloads freely:
+hence NRT_DELAY. With the licence, set it to zero.
 
 Run from the repository root:
     python temp-experimental/eumdac_fci_ir.py
@@ -33,11 +32,14 @@ sys.path.insert(0, os.path.dirname(HERE))  # repository root
 
 from architeuthis.common import status
 from architeuthis.satellite import EUMETSATData
-from summary import IR_NSWE, OUTPUT, RESOLUTION, folder_size, ir_dataset, report
+from summary import DATA, IR_NSWE, RESOLUTION, folder_size, ir_dataset, report
 
 NSWE = IR_NSWE
 # FCI IR 10.5 channel: central wavenumber (cm-1), for radiance to BT
 WAVENUMBER = 931.7
+# Age below which Meteosat imagery needs an NRT licence (measured: 403
+# up to ~40 min after the end of the 10 min scan, OK from ~45 min)
+NRT_DELAY = datetime.timedelta(minutes=60)
 
 
 class TailoredEUMETSATData(EUMETSATData):
@@ -78,7 +80,7 @@ class TailoredEUMETSATData(EUMETSATData):
         super().__init__(
             name, dataset, start, end, min_lon, max_lon, min_lat, max_lat
         )
-        self.output_path = os.path.join(OUTPUT, "eumdac")
+        self.output_path = os.path.join(DATA, "eumdac")
         os.makedirs(self.output_path, exist_ok=True)
 
     def _download_data(self):
@@ -108,7 +110,9 @@ class TailoredEUMETSATData(EUMETSATData):
             time.sleep(5)
         status(f"✅ Job {customisation.status} in {time.time() - tic:.0f} s")
         if customisation.status != "DONE":
-            raise RuntimeError(customisation.logfile)
+            log = customisation.logfile
+            customisation.delete()  # failed jobs also use the quota
+            raise RuntimeError(log)
 
         self.path = []
         for output in customisation.outputs:
@@ -156,8 +160,8 @@ if __name__ == "__main__":
         tailor_product="FCIL1FDHSI",
         bands=["ir_105_effective_radiance"],
         resolution=RESOLUTION,
-        start=end - datetime.timedelta(hours=1),
-        end=end,
+        start=end - NRT_DELAY - datetime.timedelta(minutes=30),
+        end=end - NRT_DELAY,
         min_lon=NSWE[2],
         max_lon=NSWE[3],
         min_lat=NSWE[1],

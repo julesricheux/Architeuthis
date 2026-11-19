@@ -26,7 +26,7 @@ from phidown.search import CopernicusDataSearcher
 from phidown.native_download import download_s3_resumable
 
 from phidown_slstr_ir import CONFIG_FILE, wkt_box
-from summary import OUTPUT, WIND_NSWE, folder_size, report, wind_dataset
+from summary import DATA, WIND_NSWE, folder_size, report, wind_dataset
 
 ODATA = "https://catalogue.dataspace.copernicus.eu/odata/v1"
 
@@ -77,7 +77,7 @@ if __name__ == "__main__":
     products = search_latest_datatake()
     print(products[["Name", "ContentLength"]].to_string())
 
-    folder = os.path.join(OUTPUT, "phidown")
+    folder = os.path.join(DATA, "phidown")
     paths = []
     for _, product in products.iterrows():
         name = ocn_file(product)

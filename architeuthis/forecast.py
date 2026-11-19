@@ -18,7 +18,6 @@ import contextlib
 
 import cdsapi
 import requests
-import copernicusmarine
 
 import casadi as ca
 import xarray as xr
@@ -32,11 +31,11 @@ from herbie import Herbie, HerbieLatest, FastHerbie
 from scipy.ndimage import distance_transform_edt
 from architeuthis.toolbox.string_formatting import get_request_id
 from architeuthis.common import ArchiteuthisData, ArchiteuthisSpatialData, Datetime, ENSEMBLE_KEYS, FORECAST_KEYS, TOPOGRAPHY_KEYS, _CDS_URL, _HOME, _TOPOGRAPHY_URL, _USER_HOME, status
+from architeuthis.copernicus import CopernicusMarineData
 from architeuthis.credentials import require_credentials
 
 
 logging.getLogger("cdsapi").handlers.clear()
-logging.getLogger("copernicusmarine").handlers.clear()
 
 
 def preprocess(ds):
@@ -975,15 +974,7 @@ class EnsembleHerbieForecast(HerbieForecast):
         )
 
           
-def _copernicusmarine_credentials_file() -> str:
-    """
-    The file written by `copernicusmarine login`.
-    """
-    directory = os.environ.get("COPERNICUSMARINE_CREDENTIALS_DIRECTORY") or os.path.join(_USER_HOME, ".copernicusmarine")
-    return os.path.join(directory, ".copernicusmarine-credentials")
-
-
-class CopernicusForecast(Forecast):
+class CopernicusForecast(CopernicusMarineData, Forecast):
     """
     A forecast of the Copernicus Marine Service (CMEMS).
 
@@ -1045,37 +1036,15 @@ class CopernicusForecast(Forecast):
         return pd.Timestamp.today().normalize()
         
     def _download_data(self):
-        # Read here and not kept on the object, so that it can be copied,
-        # pickled or inspected without exposing the credentials.
-        username, password = require_credentials(
-            "CMEMS_USER",
-            "CMEMS_PWD",
-            provider="Copernicus Marine",
-            fallback_files=[_copernicusmarine_credentials_file()],
+        self.path = self._subset(
+            self.dataset,
+            self.variables,
+            self.f00,
+            self.f99,
+            min_depth=self.min_depth,
+            max_depth=self.max_depth,
+            compression_level=self._compression_level,
         )
-
-        req = copernicusmarine.subset(
-            username=username,
-            password=password,
-            dataset_id=self.dataset,
-            variables=self.variables,
-            minimum_longitude=self.min_lon,
-            maximum_longitude=self.max_lon,
-            minimum_latitude=self.min_lat,
-            maximum_latitude=self.max_lat,
-            minimum_depth=self.min_depth,
-            maximum_depth=self.max_depth,
-            start_datetime=self.f00,
-            end_datetime=self.f99,
-            coordinates_selection_method="strict-inside",
-            netcdf_compression_level=self._compression_level,
-            disable_progress_bar=not(self.verbose),
-            output_directory=self.output_path,
-            skip_existing=True, # do not download a new file if already downloaded
-            # **kwargs,
-        )
-        
-        self.path = req.file_path
         
     def _read_data(self):
         self.data = xr.open_dataset(self.path, engine=self.engine)

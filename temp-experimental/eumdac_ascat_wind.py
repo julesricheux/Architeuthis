@@ -63,18 +63,24 @@ if __name__ == "__main__":
     )
     ascat.load_data()
 
-    # Latest pass only, of those crossing the domain
+    # Latest pass covering the domain, not just a corner of it: passes
+    # are split at gaps of 30 min, and need a quarter of the largest one
     data = ascat.data
     inside = np.isfinite(data["wind_speed"].values)
     time_s = data["time"].values.astype("datetime64[s]")
-    latest = time_s[inside].max()
-    keep = inside & (time_s > latest - np.timedelta64(60, "m"))
+    times = np.sort(time_s[inside])
+    breaks = np.flatnonzero(np.diff(times) > np.timedelta64(30, "m")) + 1
+    passes = np.split(times, breaks)
+    largest = max(len(p) for p in passes)
+    chosen = [p for p in passes if len(p) >= largest / 4][-1]
+    latest = chosen[0]
+    keep = inside & (time_s >= chosen[0]) & (time_s <= chosen[-1])
 
     report(
         case="wind",
         library="eumdac",
         source="Metop ASCAT coastal winds, 12.5 km (OSI-104)",
-        image_time=f"{str(latest)[:16].replace('T', ' ')} UTC (latest pass)",
+        image_time=f"{str(latest)[:16].replace('T', ' ')} UTC (latest covering pass)",
         downloaded=sum(product.size for product in ascat.products) * 1e3,
         full_product=sum(product.size for product in ascat.everywhere) * 1e3,
         seconds=time.time() - tic,

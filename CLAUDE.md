@@ -54,10 +54,12 @@ architeuthis.modeling      Fitted/interpolated models, black_box (AeroSandbox)
 common.py      ArchiteuthisObject > ArchiteuthisData > ArchiteuthisSpatialData
         |       load_data() pipeline, add_interpolator(), __call__(), _HOME, status
 credentials.py save/get/delete/require credentials: environment, then OS store (keyring)
+copernicus.py  CopernicusMarineData mixin (subset + credentials), shared by CopernicusForecast and satellite
         +-- vessel.py     Vessel: models (NetCDF, functions, constants), consumption + hotel_load, sfoc, max_power
         +-- forecast.py   Topography; Forecast > Herbie (deterministic, HRDPS, ensemble),
         |                 Copernicus (CMEMS), CDS (ERA5); calm_forecast (zero fields)
-        +-- satellite.py  EUMETSATData > ASCATData, PoseidonData (validation)
+        +-- satellite.py  EUMETSATData > EUMETSATASCATData, PoseidonData; CopernicusSatelliteData >
+        |                 CopernicusASCATData; ASCATData: first of EUMETSAT, CMEMS that works (validation)
         |
 icebergs.py    IIP iceberg limit, fetched on first use: berg_zone polygon, berg_geojson
         |
@@ -190,6 +192,8 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 - `DeterministicHerbieForecast` reads each GRIB file with `forecast.open_grib` (`cfgrib.open_datasets`, one hypercube per level, merged without their scalar level coordinates), so one `regex` may mix levels, such as the IFS 10 m wind and 2 m temperature. Plain `xr.open_dataset(engine="cfgrib")` would skip `t2m` and the concatenation fail on `heightAboveGround`. cfgrib groups fields by merging them with xarray's default `compat`, catching the merges that fail: `_cfgrib_merge_defaults` pins the current default (`"no_conflicts"`, about to become `"override"`) and silences its `FutureWarning` around that call. A test turning warnings into errors cannot see them there, since cfgrib swallows the exception: record them instead. Two variables of the same name at two levels would collide; cfgrib names them apart (`u10`, `u100`).
 - `HRDPSForecast` wind speeds are right but its directions are not: the files have `uvRelativeToGrid` = 1 and the components are not rotated from the rotated grid, about 45 deg off around Saint-Pierre-et-Miquelon compared with GFS. `HerbieLatest` only looks on `aws` and `nomads` by default, so a model elsewhere needs `priority`.
 - `EUMDAC_KEY` and `EUMDAC_SECRET` hold the EUMETSAT Consumer Key and Secret, not a login. When neither CMEMS credential is found, `CopernicusForecast` passes `None` to the toolbox only if the `copernicusmarine login` file exists (`COPERNICUSMARINE_CREDENTIALS_DIRECTORY` or `~/.copernicusmarine/`), else it raises; likewise `CDSForecast` falls back to `cdsapi.Client()` only if `CDSAPI_RC` or `~/.cdsapirc` exists. Architeuthis never writes `~/.cdsapirc` any more. Without a credential store (Linux server), `keyring` errors are treated as "not found", so environment variables still work.
+- `copernicusmarine` takes naive dates as **local** times, not UTC. `CopernicusSatelliteData` passes UTC-aware timestamps; `CopernicusForecast` passes `date` and `end` as given. Its `"strict-inside"` selection refuses a period past the end of a dataset, so satellite data uses `"inside"`, which clips. Importing `copernicusmarine` takes about 3 s, which is why `architeuthis/copernicus.py` exists rather than this code living in `common.py`; mock it with `patch("architeuthis.copernicus.copernicusmarine.subset")`.
+- `ASCATData` is not an `EUMETSATData`: it builds an `EUMETSATASCATData` or a `CopernicusASCATData` per source in `load_data` and keeps the data of the first that loads, catching any exception of the others. ASCAT `wind_dir` is where the wind goes, unlike the meteorological convention of the models.
 - `core.berg_zone` and `icebergs.berg_zone` are computed when they are read (module `__getattr__`), so `from architeuthis.icebergs import berg_zone` fetches the iceberg limit at that line.
 
 ## Testing
@@ -199,7 +203,7 @@ Tests live in `tests/`, configured in `pyproject.toml`. `.github/workflows/tests
 CI installs the latest dependencies, so it can differ from a local environment. In particular, casadi 3.7 and 3.8 do not always converge the same way, so keep test objectives reasonably well conditioned.
 
 - **`tests/numpy`, `tests/optimization`, `tests/modeling`:** vendored from AeroSandbox, including the `import architeuthis as asb` style.
-- **`tests/domain`:** Architeuthis code. `test_route.py` covers routes, voyages and passage plans offline. `test_routing.py` runs `RoutingAnalysis.run` and `evaluate` end to end, marked `integration`. `test_plots.py` draws every figure from real reports with Agg. `test_ui.py` runs the real `ui.py` without its server, with forecasts and downloads replaced. `test_examples.py` runs every example and the quick start of the README from start to finish on synthetic data, so a new example must be added to its `WINDOWS`. `test_readme.py` checks the README and its links, and `test_plots.py` checks that `docs/user_guide.md` gives the signature of each figure. `test_import_side_effects.py` checks imports in a new interpreter with the network cut off. `test_credentials.py` covers the credential lookup, the store and the command line, and `test_packaging.py` the single source of the version. Download tests set credentials with `monkeypatch.setenv`.
+- **`tests/domain`:** Architeuthis code. `test_route.py` covers routes, voyages and passage plans offline. `test_routing.py` runs `RoutingAnalysis.run` and `evaluate` end to end, marked `integration`. `test_plots.py` draws every figure from real reports with Agg. `test_ui.py` runs the real `ui.py` without its server, with forecasts and downloads replaced. `test_examples.py` runs every example and the quick start of the README from start to finish on synthetic data, so a new example must be added to its `WINDOWS`. `test_readme.py` checks the README and its links, and `test_plots.py` checks that `docs/user_guide.md` gives the signature of each figure. `test_import_side_effects.py` checks imports in a new interpreter with the network cut off. `test_satellite.py` covers the ASCAT sources and their fallback with a mocked Data Store and toolbox. `test_credentials.py` covers the credential lookup, the store and the command line, and `test_packaging.py` the single source of the version. Download tests set credentials with `monkeypatch.setenv`.
 - **Expected failure:** `test_black_box_nonsmooth_function` is `xfail` because IPOPT can fail on the kink of `abs()`.
 
 Rules for new tests:
@@ -210,7 +214,7 @@ Rules for new tests:
 - **Keep the checkout clean.** Importing `wrappers/json_wrapper.py` or `ui.py` writes `assets/dashExtensions_default.js` to the working directory, so import them from a temporary folder, as `tests/domain/test_toolbox.py` does.
 - **Do not change `--tb=native`.** Other traceback styles parse `casadi.py`, which raises `MemoryError` and aborts the session.
 
-Not covered: the real IIP server (`test_icebergs.py` replaces `requests.get`), `ui.py` with real forecasts and in a browser, the rendering of cartopy maps, `satellite.py` downloads, the real credential stores of each OS (only checked by hand on Windows), and the default `spral` solver options.
+Not covered: the real IIP server (`test_icebergs.py` replaces `requests.get`), `ui.py` with real forecasts and in a browser, the rendering of cartopy maps, the real EUMETSAT and Copernicus Marine servers for `satellite.py`, the real credential stores of each OS (only checked by hand on Windows), and the default `spral` solver options.
 
 ## Deprecations
 

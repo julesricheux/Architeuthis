@@ -185,6 +185,8 @@ and this project follows Semantic Versioning https://semver.org
 - `add_constant(var_key, value)` registers a constant model without input on any data object, a constant brake power or hotel load for example.
 - Reports hold the consumption quantities of the formulation: `hourly_consumption` always, and `bhp`, `hotel_load`, `total_power` and `sfoc` when the formulation computes them. They are in `ctx` for the constraints.
 - `plot_report` draws `total_power`, else `hourly_consumption`, on its power panel when the report has no `bhp`, and says so on the sails panel when the report has no `sails_contribution`.
+- ASCAT winds from Copernicus Marine: `satellite.CopernicusASCATData` reads the daily gridded swaths of Metop-B and -C (WIND_GLO_PHY_L3_NRT_012_002, 0.125 or 0.25 deg, ascending and descending orbits), subset by the server, with the CMEMS credentials. `satellite.CopernicusSatelliteData` reads any other Copernicus Marine observation dataset.
+- `architeuthis.copernicus` holds what forecasts and satellite data share for Copernicus Marine: the `CopernicusMarineData` mixin, whose `_subset` downloads a subset with the credentials, and `copernicusmarine_credentials_file()`.
 
 ### Changed
 - casadi is required from 3.7 (`casadi>=3.7` in `pyproject.toml`, `environment.yaml` and `requirements.txt`). 3.7 and 3.8 are both supported.
@@ -197,6 +199,9 @@ and this project follows Semantic Versioning https://semver.org
 - The brake power is `bhp` in reports, in `ctx` and in the default table columns, the key of its vessel model, instead of `avg_bhp`. The y label of `plot_power_and_weather` is `BHP / kW`. Saved reports with `avg_bhp` are read with `bhp`.
 - The examples follow the new vessel definition: the sfoc and hotel load curves are vessel models of `total_power` and `bhp` (active in `ensemble_routing.py`, as commented alternatives in `simple_routing.py` and `long_term_routing.py`), `function_polar_routing.py` shows the other consumption formulations as commented alternatives, and the unused `columns` lists are gone.
 - `plot_power_and_weather(max_bhp=True)`, `plot_ensemble_along_route`, `draw(sails_threshold=...)` and the tooltips of the UI map skip `max_bhp` and `sails_contribution` when a report has none.
+- `satellite.ASCATData` takes its winds from the first source of `sources` that works, by default EUMETSAT then Copernicus Marine, with a ⚠️ status for each one that fails, and tells which in `source`. `sources="cmems"` uses Copernicus Marine only. The former class, reading EUMETSAT only, is `satellite.EUMETSATASCATData`. Both sources give `lat`, `lon`, `time`, `valid_time`, `wind_speed` and `wind_dir`, on swath dimensions for EUMETSAT and on `swath, day, latitude, longitude` for Copernicus Marine.
+- `EUMETSATData` downloads only the products crossing its domain (`bbox` of the search), 3 instead of 14 orbits for the Bay of Biscay over 12 hours, and raises `FileNotFoundError` when there is none.
+- `CopernicusForecast` inherits its download from `copernicus.CopernicusMarineData`, unchanged.
 
 ### Deprecated
 - `Vessel(sfc=...)` and `Vessel.sfc` raise a `DeprecationWarning` and will be removed in 0.4.0: use `sfoc`, the specific fuel oil consumption in g/kWh.
@@ -208,6 +213,7 @@ and this project follows Semantic Versioning https://semver.org
 ### Fixed
 - `requirements.txt` still pinned `dash==3.2.0`, unsupported since 0.3, and lacked `keyring`: it now asks for `dash==4.5.0` and `dash-mantine-components>=3,<4`, as `environment.yaml`, and `keyring`.
 - With casadi 3.8, a vessel table optimized without wave or atmospheric forecast failed with a CasADi reshape error: the calm fields were DM zeros, which NumPy functions turn into NumPy columns from casadi 3.8, broadcast to a square by the table query. They are MX zeros for a symbolic query.
+- The cache of `EUMETSATData` never worked: each run downloaded every product again, truncating the file it tested, and products already downloaded were left out of `path`. They are now downloaded once, through a `.part` file, and always read.
 - `WAVE_COMPONENTS_OFFSET` is back to 1e-2 m² from 0: the wave direction had no gradient where the wave components vanish (a calm sea, land cells, the steps past the forecast horizon), so IPOPT stopped at its first iteration with `Invalid_Number_Detected` for any vessel model taking `hs` or `wa`, such as a polar table.
 
 ---

@@ -56,6 +56,7 @@ for key in ("bhp", "max_bhp", "sails_contribution"):
 | `forecast.HRDPSForecast` | The 10 m wind of HRDPS continental, regridded on a regular grid, the latest run by default. Its wind direction is not reliable yet: the components are relative to the rotated grid of the model and are not rotated, about 45° off around Saint-Pierre-et-Miquelon. |
 | `forecast.CopernicusForecast` | Currents and other products of Copernicus Marine. Needs an account, `CMEMS_USER` and `CMEMS_PWD`. |
 | `forecast.CDSForecast` | ERA5 reanalysis. Needs an account, `CDS_API_KEY`. |
+| `satellite.ASCATData` | ASCAT winds over a period and a box, to validate forecasts: from EUMETSAT (`EUMDAC_KEY`, `EUMDAC_SECRET`), the latest swaths, else from Copernicus Marine (`CMEMS_USER`, `CMEMS_PWD`), daily gridded swaths about a day behind. `sources="cmems"` uses Copernicus Marine only, and `source` tells which one was used. The variables are the same either way: `lat`, `lon`, `time`, `valid_time`, `wind_speed` in m/s and `wind_dir`, where the wind goes to, in degrees. `EUMETSATASCATData` and `CopernicusASCATData` are the two sources. |
 | `forecast.Topography` | The signed distance to land and to your exclusion zones. It needs only its box, and `exclusion_zones` if you have some. |
 | `vessel.Vessel` | A vessel, from its polar file, from functions (see [Polars as functions](#polars-as-functions)) or from constants. The routing only needs its consumption (see [Consumption](#consumption)). `label` comes from the file name by default, `eff45` for `..._eff45.nc`, or is the name without a file. |
 

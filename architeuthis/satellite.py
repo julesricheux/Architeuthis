@@ -2,6 +2,11 @@
 """
 Satellite observations, to validate forecasts against them.
 
+ASCAT winds come from EUMETSAT (`EUMETSATASCATData`, the latest swaths)
+or from Copernicus Marine (`CopernicusASCATData`, daily gridded swaths,
+about a day behind). `ASCATData` takes them in a chosen order and falls
+back on the next source when one fails. Both give the same variables.
+
 Created on Thu Jan 29 16:15:59 2026
 
 @author: jrich
@@ -13,10 +18,13 @@ import eumdac
 import shutil
 import zipfile
 
+import numpy as np
+import pandas as pd
 import xarray as xr
 
-from typing import Union
-from architeuthis.common import ArchiteuthisSpatialData, Datetime, _HOME, status
+from typing import Sequence, Union
+from architeuthis.common import ArchiteuthisSpatialData, Datetime, _HOME, status, to_timestamp
+from architeuthis.copernicus import CopernicusMarineData
 from architeuthis.credentials import require_credentials
 
 
@@ -34,7 +42,7 @@ class ArchiteuthisSatelliteData(ArchiteuthisSpatialData):
         max_lat: Northern bound of the domain, in degrees.
         verbose: Whether to report progress.
     """
-    
+
     def __init__(
         self,
         name: str,
@@ -48,13 +56,34 @@ class ArchiteuthisSatelliteData(ArchiteuthisSpatialData):
     ):
         self.start = start
         self.end = end
-        
+
         super().__init__(name, min_lon, max_lon, min_lat, max_lat, verbose)
-        
+
+    def _inside(self, latitude: xr.DataArray, longitude: xr.DataArray) -> xr.DataArray:
+        """
+        Whether positions are inside the domain.
+
+        Args:
+            latitude: Latitudes, in degrees.
+            longitude: Longitudes, in degrees, in [-180, 180).
+
+        Returns:
+            Boolean array of the shape of the positions.
+        """
+        return (
+            (latitude >= self.min_lat)
+            & (latitude <= self.max_lat)
+            & (longitude >= self.min_lon)
+            & (longitude <= self.max_lon)
+        )
+
 
 class EUMETSATData(ArchiteuthisSatelliteData):
     """
     Satellite data downloaded from the EUMETSAT Data Store.
+
+    Only the products crossing the domain during the period are
+    downloaded, once: their files are kept in `~/data/eumetsat/`.
 
     Credentials come from `EUMDAC_KEY` and `EUMDAC_SECRET`, the Consumer
     Key and Secret, read from the environment or the credential store
@@ -72,7 +101,7 @@ class EUMETSATData(ArchiteuthisSatelliteData):
         max_lat: Northern bound of the domain, in degrees.
         verbose: Whether to report progress.
     """
-    
+
     def __init__(
         self,
         name: str,
@@ -86,19 +115,14 @@ class EUMETSATData(ArchiteuthisSatelliteData):
         verbose: bool = True,
     ):
         self.dataset = dataset
-        
+
         self.f99 = end
-        
-        # TODO how to handle depth properly?
-        self.min_depth = 0.49402499198913574
-        self.max_depth = 0.49402499198913574
-        
+
         self.output_path = os.path.join(_HOME, "eumetsat")
         os.makedirs(self.output_path, exist_ok=True)
-        
+
         super().__init__(name, start, end, min_lon, max_lon, min_lat, max_lat, verbose)
-       
-        
+
     def _locate_data(self):
         # Read here and not kept on the object, unlike the token, which
         # expires.
@@ -106,77 +130,64 @@ class EUMETSATData(ArchiteuthisSatelliteData):
         self.token = eumdac.AccessToken(credentials)
 
         self.datastore = eumdac.DataStore(self.token)
-        
+
         self.collection = self.datastore.get_collection(
             self.dataset
         )
 
-
     def _download_data(self):
-        
-        # find products
-        self.products = self.collection.search(
-            # geo='POLYGON(({}))'.format(','.join(["{} {}".format(*coord) for coord in geometry])),
-            # bbox=bounding_box,
-            dtstart=self.start, 
+        self.products = list(self.collection.search(
+            bbox=f"{self.min_lon}, {self.min_lat}, {self.max_lon}, {self.max_lat}",
+            dtstart=self.start,
             dtend=self.end,
-            # sat=satellite
-        )
-        
-        # download products
-        zipfiles=[]
-        
-        
-        self.info(f'🛰️ Download of {len(self.products)} product(s)...')
-        for product in tqdm.tqdm(self.products):
-            with product.open() as fsrc, \
-                    open(os.path.join(self.output_path, fsrc.name), mode='wb') as fdst:
-                if not os.path.exists(fdst.name[-4:]+".nc"):
-                # if not os.path.exists(fdst.name):
-                    shutil.copyfileobj(fsrc, fdst)
-                    zipfiles.append(fdst.name) # add distant file path to path storage
-                    # print(f'Download of product {product} finished.')
-                # else:
-                #     print("Already in memory")
-        self.info('✅ Downloads completed.')
+        ))
+        if not self.products:
+            raise FileNotFoundError(
+                f"No product of {self.dataset} over the domain "
+                f"between {self.start} and {self.end}."
+            )
 
-    
-        # Unzip products
-        self.info('📦 Unzipping downloaded files...')
-        nc_files = []
+        self.info(f"🛰️ Download of {len(self.products)} product(s)...")
+        downloads = []
+        for product in tqdm.tqdm(self.products, disable=not self.verbose):
+            with product.open() as source:
+                path = os.path.join(self.output_path, source.name)
+                if os.path.exists(path):
+                    self.info(f"🟦 {source.name} already downloaded.")
+                else:
+                    # Written aside first, so that an interrupted download
+                    # is not taken for a complete one by the next run.
+                    with open(path + ".part", "wb") as destination:
+                        shutil.copyfileobj(source, destination)
+                    os.replace(path + ".part", path)
+            downloads.append(path)
+        self.info("✅ Downloads completed.")
 
-        for zip_path in zipfiles:
-            extracted_nc = []
+        self.info("📦 Unzipping downloaded files...")
+        self.path = []
+        for path in downloads:
+            if not zipfile.is_zipfile(path):
+                self.path.append(path)
+                continue
+            with zipfile.ZipFile(path, "r") as archive:
+                for member in archive.namelist():
+                    if not member.endswith(".nc"):
+                        continue
+                    out_path = os.path.join(self.output_path, os.path.basename(member))
+                    if not os.path.exists(out_path):
+                        with archive.open(member) as source, open(out_path, "wb") as destination:
+                            shutil.copyfileobj(source, destination)
+                    self.path.append(out_path)
+        self.info("✅ Finished unzipping.")
 
-            with zipfile.ZipFile(zip_path, "r") as z:
-                for member in z.namelist():
-                    if member.endswith(".nc"):
-                        out_path = os.path.join(
-                            self.output_path,
-                            os.path.basename(member),
-                        )
 
-                        if not os.path.exists(out_path):
-                            z.extract(member, self.output_path)
-                            os.rename(
-                                os.path.join(self.output_path, member),
-                                out_path,
-                            )
-
-                        extracted_nc.append(out_path)
-                        nc_files.append(out_path)
-
-            # # Delete ZIP only if extraction succeeded
-            # if extracted_nc:
-            #     os.remove(zip_path)
-        self.info('✅ Finished unzipping.')
-        
-        self.path = nc_files
-        
-        
-class ASCATData(EUMETSATData):
+class EUMETSATASCATData(EUMETSATData):
     """
-    ASCAT scatterometer winds, collection `EO:EUM:DAT:METOP:OSI-104`.
+    ASCAT winds of EUMETSAT, collection `EO:EUM:DAT:METOP:OSI-104`.
+
+    The OSI SAF coastal winds at 12.5 km of Metop-B and -C, along their
+    swaths, a couple of hours after sensing. See `ASCATData` for the
+    variables, and to fall back on Copernicus Marine.
 
     Args:
         name: Name of this object, used in status messages.
@@ -188,7 +199,7 @@ class ASCATData(EUMETSATData):
         max_lat: Northern bound of the domain, in degrees.
         verbose: Whether to report progress.
     """
-    
+
     def __init__(
         self,
         name: str,
@@ -200,36 +211,26 @@ class ASCATData(EUMETSATData):
         max_lat: float = 90.,
         verbose: bool = True,
     ):
-        
         dataset = "EO:EUM:DAT:METOP:OSI-104"
-        
+
         super().__init__(name, dataset, start, end, min_lon, max_lon, min_lat, max_lat, verbose)
-    
 
     def _read_data(self):
-        
         self.data = xr.open_mfdataset(
             self.path,
             combine="nested",          # explicit concatenation
             concat_dim="NUMROWS",      # stack along track
             parallel=True,             # use dask
-            # chunks={"NUMROWS": 1000, "NUMCELLS": 82}  # adjust chunking for memory
         )
-        
+
     def _convert_data(self):
-        
         self.data["lon"] = ((self.data["lon"] + 180.) % 360.) - 180.
-        self.data["valid_time"] = self.data["time"].astype("datetime64[s]").astype(float)
-        
-        slicing = (
-            (self.data["lat"] >= self.min_lat) &
-            (self.data["lat"] <= self.max_lat) &
-            (self.data["lon"] >= self.min_lon) &
-            (self.data["lon"] <= self.max_lon)
-        )
-        
-        self.data = self.data.where(slicing).load()
-        
+        self.data["valid_time"] = _epoch_seconds(self.data["time"])
+
+        inside = self._inside(self.data["lat"], self.data["lon"])
+        self.data = self.data.where(inside).load()
+
+
 # TODO find a better class name?
 class PoseidonData(EUMETSATData):
     """
@@ -245,7 +246,7 @@ class PoseidonData(EUMETSATData):
         max_lat: Northern bound of the domain, in degrees.
         verbose: Whether to report progress.
     """
-    
+
     def __init__(
         self,
         name: str,
@@ -257,31 +258,297 @@ class PoseidonData(EUMETSATData):
         max_lat: float = 90.,
         verbose: bool = True,
     ):
-        
-        dataset = "EO:EUM:DAT:0142" # Poseidon-4 Level 2P Wind/Wave Products Low Resolution in NRT - Sentinel-6
-        
+        dataset = "EO:EUM:DAT:0142"  # Poseidon-4 Level 2P Wind/Wave Products Low Resolution in NRT - Sentinel-6
+
         super().__init__(name, dataset, start, end, min_lon, max_lon, min_lat, max_lat, verbose)
-    
-    
+
     def _read_data(self):
-        
         self.data = xr.open_mfdataset(
             self.path
         )
-    
-    def _convert_data(self):
-        
-        self.data["longitude"] = ((self.data["longitude"] + 180.) % 360.) - 180.
-        
-        slicing = (
-            (self.data["latitude"] >= self.min_lat) &
-            (self.data["latitude"] <= self.max_lat) &
-            (self.data["longitude"] >= self.min_lon) &
-            (self.data["longitude"] <= self.max_lon)
-        )
-        
-        self.data = self.data.where(slicing).load()
 
+    def _convert_data(self):
+        self.data["longitude"] = ((self.data["longitude"] + 180.) % 360.) - 180.
+
+        inside = self._inside(self.data["latitude"], self.data["longitude"])
+        self.data = self.data.where(inside).load()
+
+
+class CopernicusSatelliteData(CopernicusMarineData, ArchiteuthisSatelliteData):
+    """
+    Satellite data downloaded from Copernicus Marine (CMEMS).
+
+    Only the domain, the period and the variables asked for are
+    downloaded, by the server, once: the files are kept in
+    `~/data/cmems/`. Each dataset is read as it is.
+
+    Credentials come from `CMEMS_USER` and `CMEMS_PWD`, read from the
+    environment or the credential store when downloading (see
+    `architeuthis.credentials`), else from `copernicusmarine login`.
+
+    Args:
+        name: Name of this object, used in status messages.
+        datasets: Identifiers of the CMEMS datasets, or one.
+        variables: Variables to download from each dataset.
+        start: Start of the period.
+        end: End of the period.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+        verbose: Whether to report progress.
+        engine: The xarray engine that reads the files.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        datasets: Union[str, Sequence[str]],
+        variables: Sequence[str],
+        start: Union[Datetime, list[Datetime]] = None,
+        end: Union[Datetime, list[Datetime]] = None,
+        min_lon: float = -180.,
+        max_lon: float = 180.,
+        min_lat: float = -90.,
+        max_lat: float = 90.,
+        verbose: bool = True,
+        engine: str = "netcdf4",
+    ):
+        self.datasets = [datasets] if isinstance(datasets, str) else list(datasets)
+        self.variables = list(variables)
+        self.engine = engine
+
+        self.output_path = os.path.join(_HOME, "cmems")
+
+        super().__init__(name, start, end, min_lon, max_lon, min_lat, max_lat, verbose)
+
+    def _period(self) -> tuple:
+        """
+        Period to download, as UTC timestamps.
+
+        Returns:
+            (start, end), timezone-aware: the toolbox takes naive
+            dates as local times.
+        """
+        return tuple(
+            pd.Timestamp(to_timestamp(value), unit="s", tz="UTC")
+            for value in (self.start, self.end)
+        )
+
+    def _download_data(self):
+        start, end = self._period()
+        self.info(f"⬇️ Download of {len(self.datasets)} Copernicus Marine dataset(s)...")
+        # "inside": observations often stop before the end of the period
+        self.path = [
+            str(self._subset(dataset, self.variables, start, end, selection="inside"))
+            for dataset in self.datasets
+        ]
+
+    def _read_data(self):
+        self.data = []
+        for path in self.path:
+            with xr.open_dataset(path, engine=self.engine) as data:
+                self.data.append(data.load())
+
+
+ASCAT_CMEMS_DATASET = "cmems_obs-wind_glo_phy_nrt_l3-{satellite}-ascat-{orbit}-{resolution}deg_P1D-i"
+
+
+class CopernicusASCATData(CopernicusSatelliteData):
+    """
+    ASCAT winds of Copernicus Marine, WIND_GLO_PHY_L3_NRT_012_002.
+
+    The swaths of each Metop and orbit direction on a regular grid, one
+    dataset each, with one time step per day: the latest day is about
+    one day behind, and each cell has its own measurement time. Cells
+    measured outside the period are left out. See `ASCATData` for the
+    variables.
+
+    Args:
+        name: Name of this object, used in status messages.
+        start: Start of the period.
+        end: End of the period.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+        verbose: Whether to report progress.
+        satellites: Metop satellites, among "metopb" and "metopc".
+        orbits: Orbit directions, among "asc" and "des".
+        resolution: Grid step, 0.125 or 0.25 deg.
+        engine: The xarray engine that reads the files.
+    """
+
+    VARIABLES = ["wind_speed", "wind_to_dir", "measurement_time"]
+
+    def __init__(
+        self,
+        name: str,
+        start: Union[Datetime, list[Datetime]] = None,
+        end: Union[Datetime, list[Datetime]] = None,
+        min_lon: float = -180.,
+        max_lon: float = 180.,
+        min_lat: float = -90.,
+        max_lat: float = 90.,
+        verbose: bool = True,
+        satellites: Sequence[str] = ("metopb", "metopc"),
+        orbits: Sequence[str] = ("asc", "des"),
+        resolution: float = 0.125,
+        engine: str = "netcdf4",
+    ):
+        datasets = [
+            ASCAT_CMEMS_DATASET.format(satellite=satellite, orbit=orbit, resolution=resolution)
+            for satellite in satellites
+            for orbit in orbits
+        ]
+        super().__init__(
+            name, datasets, self.VARIABLES, start, end,
+            min_lon, max_lon, min_lat, max_lat, verbose, engine,
+        )
+
+    def _period(self) -> tuple:
+        start, end = super()._period()
+        # Daily time steps, stamped at midnight
+        return start.floor("D"), end
+
+    def _convert_data(self):
+        start, end = super()._period()
+        swaths = []
+        for data in self.data:
+            data = data.rename({"time": "day"})
+            swaths.append(xr.Dataset({
+                "time": data["measurement_time"],
+                "wind_speed": data["wind_speed"],
+                "wind_dir": data["wind_to_dir"],
+            }))
+        data = xr.concat(swaths, dim="swath", join="outer")
+        data = data.assign_coords(swath=self.datasets)
+
+        # Positions on every cell, in the order of the winds, so that
+        # flattened variables match
+        dims = data["wind_speed"].dims
+        data["lat"] = data["latitude"].broadcast_like(data["wind_speed"]).transpose(*dims)
+        data["lon"] = data["longitude"].broadcast_like(data["wind_speed"]).transpose(*dims)
+        data["lon"] = ((data["lon"] + 180.) % 360.) - 180.
+
+        start, end = (np.datetime64(value.tz_convert(None)) for value in (start, end))
+        measured = (data["time"] >= start) & (data["time"] <= end)
+        data = data.where(measured & self._inside(data["lat"], data["lon"]))
+        data["valid_time"] = _epoch_seconds(data["time"])
+        self.data = data
+
+
+def _epoch_seconds(time: xr.DataArray) -> xr.DataArray:
+    """
+    Times as float epoch seconds, NaN where missing.
+
+    Args:
+        time: Times, datetime64.
+
+    Returns:
+        Float array of the same shape.
+    """
+    return (time - np.datetime64(0, "s")) / np.timedelta64(1, "s")
+
+
+ASCAT_SOURCES = {
+    "eumetsat": EUMETSATASCATData,
+    "cmems": CopernicusASCATData,
+}
+
+
+class ASCATData(ArchiteuthisSatelliteData):
+    """
+    ASCAT scatterometer winds, from the first source that works.
+
+    The sources are tried in order, among `ASCAT_SOURCES`: by default
+    EUMETSAT, the latest swaths, then Copernicus Marine, about a day
+    behind, when EUMETSAT fails (missing credentials, server errors, no
+    product...). Give `sources="cmems"` to use Copernicus Marine only.
+    After `load_data`, `source` is the source used, and `data` holds,
+    on dimensions that depend on it:
+
+    - `lat`, `lon`: positions, in degrees, longitudes in [-180, 180).
+    - `time`, `valid_time`: measurement times, datetime64 and float
+      epoch seconds.
+    - `wind_speed`: 10 m equivalent neutral wind speed, in m/s.
+    - `wind_dir`: direction the wind blows to, in degrees (not the
+      meteorological direction it comes from).
+
+    Measurements outside the domain are NaN.
+
+    Args:
+        name: Name of this object, used in status messages.
+        start: Start of the period.
+        end: End of the period.
+        min_lon: Western bound of the domain, in degrees.
+        max_lon: Eastern bound of the domain, in degrees.
+        min_lat: Southern bound of the domain, in degrees.
+        max_lat: Northern bound of the domain, in degrees.
+        verbose: Whether to report progress.
+        sources: Keys of `ASCAT_SOURCES` to try, in order, or one.
+
+    Example:
+        ascat = ASCATData("ascat", start, end, sources="cmems")
+        ascat.load_data()
+    """
+
+    def __init__(
+        self,
+        name: str,
+        start: Union[Datetime, list[Datetime]] = None,
+        end: Union[Datetime, list[Datetime]] = None,
+        min_lon: float = -180.,
+        max_lon: float = 180.,
+        min_lat: float = -90.,
+        max_lat: float = 90.,
+        verbose: bool = True,
+        sources: Union[str, Sequence[str]] = ("eumetsat", "cmems"),
+    ):
+        self.sources = [sources] if isinstance(sources, str) else list(sources)
+        unknown = [source for source in self.sources if source not in ASCAT_SOURCES]
+        if unknown or not self.sources:
+            raise ValueError(
+                f"Unknown ASCAT source(s) {unknown}: choose among {list(ASCAT_SOURCES)}."
+            )
+        self.source = None
+
+        super().__init__(name, start, end, min_lon, max_lon, min_lat, max_lat, verbose)
+
+    def load_data(self):
+        """
+        Load the data of the first source that works.
+
+        Raises:
+            Exception: The error of the last source, when all fail.
+        """
+        for index, source in enumerate(self.sources):
+            data = ASCAT_SOURCES[source](
+                self.name,
+                start=self.start,
+                end=self.end,
+                min_lon=self.min_lon,
+                max_lon=self.max_lon,
+                min_lat=self.min_lat,
+                max_lat=self.max_lat,
+                verbose=self.verbose,
+            )
+            try:
+                data.load_data()
+            except Exception as error:
+                following = self.sources[index + 1:]
+                status(
+                    f"⚠️ ASCAT from {source} failed ({type(error).__name__}: {error})"
+                    + (f", trying {following[0]}." if following else ".")
+                )
+                if not following:
+                    raise
+                continue
+            self.source = source
+            self.path = data.path
+            self.data = data.data
+            self.info(f"✅ ASCAT from {source}.")
+            return
 
 
 if __name__=="__main__":
@@ -336,7 +603,7 @@ if __name__=="__main__":
     
     
     wind_speed = ascat_ds["wind_speed"].values       # m/s
-    wind_dir = ascat_ds["wind_dir"].values           # degrees, meteorological
+    wind_dir = ascat_ds["wind_dir"].values           # degrees, where the wind goes
     
     # -----------------------------
     # Convert wind direction to u, v
@@ -383,12 +650,11 @@ if __name__=="__main__":
         width=0.002
     )
     
-    a = ascat_ds.attrs
-    
+
     # cb = plt.colorbar(q, ax=ax, orientation="vertical", pad=0.02)
     # cb.set_label("Wind speed [m s$^{-1}$]")
     
-    ax.set_title(f"ASCAT Level-2 Ocean Surface Wind / {a['source']} {a['start_date']} {a['start_time']}")
+    ax.set_title(f"ASCAT winds from {ascat.source}")
     
     ax.set_extent([ascat.min_lon, ascat.max_lon, ascat.min_lat, ascat.max_lat], crs=ccrs.PlateCarree())
 

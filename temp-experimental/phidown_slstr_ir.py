@@ -37,7 +37,7 @@ from scipy.spatial import cKDTree
 from phidown.search import CopernicusDataSearcher
 from phidown.native_download import download_s3_resumable
 
-from summary import IR_NSWE, OUTPUT, RESOLUTION, folder_size, ir_dataset, report
+from summary import DATA, IR_NSWE, RESOLUTION, folder_size, ir_dataset, report
 
 CONFIG_FILE = os.path.expanduser("~/.s5cfg")  # outside the repository
 FILES = ["S8_BT_in.nc", "geodetic_in.nc"]  # IR 10.85 um, nadir view
@@ -124,7 +124,7 @@ if __name__ == "__main__":
     if not os.path.exists(CONFIG_FILE):
         raise SystemExit(f"No CDSE S3 keys in {CONFIG_FILE}: search only.")
 
-    folder = os.path.join(OUTPUT, "phidown")
+    folder = os.path.join(DATA, "phidown")
     paths = []
     for s3_path in granules["S3Path"]:
         granule = os.path.join(folder, os.path.basename(s3_path))
