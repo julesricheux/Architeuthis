@@ -23,6 +23,8 @@ Created on Thu Jan 29 16:15:59 2026
 """
 
 import os
+import json
+import time as clock
 import tqdm
 import eumdac
 import shutil
@@ -660,6 +662,11 @@ MATCH_WEIGHT = 0.05
 # Images requested at once from a map server
 DOWNLOAD_WORKERS = 4
 
+# An image still empty this long after its time will stay so (outside the
+# disk of the satellite, say): it is recorded and not asked again. Before,
+# it may not be produced yet, and a later run asks again.
+EMPTY_FINAL_AFTER = 3 * 3600.0  # s
+
 # Grid resolution, in degrees, that shows all the detail of the finest
 # server layers over the North Atlantic (2026-11), where their pixels are
 # larger than at the sub-satellite point; a finer one only enlarges them,
@@ -948,8 +955,17 @@ class WMSImageryData(SatelliteImagery):
     One server layer per channel (`wms_layers`).
     The server crops and renders each image at the requested box,
     resolution and time; the times are those every channel has within
-    the period. Images are kept in `~/data/wms/`, downloaded once; an
-    empty image, not produced yet, is left out. Images are requested
+    the period.
+
+    Files are managed as those of the forecasts: nothing on disk is
+    downloaded again. Each image (server layer, box, resolution, time)
+    is a PNG in `~/data/wms/<host>/<layer>/<box>/`, opened if it is
+    there. The times the server listed for a layer, and the periods
+    they cover, are kept in `<layer>/times.json`: a period already
+    covered is answered from it, so that loading it again asks the
+    server nothing. An empty image is left out; one empty for good
+    (`EMPTY_FINAL_AFTER`) is recorded there too. If the server cannot
+    be reached, the images on disk are used, with a warning. Images are requested
     `workers` at a time (`DOWNLOAD_WORKERS`), and in tiles when larger
     than `wms_utils.MAX_SIZE` pixels a side. Their pixels are in
     `rgba_<channel>` and, given the palette of the server layer, their
@@ -1036,8 +1052,7 @@ class WMSImageryData(SatelliteImagery):
         Returns:
             The path.
         """
-        box = f"{self.min_lon:g}_{self.min_lat:g}_{self.max_lon:g}_{self.max_lat:g}_{self.resolution:g}"
-        return os.path.join(self.output_path, self.wms_layers[channel].replace(":", "_"), box)
+        return os.path.join(self.output_path, self.wms_layers[channel].replace(":", "_"), self._box())
 
     def _time_extent(self, channel: str) -> list[str]:
         """
@@ -1053,13 +1068,147 @@ class WMSImageryData(SatelliteImagery):
             self._capabilities = wms_utils.capabilities(self.url)
         return wms_utils.time_extent(self._capabilities, self.wms_layers[channel])
 
+    def _image_path(self, channel: str, time: pd.Timestamp) -> str:
+        """
+        Path of one image on disk.
+
+        Args:
+            channel: "ir" or "visible".
+            time: Time of the image.
+
+        Returns:
+            The path, whether the image is there or not.
+        """
+        return os.path.join(self._folder(channel), f"{time:%Y%m%dT%H%M%S}.png")
+
+    def _index_path(self, channel: str) -> str:
+        """
+        Path of the time index of a server layer.
+
+        Args:
+            channel: "ir" or "visible".
+
+        Returns:
+            The path of its `times.json`, shared by every box.
+        """
+        return os.path.join(self.output_path, self.wms_layers[channel].replace(":", "_"), "times.json")
+
+    def _read_index(self, channel: str) -> dict:
+        """
+        Time index of a server layer, empty if there is none.
+
+        Args:
+            channel: "ir" or "visible".
+
+        Returns:
+            `{"covered": [[start, end], ...], "times": [...], "empty":
+            {box: [...]}}`, in epoch seconds: the periods whose times
+            the server listed, those times, and the images empty for
+            good, by box.
+        """
+        index = {"covered": [], "times": [], "empty": {}}
+        try:
+            with open(self._index_path(channel), encoding="utf-8") as file:
+                index.update(json.load(file))
+        except (OSError, ValueError):
+            pass
+        return index
+
+    def _write_index(self, channel: str, index: dict):
+        """
+        Save the time index of a server layer, merging its periods.
+
+        Args:
+            channel: "ir" or "visible".
+            index: As `_read_index` gives it.
+        """
+        covered = []
+        for first, last in sorted(index["covered"]):
+            if covered and first <= covered[-1][1]:
+                covered[-1][1] = max(covered[-1][1], last)
+            else:
+                covered.append([first, last])
+        index["covered"] = covered
+        index["times"] = sorted(set(index["times"]))
+        path = self._index_path(channel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path + ".part", "w", encoding="utf-8") as file:
+            json.dump(index, file)
+        os.replace(path + ".part", path)
+
+    def _box(self) -> str:
+        """
+        Name of the box and resolution in the folders and the index.
+        """
+        return f"{self.min_lon:g}_{self.min_lat:g}_{self.max_lon:g}_{self.max_lat:g}_{self.resolution:g}"
+
+    def _times(self, channel: str) -> pd.DatetimeIndex:
+        """
+        Times of a server layer within the period, from disk if known.
+
+        Args:
+            channel: "ir" or "visible".
+
+        Returns:
+            Sorted UTC times, before `time_step`.
+        """
+        index = self._read_index(channel)
+        layer = self.wms_layers[channel]
+        if self.start is not None and self.end is not None:
+            start, end = to_timestamp(self.start), to_timestamp(self.end)
+            if any(first <= start and end <= last for first, last in index["covered"]):
+                self.info(f"💾 Times of {layer} already known.")
+                times = [time for time in index["times"] if start <= time <= end]
+                return pd.to_datetime(times, unit="s", utc=True)
+        try:
+            times = wms_utils.available_times(self._time_extent(channel), self.start, self.end)
+        except requests.RequestException as error:
+            # Offline: the images of the period already on disk
+            times = self._times_on_disk(channel)
+            if times.empty:
+                raise
+            status(f"⚠️ {layer} unreachable ({type(error).__name__}): {len(times)} image(s) on disk used.")
+            return times
+        if self.start is not None and not times.empty:
+            # The server lists every time up to its latest: later ones
+            # may come, earlier ones will not
+            last = min(to_timestamp(self.end), times[-1].timestamp()) if self.end is not None else times[-1].timestamp()
+            index["covered"].append([to_timestamp(self.start), last])
+            index["times"].extend(time.timestamp() for time in times)
+            self._write_index(channel, index)
+        return times
+
+    def _times_on_disk(self, channel: str) -> pd.DatetimeIndex:
+        """
+        Times of the images of a channel on disk, within the period.
+
+        Args:
+            channel: "ir" or "visible".
+
+        Returns:
+            Sorted UTC times.
+        """
+        folder = self._folder(channel)
+        names = sorted(os.listdir(folder)) if os.path.isdir(folder) else []
+        times = pd.to_datetime(
+            [name[:-4] for name in names if name.endswith(".png")], format="%Y%m%dT%H%M%S", utc=True,
+        )
+        if self.start is not None:
+            times = times[times >= pd.Timestamp(to_timestamp(self.start), unit="s", tz="UTC")]
+        if self.end is not None:
+            times = times[times <= pd.Timestamp(to_timestamp(self.end), unit="s", tz="UTC")]
+        return times
+
     def _locate_data(self):
         self._capabilities = None
         self.available = {}
         for channel, layer in self.wms_layers.items():
-            times = wms_utils.available_times(self._time_extent(channel), self.start, self.end)
+            times = self._times(channel)
             if self.time_step is not None:
                 times = times[times == times.floor(self.time_step)]
+            # Images empty for good are not asked again
+            empty = set(self._read_index(channel)["empty"].get(self._box(), []))
+            times = times[[time.timestamp() not in empty for time in times]]
             if times.empty:
                 raise FileNotFoundError(f"No image of {layer} between {self.start} and {self.end}.")
             self.available[channel] = times
@@ -1077,7 +1226,7 @@ class WMSImageryData(SatelliteImagery):
             or nothing over the domain), which is not cached so that a
             later run asks again.
         """
-        path = os.path.join(self._folder(channel), f"{time:%Y%m%dT%H%M%S}.png")
+        path = self._image_path(channel, time)
         if os.path.exists(path):
             return path
         bounds = (self.min_lon, self.min_lat, self.max_lon, self.max_lat)
@@ -1101,27 +1250,38 @@ class WMSImageryData(SatelliteImagery):
         for channel, layer in self.wms_layers.items():
             os.makedirs(self._folder(channel), exist_ok=True)
             times = self.available[channel]
-            cached = sum(
-                os.path.exists(os.path.join(self._folder(channel), f"{time:%Y%m%dT%H%M%S}.png")) for time in times
-            )
-            width, height = self.size
-            self.info(f"🛰️ {len(times)} image(s) of {layer}, {width} x {height} pixels...")
-            # Several images at once: the server renders each in seconds
-            with ThreadPoolExecutor(max_workers=self.workers) as pool:
-                paths = list(tqdm.tqdm(
-                    pool.map(lambda time: self._download_image(channel, time), times),
-                    total=len(times), disable=not self.verbose,
-                ))
+            missing = [time for time in times if not os.path.exists(self._image_path(channel, time))]
+            if not missing:
+                self.info(f"💾 {len(times)} image(s) of {layer} already downloaded.")
+                paths = [self._image_path(channel, time) for time in times]
+            else:
+                width, height = self.size
+                self.info(
+                    f"⬇️ Downloading {len(missing)} image(s) of {layer}, {width} x {height} pixels "
+                    f"({len(times) - len(missing)} already downloaded)..."
+                )
+                # Several images at once: the server renders each in seconds
+                with ThreadPoolExecutor(max_workers=self.workers) as pool:
+                    paths = list(tqdm.tqdm(
+                        pool.map(lambda time: self._download_image(channel, time), times),
+                        total=len(times), disable=not self.verbose,
+                    ))
+                self.info("✅ Download completed.")
             kept[channel] = {}
+            empty = []
             for time, path in zip(times, paths):
                 if path is None:
                     status(f"⚠️ Empty image of {layer} at {time:%Y-%m-%d %H:%M}, left out.")
+                    if clock.time() - time.timestamp() > EMPTY_FINAL_AFTER:
+                        empty.append(time.timestamp())
                 else:
                     kept[channel][time] = path
+            if empty:
+                index = self._read_index(channel)
+                index["empty"][self._box()] = sorted(set(index["empty"].get(self._box(), [])) | set(empty))
+                self._write_index(channel, index)
             if not kept[channel]:
                 raise FileNotFoundError(f"Every image of {layer} is empty over the domain.")
-            downloaded = len(kept[channel]) - cached
-            self.info(f"✅ {downloaded} downloaded, {cached} already there.")
 
         # The times every channel has
         times = sorted(set.intersection(*(set(paths) for paths in kept.values())))
@@ -1322,15 +1482,35 @@ class GIBSData(WMSImageryData):
             status(f"⚠️ GIBS DescribeDomains failed ({error}), reading the capabilities.")
             return super()._time_extent(channel)
 
+    def _colormap_document(self, colormap: str) -> str:
+        """
+        The XML of a GIBS colormap, downloaded once.
+
+        Args:
+            colormap: Name of the colormap (`GIBS_COLORMAPS`).
+
+        Returns:
+            The document, from `~/data/wms/<host>/colormaps/`.
+        """
+        path = os.path.join(self.output_path, "colormaps", f"{colormap}.xml")
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as file:
+                return file.read()
+        response = requests.get(GIBS_COLORMAP_URL.format(colormap), timeout=wms_utils.TIMEOUT)
+        response.raise_for_status()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path + ".part", "w", encoding="utf-8") as file:
+            file.write(response.text)
+        os.replace(path + ".part", path)
+        return response.text
+
     def _locate_data(self):
         super()._locate_data()
         for channel, layer in self.wms_layers.items():
             colormap = GIBS_COLORMAPS.get(layer)
             if colormap is None or self.palettes[channel] is not None:
                 continue
-            response = requests.get(GIBS_COLORMAP_URL.format(colormap), timeout=wms_utils.TIMEOUT)
-            response.raise_for_status()
-            colours, values = wms_utils.parse_gibs_colormap(response.text)
+            colours, values = wms_utils.parse_gibs_colormap(self._colormap_document(colormap))
             self.palettes[channel] = (colours, values)
             grey = np.ptp(colours.astype(int), axis=1) == 0
             self.secondary[channel] = grey & (values < GIBS_SECONDARY_BELOW)

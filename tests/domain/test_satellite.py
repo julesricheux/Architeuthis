@@ -554,7 +554,9 @@ def test_eumetview_gives_brightness_temperatures_on_the_grid(eumetview):
     assert image[0, 0, 0] == image[0, 0, 1] == image[0, 0, 2]
 
 
-def test_an_empty_image_is_left_out_and_not_cached(eumetview, tmp_path, capsys):
+def test_an_empty_image_is_left_out_and_not_cached(eumetview, tmp_path, capsys, monkeypatch):
+    # Recent enough to be produced later
+    monkeypatch.setattr("architeuthis.satellite.EMPTY_FINAL_AFTER", 1e12)
     eumetview.load_data()
 
     assert list(eumetview.times().strftime("%H:%M")) == ["15:50", "16:20"]
@@ -566,6 +568,73 @@ def test_an_empty_image_is_left_out_and_not_cached(eumetview, tmp_path, capsys):
     eumetview.asked.clear()
     eumetview.load_data()
     assert [time.strftime("%H:%M") for _, time in eumetview.asked] == ["16:00"]
+
+
+def test_an_image_empty_for_good_is_not_asked_again(eumetview):
+    eumetview.load_data()  # 16:00 was empty a day later: outside the disk, say
+    eumetview.asked.clear()
+    eumetview.load_data()
+
+    assert eumetview.asked == []
+    assert list(eumetview.times().strftime("%H:%M")) == ["15:50", "16:20"]
+
+
+def test_a_period_on_disk_is_opened_without_asking_the_server(eumetview, monkeypatch, tmp_path, capsys):
+    eumetview.end = "2026-11-19 16:20"
+    eumetview.load_data()
+    first = eumetview.data["bt"].values
+
+    def unreachable(*args, **kwargs):
+        raise AssertionError("no request")
+
+    monkeypatch.setattr(wms_utils, "capabilities", unreachable)
+    monkeypatch.setattr(wms_utils, "get_map", unreachable)
+    capsys.readouterr()
+    again = EUMETViewData("eumetview", verbose=True, end="2026-11-19 16:20", start=IMAGERY_PERIOD["start"], **IMAGERY_DOMAIN)
+    again.output_path = str(tmp_path)
+    again.load_data()
+
+    np.testing.assert_array_equal(again.data["bt"].values, first)
+    out = capsys.readouterr().out
+    assert "💾 Times of mtg_fd:ir105_hrfi already known." in out
+    assert "💾 2 image(s) of mtg_fd:ir105_hrfi already downloaded." in out
+    # The index of the layer: the period the server listed, its times, the empty image
+    index = again._read_index("ir")
+    assert index["covered"] == [[pd.Timestamp("2026-11-19 15:45Z").timestamp(), pd.Timestamp("2026-11-19 16:20Z").timestamp()]]
+    assert len(index["times"]) == 4 and list(index["empty"]) == [again._box()]
+    # A part of the period, or another box, is answered from the index too
+    part = EUMETViewData("part", verbose=False, start="2026-11-19 16:00", end="2026-11-19 16:10", **IMAGERY_DOMAIN)
+    part.output_path = str(tmp_path)
+    assert list(part._times("ir").strftime("%H:%M")) == ["16:00", "16:10"]
+
+
+def test_a_later_period_asks_the_server_again(eumetview, monkeypatch):
+    eumetview.end = "2026-11-19 16:20"
+    eumetview.load_data()
+    calls = []
+    monkeypatch.setattr(wms_utils, "capabilities", lambda url: calls.append(url) or CAPABILITIES)
+    eumetview.end = "2026-11-19 16:30"  # past what the server listed
+
+    eumetview.load_data()
+
+    assert len(calls) == 1
+
+
+def test_offline_the_images_on_disk_are_used(eumetview, monkeypatch, capsys):
+    eumetview.load_data()
+
+    def offline(*args, **kwargs):
+        raise requests.ConnectionError("offline")
+
+    monkeypatch.setattr(wms_utils, "capabilities", offline)
+    eumetview.start = "2026-11-19 15:30"  # not covered: the server is asked
+    eumetview.load_data()
+
+    assert list(eumetview.times().strftime("%H:%M")) == ["15:50", "16:20"]
+    assert "⚠️ mtg_fd:ir105_hrfi unreachable (ConnectionError): 2 image(s) on disk used." in capsys.readouterr().out
+    eumetview.output_path = eumetview.output_path + "_empty"
+    with pytest.raises(requests.ConnectionError):
+        eumetview.load_data()
 
 
 def test_several_channels_take_the_times_every_channel_has(eumetview):
@@ -645,6 +714,7 @@ def test_gibs_reads_its_colormap_and_its_repeated_greys_from_their_context(gibs_
     gibs.load_data()
 
     assert gibs.secondary["ir"].tolist() == [False, True, False]  # the cold grey
+    assert (tmp_path / "colormaps" / "Clean_Longwave_Infrared_Window_Band.xml").exists()  # read once
     assert list(gibs.times().strftime("%H:%M")) == ["16:00", "16:10", "16:20"]
     # Uniform grey 100: no cold neighbour, so the warm reading
     np.testing.assert_allclose(gibs.data["bt"].values, 20.5 + 273.15)

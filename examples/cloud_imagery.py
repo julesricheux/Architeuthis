@@ -72,8 +72,10 @@ if midday > now - pd.Timedelta(hours=2, minutes=30):
     midday -= pd.Timedelta(days=1)
 visible_start, visible_end = midday - pd.Timedelta(hours=1.5), midday + pd.Timedelta(hours=1.5)
 
-resolution = 0.05  # deg, about 5 km: 1600 x 500 pixels here, about 1 s an image
+resolution = 0.1  # deg, about 5 km: 1600 x 500 pixels here, about 1 s an image
+# resolution = 0.05  # deg, about 5 km: 1600 x 500 pixels here, about 1 s an image
 # resolution = 0.02  # deg, all the detail of the infrared: 4000 x 1250 pixels, 2-3 s an image
+# resolution = 0.01  # deg, all the detail of the infrared: 4000 x 1250 pixels, 2-3 s an image
 native_resolution = "finest"  # server layers: MTG FCI on EUMETView (1 km IR, 0.5 km visible)
 # native_resolution = "coarsest"  # MSG SEVIRI on EUMETView (3 km, every 15 min); GIBS has one layer per channel
 time_step = None  # every image; "30min" or "1h" for fewer

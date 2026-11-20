@@ -99,7 +99,9 @@ def available_times(
         if len(parts) == 1:
             times.append(_utc(parts[0]))
             continue
-        first, last, period = _utc(parts[0]), _utc(parts[1]), pd.Timedelta(parts[2])
+        # An ISO 8601 period such as PT10M: pd.Timedelta of a string warns
+        # with NumPy 2.5, not pd.to_timedelta of a list
+        first, last, period = _utc(parts[0]), _utc(parts[1]), pd.to_timedelta([parts[2]])[0]
         low = first if start is None else max(first, first + np.ceil((start - first) / period) * period)
         high = last if end is None else min(last, end)
         if low <= high:
