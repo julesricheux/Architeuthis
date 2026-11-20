@@ -247,9 +247,9 @@ def test_require_does_not_mix_a_partial_set_with_a_fallback(store, monkeypatch, 
 
 
 def test_eumetsat_reads_its_credentials_when_downloading(store, monkeypatch):
-    from architeuthis.satellite import ASCATData
+    from architeuthis.satellite import EUMETSATASCATData
 
-    data = ASCATData("ascat", start="2025-01-01", end="2025-01-02")
+    data = EUMETSATASCATData("ascat", start="2025-01-01", end="2025-01-02")
     save_credential("EUMDAC_KEY", "key")
     monkeypatch.setenv("EUMDAC_PWD", "secret")
 
@@ -261,9 +261,9 @@ def test_eumetsat_reads_its_credentials_when_downloading(store, monkeypatch):
 
 
 def test_eumetsat_without_credentials_stops_before_connecting(store):
-    from architeuthis.satellite import ASCATData
+    from architeuthis.satellite import EUMETSATASCATData
 
-    data = ASCATData("ascat", start="2025-01-01", end="2025-01-02")
+    data = EUMETSATASCATData("ascat", start="2025-01-01", end="2025-01-02")
 
     with patch("architeuthis.satellite.eumdac") as eumdac, pytest.raises(MissingCredentialError, match="EUMDAC_KEY, EUMDAC_SECRET"):
         data._locate_data()
