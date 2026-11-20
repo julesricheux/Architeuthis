@@ -11,7 +11,6 @@
 ## Medium term
 
 * Implement class Environment
-* Clean the way API keys management
 
 ## Long term
 

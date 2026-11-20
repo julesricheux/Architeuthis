@@ -1,23 +1,35 @@
 # Examples
 
-Each script is self-contained. Its settings are at the top and it runs from the repository root, cell by cell (`#%%`, in Spyder for example) or as a whole with `python examples/simple_routing.py`. The routing examples need your own polar files, except `function_polar_routing.py`, `vessel_definitions.py` and `wind_only_routing.py`, in `~/data/polars/` by default, and the docstring of each script gives the data and credentials it needs.
+Each script is self-contained. Its settings are at the top and it runs from the repository root, cell by cell (`#%%`, in Spyder for example) or as a whole with `python examples/simple_routing.py`. Polar files are your own, read from `~/data/polars/` by default, and the docstring of each script details the data it needs. To get a credential, see the [README](../README.md#-credentials-and-settings).
+
+**🆓 Nothing to set up**: start here if you have no polar file and no account.
 
 | To learn | Read |
 | --- | --- |
-| A first routing, in the fewest lines | [`post_leg_rewind.py`](post_leg_rewind.py) |
-| Every step of a study: data sources, zones, routes, runs, reports, `ui.py`, open-loop evaluation, figures, GPX, A4 page | [`simple_routing.py`](simple_routing.py) |
-| Testing a plan with another model, positions unchanged | [`ifs_route_tested_with_gfs.py`](ifs_route_tested_with_gfs.py) |
-| Stored routes and passage plans, restarting from a position at sea, routing without credentials | [`passage_planning.py`](passage_planning.py) |
-| Several starting routes, and the spread of an ensemble along a route | [`long_term_routing.py`](long_term_routing.py) |
-| One optimization per ensemble member, and a fuel consumption that depends on the power | [`ensemble_routing.py`](ensemble_routing.py) |
-| High-resolution wind on a short leg | [`short_term_routing.py`](short_term_routing.py) |
-| Querying forecasts directly, to compare them with satellite observations | [`comparison_ascat_models.py`](comparison_ascat_models.py) |
-| ASCAT winds from EUMETSAT or Copernicus Marine: the default source with its fallback, one source only, each source with its options, and both compared on the same passes | [`ascat_sources.py`](ascat_sources.py) |
-| Cloud images from Meteosat and GOES-East joined into one layer over the North Atlantic, in the infrared and the visible: both on one scale, the seam, the Infra+, Blue and Visible colour scales of Windy chosen when drawing, a zoom downloaded at fine resolution and drawn smoothly 4 times finer, the clouds over a map and an animation | [`cloud_imagery.py`](cloud_imagery.py) |
 | A polar written as functions, with no file, on the wind at 10 m and 100 m and the air temperature; gusts and wave slope computed as additional variables | [`function_polar_routing.py`](function_polar_routing.py) |
-| The clouds along a route, from IFS and GFS side by side, without routing | [`sky_along_route.py`](sky_along_route.py) |
 | A routing in the wind alone: the waves and the current left out read as zero | [`wind_only_routing.py`](wind_only_routing.py) |
 | The ways of defining the consumption of a vessel, compared on a short-sea leg: brake power as a function or a table, sfoc curve, total power, hourly consumption | [`vessel_definitions.py`](vessel_definitions.py) |
+| The clouds along a route, from IFS and GFS side by side, without routing | [`sky_along_route.py`](sky_along_route.py) |
+| Cloud images from Meteosat and GOES-East joined into one layer over the North Atlantic: infrared and visible, Windy colour scales, a smooth zoom, a map and an animation | [`cloud_imagery.py`](cloud_imagery.py) |
+
+**🚢 With your polar file**
+
+| To learn | Read | Also needs |
+| --- | --- | --- |
+| A first routing, in the fewest lines | [`post_leg_rewind.py`](post_leg_rewind.py) | Copernicus Marine |
+| Every step of a study: data sources, zones, routes, runs, reports, `ui.py`, open-loop evaluation, figures, GPX, A4 page | [`simple_routing.py`](simple_routing.py) | Copernicus Marine |
+| Stored routes and passage plans, restarting from a position at sea | [`passage_planning.py`](passage_planning.py) | |
+| Testing a plan with another model, positions unchanged | [`ifs_route_tested_with_gfs.py`](ifs_route_tested_with_gfs.py) | Copernicus Marine |
+| Several starting routes, and the spread of an ensemble along a route | [`long_term_routing.py`](long_term_routing.py) | Copernicus Marine |
+| One optimization per ensemble member, and a fuel consumption that depends on the power | [`ensemble_routing.py`](ensemble_routing.py) | Copernicus Marine |
+| High-resolution wind on a short leg | [`short_term_routing.py`](short_term_routing.py) | Copernicus Marine |
+
+**🛰️ Satellite observations**
+
+| To learn | Read | Needs |
+| --- | --- | --- |
+| ASCAT winds from EUMETSAT or Copernicus Marine: the default source with its fallback, one source only, each source with its options, and both compared on the same passes | [`ascat_sources.py`](ascat_sources.py) | EUMETSAT and/or Copernicus Marine |
+| Querying forecasts directly, to compare them with ASCAT winds | [`comparison_ascat_models.py`](comparison_ascat_models.py) | EUMETSAT |
 
 Their commented lines are alternatives that were used in past studies: other polars, domains, positions, waypoints, schedules, constraints and figure settings. Each script keeps them next to what they replace, and the settings of the former figures are in a cell of their own. The schedules follow the latest forecasts, with the dates of past studies left as comments.
 

@@ -56,8 +56,8 @@ for key in ("bhp", "max_bhp", "sails_contribution"):
 | `forecast.HRDPSForecast` | The 10 m wind of HRDPS continental, regridded on a regular grid, the latest run by default. Its wind direction is not reliable yet: the components are relative to the rotated grid of the model and are not rotated, about 45° off around Saint-Pierre-et-Miquelon. |
 | `forecast.CopernicusForecast` | Currents and other products of Copernicus Marine. Needs an account, `CMEMS_USER` and `CMEMS_PWD`. |
 | `forecast.CDSForecast` | ERA5 reanalysis. Needs an account, `CDS_API_KEY`. |
-| `satellite.ASCATData` | ASCAT winds over a period and a box, to validate forecasts: from EUMETSAT (`EUMDAC_KEY`, `EUMDAC_SECRET`), the latest swaths, else from Copernicus Marine (`CMEMS_USER`, `CMEMS_PWD`), daily gridded swaths about a day behind. `sources="cmems"` uses Copernicus Marine only, and `source` tells which one was used. The variables are the same either way: `lat`, `lon`, `time`, `valid_time`, `wind_speed` in m/s and `wind_dir`, where the wind goes to, in degrees. `EUMETSATASCATData` and `CopernicusASCATData` are the two sources. |
-| `satellite.GeostationaryImagery` | Cloud images over a box and a period, every 10 min, as one continuous layer from Meteosat (`EUMETViewData`) and GOES-East (`GIBSData`). No account. The channels are chosen as the variables of a forecast, `channels="ir"` (default) or a list of `"ir"` (infrared, day and night) and `"visible"` (by day). `data` then holds `bt`, the brightness temperature in K, for `"ir"`, and `brightness`, from 0 to 1, for `"visible"`, the levels of GOES matched to those of Meteosat along the seam; on `valid_time`, `latitude`, `longitude`, at `resolution` degrees. `resolution` sets the size of the requested images, hence the download time: 0.05 over the North Atlantic (1600 x 500 pixels) takes about a second an image, four at a time; 0.02 shows all the detail of the infrared and 0.01 of the visible (`DETAIL_RESOLUTIONS`), best on a small domain. `native_resolution` chooses the server layer where a server has several: `"finest"` (default), `"coarsest"`, a resolution such as `"3km"` (MSG SEVIRI rather than MTG FCI on EUMETView), or one per channel, `{"ir": "3km"}`. How they look is chosen when drawing: `image(time, "ir", colormap="blue")` draws a loaded channel as an RGBA array, north up, with a colour scale of Windy, `"infra"` (Infra+, the default of `"ir"`) or `"blue"` (Blue, clear sky transparent) for `"ir"` and `"visible"` for `"visible"`; `transparent_above=275` fades out the clear sky of any scale. `image(time, box=(-60, -52, 44, 49), scale=4)` draws a part of the domain with each pixel interpolated into 4 x 4 (`order=1` bilinear, the default, `order=3` bicubic), the values interpolated before being coloured, and `extent(box)` gives where it lies, `[west, east, south, north]` for `imshow`. `toolbox.windy_colormaps.get_satellite_cmap(colormap)` gives the colormap and norm for a colour bar, and `bounds` the corners for a map overlay. `complete=False` keeps the times of any satellite rather than those of all. `EUMETViewData` and `GIBSData` take the same `channels` for one satellite each; `GIBSData(wms_layers={"ir": ...})` takes GOES-West or Himawari. Each satellite reads the infrared colder towards the limb of its disk, by about 2 K at a zenith angle of 50 deg, 7 K at 70 and 12 K at 80: `limb_correction=True` adds `satellite.limb_cooling(zenith)` to estimate what it would read straight above, so that Meteosat and GOES-East agree within about 3 K across the North Atlantic (off by default; the combined layer takes each pixel from the more direct view anyway). Files are managed as those of the forecasts: nothing on disk is downloaded again. Each image is a PNG in `~/data/wms/<host>/<layer>/<box>/`, opened rather than downloaded when it is there; the times a server listed for a layer, and the periods they cover, are kept in `<layer>/times.json`, so that loading a period again asks the server nothing (💾 statuses). An image still empty `satellite.EMPTY_FINAL_AFTER` (3 h) after its time is recorded there and not asked again, whereas a more recent one may not be produced yet and is asked again by a later run. If a server cannot be reached, the images of the period on disk are used, with a ⚠️ status. The GIBS colormaps are kept in `<host>/colormaps/`. |
+| `satellite.ASCATData` | ASCAT winds over a period and a box, to check forecasts against them: from EUMETSAT, else from Copernicus Marine. See [Satellite observations](#satellite-observations). |
+| `satellite.GeostationaryImagery` | Cloud images every 10 min, Meteosat and GOES-East joined into one layer, in the infrared and the visible. No account. See [Satellite observations](#satellite-observations). |
 | `forecast.Topography` | The signed distance to land and to your exclusion zones. It needs only its box, and `exclusion_zones` if you have some. |
 | `vessel.Vessel` | A vessel, from its polar file, from functions (see [Polars as functions](#polars-as-functions)) or from constants. The routing only needs its consumption (see [Consumption](#consumption)). `label` comes from the file name by default, `eff45` for `..._eff45.nc`, or is the name without a file. |
 
@@ -233,6 +233,100 @@ print(sky.describe(fields | diagnosis))           # ["6/8 · Sc 600 m · As · l
 The rules take, in each étage, the first genus that applies. Low: Cb with a strong CAPE and precipitation rate, St with a low cover over air near its dewpoint, Cu with a broken cover in unstable air, else Sc. Middle: Ns with thick middle and low covers and steady rain, As with a thick middle cover, else Ac. High: Cs with a wide cover, else Ci. Other genera present beside the main one are kept: Cu around a Cb or beside Sc, Sc beside St, Ac beside As, Ci beside Cs or from the anvil of a Cb. An étage is `HIDDEN` where the étages below leave at most `visible_cover` (10%) of the sky open, coded "/" as in the WMO codes. The cloud base is the condensation level, 125 m per kelvin of dewpoint spread. Cirrocumulus would need the upper air and is reported as Cirrus. The thresholds, in `THRESHOLDS`, are first values that have not been calibrated against observations: replace some with `thresholds={...}`.
 
 `examples/sky_along_route.py` puts the skies of IFS and GFS side by side along a great circle.
+
+### Satellite observations
+
+`architeuthis.satellite` downloads what satellites saw, to judge a forecast after the fact or to show the clouds on a map. It stands apart from the routing: these are observations, not forecasts, and they have no interpolators.
+
+| Class | Gives | Account |
+| --- | --- | --- |
+| `ASCATData` | ASCAT winds, from the first source of `sources` that works | Either below |
+| `EUMETSATASCATData` | ASCAT winds of the OSI SAF at 12.5 km along the swaths, a couple of hours after the pass | EUMETSAT: `EUMDAC_KEY`, `EUMDAC_SECRET` |
+| `CopernicusASCATData` | The same swaths on a regular grid, one file a day, about a day behind | Copernicus Marine: `CMEMS_USER`, `CMEMS_PWD` |
+| `PoseidonData` | Sentinel-6 Poseidon-4 altimeter winds and waves along the track, as delivered | EUMETSAT |
+| `GeostationaryImagery` | One cloud layer from several geostationary satellites | None |
+| `EUMETViewData`, `GIBSData` | The images of one satellite: Meteosat from EUMETView, GOES and Himawari from NASA GIBS | None |
+
+The [README](../README.md#-credentials-and-settings) explains how to get each credential. Every class takes `name`, `start`, `end`, `min_lon`, `max_lon`, `min_lat`, `max_lat` and `verbose`, and downloads with `load_data`.
+
+#### ASCAT winds
+
+```python
+from architeuthis.satellite import ASCATData, CopernicusASCATData
+
+ascat = ASCATData("ascat", start, end, **domain)                    # EUMETSAT, else Copernicus Marine
+ascat = ASCATData("ascat", start, end, sources="cmems", **domain)   # Copernicus Marine only
+ascat.load_data()
+ascat.source                                                         # the source used: "eumetsat" or "cmems"
+
+cmems = CopernicusASCATData("ascat", start, end, satellites=("metopc",), orbits=("asc",), resolution=0.25, **domain)
+```
+
+`ASCATData` tries its sources in order, with a ⚠️ status for each one that fails (missing credentials, server error, no pass in the period). Whatever the source, `data` holds the same variables, on swath dimensions for EUMETSAT and on `swath, day, latitude, longitude` for Copernicus Marine:
+
+| Variable | Meaning |
+| --- | --- |
+| `lat`, `lon` | Position, in degrees, longitudes in [-180, 180) |
+| `time`, `valid_time` | Measurement time, as datetime64 and as epoch seconds |
+| `wind_speed` | 10 m equivalent neutral wind, m/s |
+| `wind_dir` | Where the wind **goes**, in degrees: add 180 to compare it with a forecast or a weather report |
+
+Measurements outside the box are NaN. `CopernicusASCATData` also takes the Metop `satellites` (`"metopb"`, `"metopc"`), the `orbits` (`"asc"`, `"des"`) and the grid `resolution` (0.125 or 0.25 deg). Only the products crossing the box are downloaded, once: EUMETSAT products are kept in `~/data/eumetsat/`, Copernicus Marine subsets in `~/data/cmems/`. `examples/ascat_sources.py` compares both sources on the passes they share, and `examples/comparison_ascat_models.py` compares ASCAT with the models.
+
+#### Cloud images
+
+```python
+from architeuthis.satellite import GeostationaryImagery
+
+clouds = GeostationaryImagery(
+    "clouds", start, end, min_lon=-75., max_lon=5., min_lat=35., max_lat=60.,
+    channels=["ir", "visible"],     # what to download
+    resolution=0.05,                # grid step, deg: sets the download time
+    limb_correction=True,           # make up for the oblique views
+)
+clouds.load_data()
+
+clouds.times()                                       # UTC times of the images
+rgba = clouds.image(-1, "ir", colormap="blue")       # the latest image, coloured, north up
+plt.imshow(rgba, extent=clouds.extent())
+```
+
+Two servers render the images, without account: [EUMETView](https://view.eumetsat.int/) for Meteosat at 0 deg (`EUMETViewData`) and [NASA GIBS](https://nasa-gibs.github.io/gibs-api-docs/) for GOES-East at 75.2 W (`GIBSData`). Architeuthis turns their colours back into physical values, then `GeostationaryImagery` takes each pixel from the satellite that sees it most directly, blended over a few degrees along the seam. A source that fails is left out with a ⚠️ status, and the other fills in where it can.
+
+**Channels** are chosen like the variables of a forecast, and each gives one quantity in `data`, on `valid_time`, `latitude` and `longitude`:
+
+| Channel | Quantity | When |
+| --- | --- | --- |
+| `"ir"` (default) | `bt`, brightness temperature in K: the cloud tops are cold | Day and night |
+| `"visible"` | `brightness`, from 0 (black) to 1 (white). GOES is matched to Meteosat along the seam, image by image (`gain` and `offset` in `data`), since the brightness of a scene changes with the sun | By day |
+
+**Main options**:
+
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `resolution` | 0.05 | Grid step in degrees. It sets the size of each requested image, hence the download time: about a second for 1600 x 500 pixels, four images at a time. 0.02 shows all the detail of the infrared and 0.01 of the visible (`DETAIL_RESOLUTIONS`), best on a small box. |
+| `native_resolution` | `"finest"` | Server layer, where a server has several: `"finest"` (MTG FCI on EUMETView, every 10 min), `"coarsest"` or `"3km"` (MSG SEVIRI, every 15 min), or one per channel, `{"ir": "3km"}`. |
+| `time_step` | `None` | Keep only the times on multiples of a step, such as `"30min"`; None for every image. |
+| `complete` | `True` | Keep only the times every satellite has, so that no image misses a part; False for the times of any. GIBS is about an hour behind EUMETView, so the latest complete image is about an hour old. |
+| `limb_correction` | `False` | Each satellite reads the infrared colder towards the edge of its disk, about 2 K at a zenith angle of 50 deg, 7 K at 70 and 12 K at 80. True adds `satellite.limb_cooling(zenith)`, so that Meteosat and GOES-East agree within about 3 K across the North Atlantic. |
+| `match` | `None` | Match the levels of the sources along the seam; None for the visible only. |
+| `seam_width` | 2 | Width of the blending along the seams, in degrees of viewing angle. |
+| `sources` | `None` | `WMSImageryData` objects to join, None for EUMETView and GIBS. `GIBSData(wms_layers={"ir": ...})` takes GOES-West or Himawari layers. |
+
+**Drawing.** How the images look is chosen when drawing, never when downloading. `image(time, channel, colormap=...)` returns an RGBA array, first row north, ready for `imshow` or a map overlay:
+
+| Argument | Meaning |
+| --- | --- |
+| `time` | Index of the image, or a time (the nearest image). |
+| `colormap` | A colour scale of Windy: `"infra"` (Infra+, default of `"ir"`) or `"blue"` (white clouds over a transparent clear sky) for the infrared, `"visible"` for the visible. |
+| `transparent_above`, `transparent_below` | Fade out the pixels warmer (the clear sky of an infrared layer, 275 K say) or darker (the sea of a visible layer) than a value, over `fade`. |
+| `box`, `scale`, `order` | Draw only `(min_lon, max_lon, min_lat, max_lat)`, each pixel interpolated into `scale` x `scale` (`order=1` bilinear, `3` bicubic) before colouring, so the steps of the colour scale stay sharp. `extent(box)` gives where it lies, `[west, east, south, north]`. |
+
+`bounds` gives the corners as Leaflet takes them, and `toolbox.windy_colormaps.get_satellite_cmap(colormap)` the colormap and norm for a colour bar. `EUMETViewData` and `GIBSData` take the same arguments for one satellite each.
+
+**Files** are managed as those of the forecasts: nothing is downloaded twice. Each image is a PNG in `~/data/wms/<host>/<layer>/<box>/`, and the times a server listed, with the periods they cover, are kept in `<layer>/times.json`, so loading a period again asks the server nothing. An image still empty 3 hours after its time (`EMPTY_FINAL_AFTER`) is recorded and not asked again; a more recent one may not be produced yet and is asked again next time. Offline, the images of the period on disk are used, with a ⚠️ status.
+
+`examples/cloud_imagery.py` loads the last hours over the North Atlantic, checks that both satellites agree, and draws each source, the joined layer, the three colour scales, a smoothed zoom, the clouds over a map and an animation.
 
 ### Credentials and the data folder
 

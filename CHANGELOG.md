@@ -210,6 +210,7 @@ and this project follows Semantic Versioning https://semver.org
 - `satellite.ASCATData` takes its winds from the first source of `sources` that works, by default EUMETSAT then Copernicus Marine, with a ⚠️ status for each one that fails, and tells which in `source`. `sources="cmems"` uses Copernicus Marine only. The former class, reading EUMETSAT only, is `satellite.EUMETSATASCATData`. Both sources give `lat`, `lon`, `time`, `valid_time`, `wind_speed` and `wind_dir`, on swath dimensions for EUMETSAT and on `swath, day, latitude, longitude` for Copernicus Marine.
 - `EUMETSATData` downloads only the products crossing its domain (`bbox` of the search), 3 instead of 14 orbits for the Bay of Biscay over 12 hours, and raises `FileNotFoundError` when there is none.
 - `CopernicusForecast` inherits its download from `copernicus.CopernicusMarineData`, unchanged.
+- README: a Satellite Observations section, a credentials table by provider that lists the sources needing no account, and step-by-step tutorials for Copernicus Marine (currents and ASCAT), the Climate Data Store and EUMETSAT. The user guide documents the satellite classes in a section of their own, and the examples index groups the scripts by what they need.
 
 ### Deprecated
 - `Vessel(sfc=...)` and `Vessel.sfc` raise a `DeprecationWarning` and will be removed in 0.4.0: use `sfoc`, the specific fuel oil consumption in g/kWh.
