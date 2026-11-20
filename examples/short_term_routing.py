@@ -58,7 +58,6 @@ vessel_files = [
     # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_6m_eff70.nc",
 ]
 
-columns = ["bhp", "max_bhp", "leeway"]
 
 vessels = []
 
@@ -66,8 +65,8 @@ vessels = []
 maxBHP = 3000.
 
 for i, vessel_data in enumerate(vessel_files):
-    vessel = Vessel(f"vessel_{i}", filepath=vessel_data, sfc=224., hotel_load=200., max_power=3100.)
-    # vessel = Vessel(f"vessel_{i}", filepath=vessel_data, sfc=196., hotel_load=172., max_power=4100.)
+    vessel = Vessel(f"vessel_{i}", filepath=vessel_data, sfoc=224., hotel_load=200., max_power=3100.)
+    # vessel = Vessel(f"vessel_{i}", filepath=vessel_data, sfoc=196., hotel_load=172., max_power=4100.)
     vessel.load_data()
     
     vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
@@ -346,6 +345,8 @@ for solve, vessel, model, fac, eta, m in (
         topo,
         # atmosphere_member=m,
         # wave_member=m,
+        # Vessel models that the fuel does not need, for the figures and the UI
+        variables=["max_bhp", "sails_contribution"],
     )
     
     report = analysis.run(
@@ -379,8 +380,8 @@ for solve, vessel, model, fac, eta, m in (
     ctime = pd.to_datetime(report["ctim"], unit="s")
         
     # plt.clf()
-    # # plt.scatter(ctime, unit="s"), report["avg_bhp"])
-    # plt.plot(*get_steps(report, "avg_bhp"))
+    # # plt.scatter(ctime, unit="s"), report["bhp"])
+    # plt.plot(*get_steps(report, "bhp"))
     # plt.plot(*get_steps(report, "max_bhp"))
     # plt.plot(*get_steps(report, "swh"))
     # # plt.plot(ctime, report["sails_contribution"])

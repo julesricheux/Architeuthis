@@ -360,7 +360,7 @@ def cmems_credentials(monkeypatch):
     monkeypatch.setenv("CMEMS_PWD", "my-password")
 
 
-@patch("architeuthis.forecast.copernicusmarine.subset")
+@patch("architeuthis.copernicus.copernicusmarine.subset")
 def test_copernicus_downloads_the_requested_subset(subset, cmems_credentials):
     subset.return_value.file_path = "dummy.nc"
     forecast = copernicus_forecast()
@@ -377,7 +377,7 @@ def test_copernicus_downloads_the_requested_subset(subset, cmems_credentials):
     assert kwargs["skip_existing"] is True
 
 
-@patch("architeuthis.forecast.copernicusmarine.subset")
+@patch("architeuthis.copernicus.copernicusmarine.subset")
 def test_copernicus_credentials_are_read_when_downloading(subset, monkeypatch):
     forecast = copernicus_forecast()
     monkeypatch.setenv("COPERNICUSMARINE_SERVICE_USERNAME", "late-user")
@@ -394,7 +394,7 @@ def test_copernicus_object_holds_no_credential(cmems_credentials):
     assert "my-password" not in repr(vars(forecast))
 
 
-@patch("architeuthis.forecast.copernicusmarine.subset")
+@patch("architeuthis.copernicus.copernicusmarine.subset")
 def test_copernicus_without_credentials_stops_before_downloading(subset, capsys):
     with pytest.raises(MissingCredentialError, match="CMEMS_USER, CMEMS_PWD"):
         copernicus_forecast()._download_data()
@@ -403,7 +403,7 @@ def test_copernicus_without_credentials_stops_before_downloading(subset, capsys)
     assert "⚠️" in capsys.readouterr().out
 
 
-@patch("architeuthis.forecast.copernicusmarine.subset")
+@patch("architeuthis.copernicus.copernicusmarine.subset")
 def test_copernicus_login_file_is_left_to_the_toolbox(subset, monkeypatch, tmp_path):
     monkeypatch.setenv("COPERNICUSMARINE_CREDENTIALS_DIRECTORY", str(tmp_path))
     (tmp_path / ".copernicusmarine-credentials").write_text("")
@@ -635,3 +635,43 @@ def test_hrdps_reads_and_regrids_with_the_projection_of_its_run():
     # Epoch seconds, and two steps past the horizon where the field fades to zero.
     assert forecast.data["valid_time"].values[0] == pd.Timestamp("2026-02-24").timestamp()
     assert forecast.data["valid_time"].size == 3 + 2
+
+
+class TestCalmForecast:
+    @pytest.mark.parametrize("source", ["atmosphere", "wave", "current"])
+    def test_its_fields_are_zero_at_each_point(self, source):
+        calm = forecast_module.calm_forecast(source)
+        query = {"valid_time": np.array([0.0, 3600.0, 7200.0]), "latitude": np.array([45.0, 46.0, 47.0]), "longitude": -5.0}
+
+        assert calm.data is None
+        assert calm.name == f"calm_{source}"
+        assert set(calm.models) == set(forecast_module.ENVIRONMENT_FIELDS[source])
+        for key in forecast_module.ENVIRONMENT_FIELDS[source]:
+            assert calm.input_names(key) == ["valid_time", "latitude", "longitude"]
+            assert np.array(calm(key, query)).ravel().tolist() == [0.0, 0.0, 0.0]
+
+    def test_its_fields_are_symbolic_constants_of_a_symbolic_query(self):
+        import casadi as ca
+
+        calm = forecast_module.calm_forecast("atmosphere")
+        latitude = ca.MX.sym("latitude", 4, 1)
+        u10 = calm("u10", {"valid_time": ca.DM.zeros(4, 1), "latitude": latitude, "longitude": latitude})
+        # No derivative, even of the direction of this zero wind
+        direction = ca.atan2(u10, calm("v10", {"valid_time": 0.0, "latitude": latitude, "longitude": latitude}))
+
+        assert u10.shape == (4, 1)
+        # Symbolic, so that the routing does not hand DM to NumPy functions
+        assert isinstance(u10, ca.MX)
+        assert float(ca.evalf(u10[0])) == 0.0
+        assert ca.jacobian(direction, latitude).nnz() == 0
+
+    def test_other_models_can_be_added(self):
+        calm = forecast_module.calm_forecast("atmosphere", name="still_air")
+        calm.add_constant("t2m", 288.0)
+
+        assert calm.name == "still_air"
+        assert float(calm("t2m", {"valid_time": 0.0, "latitude": 45.0, "longitude": -5.0})) == 288.0
+
+    def test_an_unknown_source_is_refused(self):
+        with pytest.raises(ValueError, match="atmosphere"):
+            forecast_module.calm_forecast("topography")

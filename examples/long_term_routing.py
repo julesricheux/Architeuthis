@@ -60,22 +60,24 @@ def cubic_model(x, p):
 def quadratic_model(x, p):
     return p["c"] * x**2 + p["b"] * x + p["a"]
 
-def sfc_func(x):
-    p_sfc = {
+# Curves of the engine load, as vessel models: the sfoc (g/kWh) against the total
+# power, the hotel load (kW) against the brake power, both in kW
+def sfoc_curve(x):
+    p_sfoc = {
         'a': 325.7684374001559,
         'b': -0.13133435575556507,
         'c': 5.216985806784128e-05,
         'd': -6.660802866517442e-09
     }
-    return np.fmax(cubic_model(x, p_sfc), 200.)
+    return np.fmax(cubic_model(x["total_power"], p_sfoc), 200.)
 
-def hotel_load_func(x):
+def hotel_load_curve(x):
     p_hl = {
         'a': 177.84810351574922,
         'b': -0.011382017491188723,
         'c': 1.0915372379294297e-05
     }
-    return quadratic_model(x, p_hl)
+    return quadratic_model(x["bhp"], p_hl)
 
 vessel_files = [    
     # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff15.nc",
@@ -88,7 +90,6 @@ vessel_files = [
     # r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff60.nc",
 ]
 
-columns = ["bhp", "max_bhp", "leeway"]
 
 vessels = []
 
@@ -99,19 +100,21 @@ for i, vessel_data in enumerate(vessel_files):
     vessel = Vessel(
         f"vessel_{i}",
         filepath=vessel_data,
-        sfc=220.,
+        sfoc=220.,
         hotel_load=194.,
-        # sfc=sfc_func,
-        # hotel_load=hotel_load_func,
         max_power=maxBHP
     )
-    # vessel = Vessel(f"vessel_{i}", filepath=vessel_data, sfc=196., hotel_load=172., max_power=maxBHP)
+    # vessel = Vessel(f"vessel_{i}", filepath=vessel_data, sfoc=196., hotel_load=172., max_power=maxBHP)
     vessel.load_data()
     
+    # The fuel needs bhp only; max_bhp and sails_contribution are computed because
+    # the analysis lists them in its variables
     vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
     vessel.add_interpolator("max_bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
     # vessel.add_interpolator("leeway", "stw", "tws", "twa", "hs", "wa", method="linear")
     vessel.add_interpolator("sails_contribution", "stw", "tws", "twa", "hs", "wa", method="linear")
+    # vessel.add_function("sfoc", sfoc_curve, ["total_power"])  # instead of sfoc=220.
+    # vessel.add_function("hotel_load", hotel_load_curve, ["bhp"])  # instead of hotel_load=194.
     
     vessels.append(vessel)
 
@@ -579,6 +582,8 @@ for solve, tf, model, vessel, fac, m, tpg in (
         # atmosphere_member=m,
         # wave_member=m,
         constraints=custom_constraints,
+        # Vessel models that the fuel does not need, for the constraints and figures
+        variables=["max_bhp", "sails_contribution"],
     )
     
     report = analysis.run(
@@ -619,8 +624,8 @@ for solve, tf, model, vessel, fac, m, tpg in (
     ctime = pd.to_datetime(report["ctim"], unit="s")
         
     # plt.clf()
-    # # plt.scatter(ctime, unit="s"), report["avg_bhp"])
-    # plt.plot(*get_steps(report, "avg_bhp"))
+    # # plt.scatter(ctime, unit="s"), report["bhp"])
+    # plt.plot(*get_steps(report, "bhp"))
     # plt.plot(*get_steps(report, "max_bhp"))
     # plt.plot(*get_steps(report, "swh"))
     # # plt.plot(ctime, report["sails_contribution"])
@@ -697,6 +702,7 @@ for plan, (model, vessel) in product(
         WAVE[model],
         current,
         topos[0],
+        variables=["max_bhp", "sails_contribution"],
         verbose=False,
     ).evaluate(plan)
     evaluation["plan"] = plan.name
@@ -741,7 +747,7 @@ plot_fuel_distribution({
     "Ortho references": reports.select(init_fac=0.),
 })
 plot_quantiles(reports.select(lambda report: report["init_fac"] != 0.), "swh", unit="m", ylim=(0., 9.))
-plot_quantiles(solved, "avg_bhp", unit="kW", title="AVG_BHP distribution along optimised routes for all scenarios")
+plot_quantiles(solved, "bhp", unit="kW", title="BHP distribution along optimised routes for all scenarios")
 plot_fuel_quantiles(reports)
 plot_fuel_quantiles(reports, daily=True)
 plot_convergence(reports)
@@ -775,7 +781,7 @@ table = reports.select(solve=1)[:2].table()
 for column in table.columns:
     if column.startswith("sog"):
         table[column] = table[column].map(lambda value: f"{value:.1f}" if pd.notna(value) else "")
-    elif column.startswith(("cog", "avg_bhp", "twa")):
+    elif column.startswith(("cog", "bhp", "twa")):
         table[column] = table[column].map(lambda value: f"{value:.0f}" if pd.notna(value) else "")
 
 table.to_clipboard(index=False, excel=True)
@@ -803,7 +809,7 @@ print("Table copied to clipboard. Paste directly into Word.")
 # unit = "%"
 # variable = "mwa"
 # unit = "deg"
-# variable = "avg_bhp"
+# variable = "bhp"
 # variable = "max_bhp"
 # unit = "kW"
 
@@ -836,7 +842,7 @@ print("Table copied to clipboard. Paste directly into Word.")
 # (r["eta"] < 1772049600.0) &
 
 # variable = "tws"
-# variable = "avg_bhp"
+# variable = "bhp"
 # variable = "sails_contribution"
 
 # variable = "swh"
@@ -848,7 +854,7 @@ print("Table copied to clipboard. Paste directly into Word.")
 # vmax=101.
 # variable = "mwa"
 # unit = "deg"
-# variable = "avg_bhp"
+# variable = "bhp"
 # variable = "max_bhp"
 # unit = "kW"
 # vmin = 0.
@@ -905,7 +911,7 @@ print("Table copied to clipboard. Paste directly into Word.")
 # variable = "tws"
 # unit = "kts"
 # vmax=50.
-# variable = "avg_bhp"
+# variable = "bhp"
 # variable = "max_bhp"
 # unit = "kW"
 # vmax = maxBHP *1.066

@@ -67,9 +67,8 @@ vessel_data = r"C:/Users/jrich/data/polars/neoliner_origin_v2-2-0_mc0_sc0_35up_2
 # vessel_data = 'C:/Users/jules/data/polar/neoliner_origin_v2-2-0_mc0_sc0_35up_28down_7buff_5m_eff92.nc'
 # vessel_data = "C:\\Users\\jrich\\output_sails.nc"
 
-columns = ["bhp", "max_bhp", "leeway"]
 
-vessel = Vessel("base_vessel", filepath=vessel_data, sfc=196., hotel_load=172., max_power=3e3)
+vessel = Vessel("base_vessel", filepath=vessel_data, sfoc=196., hotel_load=172., max_power=3e3)
 vessel.load_data()
 
 vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa", method="linear")
@@ -224,6 +223,8 @@ for m in range(1,51,50):
         topo,
         # atmosphere_member=m,
         # wave_member=m,
+        # Vessel models that the fuel does not need, for the figures and the UI
+        variables=["max_bhp", "sails_contribution"],
     )
     
     report = analysis.run(
@@ -255,8 +256,8 @@ for m in range(1,51,50):
     ctime = pd.to_datetime(report["ctim"], unit="s")
     
     # plt.clf()
-    # # plt.scatter(ctime, unit="s"), report["avg_bhp"])
-    # plt.plot(*get_steps(report, "avg_bhp"))
+    # # plt.scatter(ctime, unit="s"), report["bhp"])
+    # plt.plot(*get_steps(report, "bhp"))
     # # plt.plot(ctime, report["sails_contribution"])
     # # plt.plot(ctime, report["sails_contribution"])
     # plt.xticks(rotation=45)

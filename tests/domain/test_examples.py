@@ -32,7 +32,7 @@ from architeuthis.forecast import (
 )
 from architeuthis.report import ReportCollection
 from architeuthis.route import RouteLibrary
-from architeuthis.satellite import ASCATData
+from architeuthis.satellite import CopernicusASCATData, EUMETSATASCATData, GIBSData, WMSImageryData
 from architeuthis.vessel import Vessel
 from architeuthis.voyage import PassagePlanLibrary
 
@@ -55,8 +55,12 @@ WINDOWS = {
     "passage_planning.py": SOON,
     "ifs_route_tested_with_gfs.py": SOON,
     "comparison_ascat_models.py": (TODAY - pd.Timedelta(days=4), TODAY + pd.Timedelta(days=2)),
+    "ascat_sources.py": (TODAY - pd.Timedelta(days=2), TODAY),
+    "cloud_imagery.py": SOON,
     "function_polar_routing.py": SOON,
     "sky_along_route.py": SOON,
+    "vessel_definitions.py": SOON,
+    "wind_only_routing.py": SOON,
 }
 QUICK_START = "readme_quick_start.py"
 
@@ -122,6 +126,27 @@ def ascat_dataset():
     })
 
 
+def imagery_dataset(imagery):
+    """
+    Images every 10 min over the period and the grid of an imagery
+    source: clouds moving east over a warm sea, GOES-East 1.5 K warmer
+    than Meteosat in the infrared and darker in the visible.
+    """
+    latitude, longitude = imagery.grid()
+    times = pd.date_range(pd.Timestamp(imagery.start).ceil("10min"), pd.Timestamp(imagery.end), freq="10min")
+    hours = (times - times[0]).total_seconds().values / 3600.0
+    goes = isinstance(imagery, GIBSData)
+    clouds = np.cos(np.radians(longitude[None, None, :] * 6.0 - hours[:, None, None] * 30.0)) * np.cos(np.radians(latitude[None, :, None] * 8.0))
+    values = {
+        "brightness": (0.4 + 0.3 * clouds) * (0.8 if goes else 1.0),
+        "bt": 255.0 + 30.0 * clouds + (1.5 if goes else 0.0),
+    }
+    return xr.Dataset(
+        {variable: (("valid_time", "latitude", "longitude"), values[variable].astype(np.float32)) for variable in imagery.variables},
+        coords={"valid_time": times.asi8 / 1e9, "latitude": latitude, "longitude": longitude},
+    )
+
+
 def with_wind(data):
     return data.assign(
         si10=np.hypot(data.u10, data.v10),
@@ -176,6 +201,9 @@ def run_script(script, folder):
     def load_ascat(ascat):
         ascat.data = ascat_dataset()
 
+    def load_imagery(imagery):
+        imagery.data = imagery_dataset(imagery)
+
     add_interpolator = ArchiteuthisData.add_interpolator
 
     def add_any_interpolator(data, var_dim, coord_dims, *args, **kwargs):
@@ -196,6 +224,9 @@ def run_script(script, folder):
         source = quick_start_of_readme()
     else:
         source = (EXAMPLES / script).read_text(encoding="utf-8").replace("members = list(range(1,51,1))", "members = [1, 2]")
+        # Pixels of 1 deg, whatever resolution the script sets: the same
+        # script, far fewer pixels
+        source = re.sub(r"^(zoom_)?resolution = [0-9.]+", r"\1resolution = 1.0", source, flags=re.M)
     run_file = folder / script
     run_file.write_text(source, encoding="utf-8")
 
@@ -209,13 +240,17 @@ def run_script(script, folder):
             patch.object(CopernicusForecast, "load_data", load_current),
             patch.object(Topography, "load_data", load_topography),
             patch.object(Vessel, "load_data", load_vessel),
-            patch.object(ASCATData, "load_data", load_ascat),
+            patch.object(EUMETSATASCATData, "load_data", load_ascat),
+            patch.object(CopernicusASCATData, "load_data", load_ascat),
+            patch.object(WMSImageryData, "load_data", load_imagery),
             patch.object(ArchiteuthisData, "add_interpolator", add_any_interpolator),
             patch.object(type(xr.Dataset().herbie), "with_wind", lambda accessor: with_wind(accessor._obj), create=True),
             patch.object(RoutingAnalysis, "run", few_iterations),
             patch("architeuthis.forecast.HerbieLatest", lambda **kwargs: SimpleNamespace(valid_date=TODAY)),
             patch.object(pd.DataFrame, "to_clipboard", lambda *args, **kwargs: None),
             patch.object(plt, "show", lambda *args, **kwargs: None),
+            # Drawing a map would download Natural Earth
+            patch.object(plt.Figure, "savefig", lambda *args, **kwargs: None),
         ):
             return runpy.run_path(str(run_file), run_name="__main__")
     finally:
@@ -322,6 +357,36 @@ def test_examples_define_their_own_zones_and_their_own_sources():
         assert "reference_data" not in source
 
 
+def test_ascat_sources_uses_both_sources_and_matches_them(example):
+    variables = example("ascat_sources.py").variables
+
+    assert variables["default"].source == "eumetsat"
+    assert variables["cmems_only"].source == "cmems"
+    # The same synthetic measurements from both: every one matches, identical
+    assert len(variables["pairs"]) > 0
+    assert (variables["pairs"]["wind_speed_cmems"] == variables["pairs"]["wind_speed_eumetsat"]).all()
+
+
+def test_cloud_imagery_joins_both_satellites_into_one_layer(example):
+    run = example("cloud_imagery.py")
+    variables = run.variables
+    clouds = variables["clouds"]
+
+    assert list(clouds.data["source"].values) == ["clouds_eumetview", "clouds_gibs"]
+    assert np.isfinite(clouds.data["bt"].values).all()
+    # The overlap check finds the 1.5 K of the synthetic sources
+    assert np.median(variables["difference"]) == pytest.approx(1.5, abs=1e-3)
+    assert len(variables["frames"]) == len(clouds.times()) > 1
+    # The visible of GOES, 20 % darker, put on the levels of Meteosat
+    np.testing.assert_allclose(variables["daylight"].data["gain"].sel(channel="visible").isel(source=1), 1.25, rtol=1e-3)
+    assert len(variables["daylight"].times()) > 1
+    assert variables["frames"][0].shape == (25, 80, 4)
+    # The zoom: 8 x 5 pixels of 1 deg, and 4 x 4 times more smoothed
+    assert variables["image"].shape == (20, 32, 4)
+    assert variables["zoom_extent"] == [-60.0, -52.0, 44.0, 49.0]
+    assert (run.folder / "cloud_imagery.gif").exists()
+
+
 def test_function_polar_routing_reads_the_air_temperature(example):
     variables = example("function_polar_routing.py").variables
     reports = variables["reports"]
@@ -366,3 +431,25 @@ def test_sky_along_route_describes_each_point_with_both_models(example):
     assert {"sky IFS", "sky GFS"} <= set(table.columns)
     assert all(isinstance(line, str) and line for line in table["sky IFS"])
     assert {"cloud_low", "cloud_middle", "cloud_high"} <= set(variables["skies"]["gfs"])
+
+
+def test_vessel_definitions_of_the_same_vessel_burn_the_same_fuel(example):
+    reports = example("vessel_definitions.py").variables["reports"]
+    reference = {report["vessel"]: report for report in reports.select(solve=0)}
+
+    assert set(reference) == {"bhp_function", "bhp_table", "sfoc_curve", "total_power", "hourly_consumption"}
+    for name in ("total_power", "hourly_consumption"):
+        assert reference[name]["fuel"] == pytest.approx(reference["bhp_function"]["fuel"], rel=1e-9)
+    assert reference["bhp_table"]["fuel"] == pytest.approx(reference["bhp_function"]["fuel"], rel=5e-2)
+    assert reference["sfoc_curve"]["fuel"] > reference["bhp_function"]["fuel"]
+    assert "bhp" not in reference["hourly_consumption"]
+
+
+def test_wind_only_routing_has_a_calm_sea_and_no_current(example):
+    reports = example("wind_only_routing.py").variables["reports"]
+
+    assert [report["solve"] for report in reports] == [0, 1]
+    for report in reports:
+        for key in ("swh", "cs"):
+            assert np.ravel(report[key]) == pytest.approx(0.0)
+        assert np.max(np.ravel(report["tws"])) > 0.0

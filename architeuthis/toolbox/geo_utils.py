@@ -571,6 +571,56 @@ def poly_deviated_route(lats, lons, divergences=None):
     return route
 
 
+def central_angle(lat, lon, lat0, lon0):
+    """
+    Angle at the centre of the Earth between positions and a point.
+
+    Numeric. The angle from the sub-satellite point of a geostationary
+    satellite (`lat0 = 0`) tells how obliquely it sees a position: the
+    images are coarser and the clouds displaced towards the limb.
+
+    Args:
+        lat: Latitudes, in degrees.
+        lon: Longitudes, in degrees.
+        lat0: Latitude of the point, in degrees.
+        lon0: Longitude of the point, in degrees.
+
+    Returns:
+        The angles, in degrees.
+    """
+    lat, lon = np.radians(lat), np.radians(lon)
+    lat0, lon0 = np.radians(lat0), np.radians(lon0)
+    cosine = np.sin(lat) * np.sin(lat0) + np.cos(lat) * np.cos(lat0) * np.cos(lon - lon0)
+    return np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))
+
+
+# Radius of the Earth over that of the geostationary orbit
+GEOSTATIONARY_RATIO = 6378.137 / 42164.0
+
+
+def geostationary_zenith(lat, lon, subsatellite_lon):
+    """
+    Zenith angle of a geostationary satellite seen from positions.
+
+    Numeric. 0 straight above, 90 on the horizon, the limb of its disk
+    (81 deg from its sub-satellite point); larger than `central_angle`,
+    by up to 9 deg.
+
+    Args:
+        lat: Latitudes, in degrees.
+        lon: Longitudes, in degrees.
+        subsatellite_lon: Longitude of the satellite, in degrees.
+
+    Returns:
+        The angles, in degrees, above 90 where it cannot be seen.
+
+    Example:
+        geostationary_zenith(47.0, -56.0, -75.2)  # about 57 deg
+    """
+    angle = np.radians(central_angle(lat, lon, 0.0, subsatellite_lon))
+    return np.degrees(np.arctan2(np.sin(angle), np.cos(angle) - GEOSTATIONARY_RATIO))
+
+
 def lonlat_to_web_mercator(lon, lat):
     """
     Convert lon/lat in degrees to Web Mercator (EPSG:3857).

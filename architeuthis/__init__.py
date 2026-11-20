@@ -20,7 +20,7 @@ routes under real-world constraints.
 
 __author__ = "Jules Richeux"
 __company__ = "NEOLINE"
-__version__ = "0.3.1"  # the only place to change it: pyproject.toml and the release tag check read it
+__version__ = "0.3.2"  # the only place to change it: pyproject.toml and the release tag check read it
 
 __meet_Architeuthis__ = "https://en.wikipedia.org/wiki/Giant_squid"
 __documentation__ = None # TODO

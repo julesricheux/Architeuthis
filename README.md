@@ -34,6 +34,7 @@ No graph, no grid search: the waypoints are continuous variables of a single non
 - 🌊 **Wind, waves, currents and more**: IFS, GFS, ensembles, Mercator, ERA5, and any other field your model needs
 - 🧊 **Real-world constraints**: land, shallow water, exclusion zones, the iceberg limit, maximum power, your own rules
 - 🎲 **Forecast uncertainty**: optimize each ensemble member, test a plan against other models, members or vessels
+- 🛰️ **Satellite observations**: ASCAT winds to check the forecasts, and one seamless cloud layer from Meteosat and GOES-East
 - 📊 **Ready-to-use outputs**: A4 reports, maps, tables, GPX tracks and an interactive viewer
 
 **Architeuthis** provides the **onshore weather routing support** of [Neoliner Origin](https://www.neoline.eu/) 🌬️⛵⚓
@@ -90,7 +91,7 @@ topography = Topography("topography", **domain)
 topography.load_data()
 topography.add_interpolator("distance_to_iso0", "lat", "lon", var_key="z")
 
-vessel = Vessel("vessel", filepath="my_vessel_polar.nc", sfc=220., hotel_load=194., max_power=4100.)  # g/kWh, kW, kW
+vessel = Vessel("vessel", filepath="my_vessel_polar.nc", sfoc=220., hotel_load=194., max_power=4100.)  # g/kWh, kW, kW
 vessel.load_data()
 for key in ("bhp", "max_bhp", "sails_contribution"):
     vessel.add_interpolator(key, "stw", "tws", "twa", "hs", "wa", method="linear")
@@ -98,7 +99,11 @@ for key in ("bhp", "max_bhp", "sails_contribution"):
 route = Route("crossing", [Waypoint(47.725, -4.380, "Penmarch"), Waypoint(46.551, -53.321, "Cape Race")])
 voyage = Voyage("crossing", etd=today, eta=today + pd.Timedelta(days=8), route=route)
 
-report = RoutingAnalysis("crossing", vessel, voyage, atmosphere, wave, current, topography).run()
+analysis = RoutingAnalysis(
+    "crossing", vessel, voyage, atmosphere, wave, current, topography,
+    variables=["max_bhp", "sails_contribution"],  # the fuel only needs bhp: ask for the rest
+)
+report = analysis.run()
 
 reports = ReportCollection([report])
 print(reports.summary())
@@ -113,7 +118,7 @@ plot_report(report)  # one A4 page: speed, sails, power, waves and wind
 
 Architeuthis ships no vessel model: bring yours, **as a table or as functions**. Both are models of the same object, queried the same way, and the routing does not care which one it gets.
 
-**📋 A polar table**, from a VPP, sea trials or anything else: a NetCDF file with `bhp`, `max_bhp` and `sails_contribution` (kW, kW, %) on the axes `stw, tws, twa, hs, wa` (kt, kt, deg, m, deg). That is the [Quick Start](#-quick-start).
+**📋 A polar table**, from a VPP, sea trials or anything else: a NetCDF file with, for example, `bhp`, `max_bhp` and `sails_contribution` (kW, kW, %) on the axes `stw, tws, twa, hs, wa` (kt, kt, deg, m, deg). That is the [Quick Start](#-quick-start).
 
 **🧮 Or your own functions**, with their fitted parameters, and no file at all:
 
@@ -127,11 +132,22 @@ def my_polar(x, p):
     return calm - sails, {"calm": calm, "sails": sails}
 
 inputs = ["stw", "tws", "tws100", "twa100", "water_temperature"]
-vessel = Vessel("my_ship", sfc=220., max_power=4100.)
+vessel = Vessel("my_ship", sfoc=220., max_power=4100.)
 vessel.add_function("bhp", my_polar, inputs, args={"p": fitted})
-vessel.add_function("max_bhp", my_polar, inputs, args={"p": fitted})
 vessel.add_function("sails_contribution", my_polar, inputs, args={"p": fitted}, output="sails")
 ```
+
+### ⛽ The routing only needs the consumption
+
+The objective is the fuel, so the vessel needs one model of its consumption, the first of:
+
+| Model | Unit | Burnt at |
+| --- | --- | --- |
+| `hourly_consumption` | kg/h | (it is the consumption) |
+| `total_power`, propulsion and hotel | kW | `sfoc`, g/kWh |
+| `bhp`, propulsion | kW | `sfoc`, after adding `hotel_load`, kW |
+
+Each can be a table, a function or a constant (`vessel.add_constant("bhp", 1500.)`). `hotel_load` and `sfoc` are numbers or functions of the power given to `Vessel(...)`, or models of their own, which can take `bhp` or `total_power` as an input: an sfoc curve of the engine load, for example. Any other model of the vessel, such as `max_bhp` or `sails_contribution`, is computed only when you list it: `RoutingAnalysis(..., variables=["max_bhp"])`. Until 0.4.0, `max_bhp` and `sails_contribution` are still computed when the vessel has them, with a deprecation warning that asks to list them.
 
 ### ✨ The routing finds what your model needs
 
@@ -161,9 +177,40 @@ Quantities your model does not use can be computed all the same, to constrain th
 - **Stay differentiable:** write with `architeuthis.numpy`, and use `np.where`, `np.softmax` or `np.sigmoid` rather than `if` on values.
 - **Mind the units:** routing quantities are in kt and degrees, angles in absolute value. Forecast fields arrive as stored (m/s, K): convert them with `fac=` or a function.
 - **Return components:** `(value, {"sails": ...})`, then pick one with `output=`.
-- **Set a realistic `max_power` and `sfc`:** a huge power limit unsettles the solver, and the objective is zero without `sfc`.
+- **Set a realistic `max_power`, or `None`:** a huge power limit unsettles the solver. `max_power=None` leaves the power free; until 0.4.0, leaving it out still gives 1e12 kW, with a warning.
 
 The complete script is [`examples/function_polar_routing.py`](examples/function_polar_routing.py), and the [User Guide](docs/user_guide.md) has the details.
+
+---
+
+## 🛰️ Satellite Observations
+
+See what the sea and the sky actually did, to judge a forecast or brief a crew.
+
+**☁️ Cloud images, no account.** Meteosat and GOES-East joined into one seamless layer over the North Atlantic, every 10 minutes, in the infrared (day and night) and the visible (by day). Each pixel comes from the satellite that sees it most directly, and both are put back on one physical scale, so they meet without a seam:
+
+```python
+import matplotlib.pyplot as plt
+from architeuthis.satellite import GeostationaryImagery
+
+clouds = GeostationaryImagery("clouds", start="2026-11-19 12:00Z", end="2026-11-19 15:00Z",
+                              min_lon=-75., max_lon=5., min_lat=35., max_lat=60.,
+                              channels=["ir", "visible"], resolution=0.05)
+clouds.load_data()                                   # brightness temperature (K) and brightness (0-1)
+plt.imshow(clouds.image(-1, "ir", colormap="blue"), extent=clouds.extent())  # Windy-style colours
+```
+
+**🌬️ ASCAT winds**, the scatterometer of the Metop satellites, from EUMETSAT a couple of hours after the pass, or from Copernicus Marine a day later when EUMETSAT is not available:
+
+```python
+from architeuthis.satellite import ASCATData
+
+ascat = ASCATData("ascat", start="2026-11-18", end="2026-11-19", min_lon=-20., max_lon=0., min_lat=40., max_lat=52.)
+ascat.load_data()                                    # wind_speed (m/s), wind_dir (where it goes)
+print(ascat.source)                                  # "eumetsat" or "cmems"
+```
+
+Images and swaths are cached in `~/data/`, so a second run downloads nothing. See [`examples/cloud_imagery.py`](examples/cloud_imagery.py), [`examples/ascat_sources.py`](examples/ascat_sources.py) and the [User Guide](docs/user_guide.md#satellite-observations).
 
 ---
 
@@ -171,14 +218,18 @@ The complete script is [`examples/function_polar_routing.py`](examples/function_
 
 ### > What You Need to Set
 
-Mostly nothing: IFS, GFS, HRDPS, ETOPO and the iceberg limit need no account. Each credential is needed only by its provider.
+Mostly nothing: forecasts, relief, the iceberg limit and cloud images need no account. A credential is only asked for by the provider that needs it, so create the accounts of the data you want, and nothing else.
 
-| What | For | How |
+| Provider | Gives | Credentials |
 | --- | --- | --- |
-| `CMEMS_USER`, `CMEMS_PWD` | Currents, `forecast.CopernicusForecast` | [Save them once](#-saving-your-credentials-once), [get them](#copernicus-marine-currents) |
-| `CDS_API_KEY` | Reanalysis, `forecast.CDSForecast` | [Save it once](#-saving-your-credentials-once), [get it](#climate-data-store-era5) |
-| `EUMDAC_KEY`, `EUMDAC_SECRET` | Satellite data, `satellite.ASCATData`, `satellite.PoseidonData` | [Save them once](#-saving-your-credentials-once), [get them](#eumetsat-satellite-observations) |
-| `ARCHITEUTHIS_HOME` | Optional: keep downloads elsewhere than `~/data/` | [An environment variable](#-the-data-folder) |
+| ECMWF, NOAA, MSC, through [Herbie](https://github.com/blaylockbk/Herbie) | IFS, GFS, their ensembles and wave models, HRDPS: `DeterministicHerbieForecast`, `EnsembleHerbieForecast`, `HRDPSForecast` | None |
+| NOAA ETOPO, International Ice Patrol | Relief (`Topography`), iceberg limit (`iceberg_zone`) | None |
+| EUMETView, NASA GIBS | Cloud images: `GeostationaryImagery`, `EUMETViewData`, `GIBSData` | None |
+| [Copernicus Marine](#copernicus-marine-currents-and-ascat) | Currents and ocean fields, `CopernicusForecast`; ASCAT winds, `CopernicusASCATData` and the fallback of `ASCATData` | `CMEMS_USER`, `CMEMS_PWD` |
+| [Climate Data Store](#climate-data-store-era5) | ERA5 reanalysis, `CDSForecast` | `CDS_API_KEY` |
+| [EUMETSAT Data Store](#eumetsat-satellite-observations) | ASCAT winds, `EUMETSATASCATData` and the first choice of `ASCATData`; Sentinel-6 altimeter winds and waves, `PoseidonData` | `EUMDAC_KEY`, `EUMDAC_SECRET` |
+
+For ASCAT winds, either EUMETSAT or Copernicus Marine is enough. Get a credential with the tutorial of its provider below, then [save it once](#-saving-your-credentials-once). `ARCHITEUTHIS_HOME`, optional, [moves the data folder](#-the-data-folder).
 
 ### > Saving Your Credentials Once
 
@@ -225,7 +276,7 @@ Everything goes to `~/data/`:
 
 | Folder | Holds |
 | --- | --- |
-| `topo/`, `cmems/`, `cds/`, `eumetsat/`, `iip/` | Downloads: relief, currents, reanalysis, satellite data, iceberg limit |
+| `topo/`, `cmems/`, `cds/`, `eumetsat/`, `wms/`, `iip/` | Downloads: relief, currents, reanalysis, satellite data, satellite images (by server, layer and box), iceberg limit |
 | `route_library/`, `route_sets/`, `passage_plans/`, `exclusion_zones/` | Your saved routes, plans and zones |
 | `routes/` | Reports saved by `ReportCollection.save`, read by the viewer |
 
@@ -237,20 +288,37 @@ Set `ARCHITEUTHIS_HOME` to move it, then open a new terminal: `setx ARCHITEUTHIS
 - **If one leaks,** change it at the provider, then `set` it again.
 - **Coming from 0.2.0 or earlier?** Your environment variables still work. Move them to the store with `set`, check with `status`, then delete them and the `~/.cdsapirc` Architeuthis wrote.
 
-### Copernicus Marine (currents)
+### Copernicus Marine (currents and ASCAT)
 
-Create a free account at [data.marine.copernicus.eu/register](https://data.marine.copernicus.eu/register), then save your username as `CMEMS_USER` and your password as `CMEMS_PWD`. To check them (prints `True`):
+1. Create a free account at [data.marine.copernicus.eu/register](https://data.marine.copernicus.eu/register).
+2. Save your username and password:
 
-```python
-import copernicusmarine
-from architeuthis.credentials import get_credential
+   ```bash
+   python -m architeuthis.credentials set CMEMS_USER CMEMS_PWD
+   ```
 
-print(copernicusmarine.login(get_credential("CMEMS_USER"), get_credential("CMEMS_PWD"), check_credentials_valid=True))
-```
+3. Check them (prints `True`):
+
+   ```python
+   import copernicusmarine
+   from architeuthis.credentials import get_credential
+
+   print(copernicusmarine.login(get_credential("CMEMS_USER"), get_credential("CMEMS_PWD"), check_credentials_valid=True))
+   ```
+
+The same account gives the currents of `CopernicusForecast` and the ASCAT winds of `CopernicusASCATData`. Already logged in with `copernicusmarine login`? Architeuthis uses that file when it finds no credential of its own.
 
 ### Climate Data Store (ERA5)
 
-Create a free account at the [Climate Data Store](https://cds.climate.copernicus.eu/how-to-api), save the *Personal Access Token* of your profile as `CDS_API_KEY`, and accept the Terms of Use of each dataset you need, such as [ERA5 single levels](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels?tab=download). Architeuthis hands the token to the client and writes no file; without one, the client falls back to your own `~/.cdsapirc`:
+1. Create a free account at the [Climate Data Store](https://cds.climate.copernicus.eu/how-to-api).
+2. Accept the Terms of Use of each dataset you need, at the bottom of its download tab: [ERA5 single levels](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels?tab=download), for example. Without it, requests fail with a licence error.
+3. Copy the *Personal Access Token* of your profile, and save it:
+
+   ```bash
+   python -m architeuthis.credentials set CDS_API_KEY
+   ```
+
+Architeuthis hands the token to the client and writes no file. Without one, the client falls back to your own `~/.cdsapirc`:
 
 ```text
 url: https://cds.climate.copernicus.eu/api
@@ -259,27 +327,37 @@ key: your-personal-access-token
 
 ### EUMETSAT (satellite observations)
 
-Not your login: on the [API key page](https://api.eumetsat.int/api-key/) of a free EUMETSAT account, save your **Consumer Key** as `EUMDAC_KEY` and your **Consumer Secret** as `EUMDAC_SECRET`. To check them (prints an expiry date):
+1. Create a free account on the [EUMETSAT User Portal](https://eoportal.eumetsat.int/).
+2. Open the [API key page](https://api.eumetsat.int/api-key/), signed in. Not your login: save your **Consumer Key** as `EUMDAC_KEY` and your **Consumer Secret** as `EUMDAC_SECRET`:
 
-```python
-import eumdac
-from architeuthis.credentials import get_credential
+   ```bash
+   python -m architeuthis.credentials set EUMDAC_KEY EUMDAC_SECRET
+   ```
 
-print(eumdac.AccessToken((get_credential("EUMDAC_KEY"), get_credential("EUMDAC_SECRET"))).expiration)
-```
+3. Check them (prints an expiry date):
+
+   ```python
+   import eumdac
+   from architeuthis.credentials import get_credential
+
+   print(eumdac.AccessToken((get_credential("EUMDAC_KEY"), get_credential("EUMDAC_SECRET"))).expiration)
+   ```
+
+Architeuthis downloads with it the ASCAT winds of the OSI SAF (`EO:EUM:DAT:METOP:OSI-104`) for `EUMETSATASCATData`, and the Sentinel-6 Poseidon-4 products (`EO:EUM:DAT:0142`) for `PoseidonData`.
 
 ---
 
-### 🗺️ The Routing Problem
+## 🗺️ The Routing Problem
 
-- **Objective:** total fuel, `sum((bhp + hotel_load) * dt * sfc) / 1e6`, in tonnes.
+- **Objective:** total fuel, `sum(hourly_consumption * dt) / 1e3`, in tonnes, where the consumption is `(bhp + hotel_load) * sfoc / 1e3` kg/h, `total_power * sfoc / 1e3` or your own `hourly_consumption`.
 - **Fixed:** departure, arrival, ETD and ETA. The schedule is a requirement, the speed an outcome.
+- **Environment:** the wind, waves and current you give; any of them left out is zero, so `RoutingAnalysis("analysis", vessel, voyage, atmosphere, topography=topography)` routes in the wind alone.
 - **Variables:** the positions along the route, and optionally a factor blending the reference route towards two alternatives.
-- **Constraints:** brake power below `max_power` and every position at sea, or your own, on any quantity of the route or any additional variable (`variables=`).
+- **Constraints:** every position at sea and, if the vessel has a `max_power`, `max_bhp` (when listed), else `bhp` or `total_power`, below it. Or your own, on any quantity of the route or any additional variable (`variables=`).
 
 ---
 
-### 🙏 Credits
+## 🙏 Credits
 
 Architeuthis stands on the work of others, with our thanks:
 

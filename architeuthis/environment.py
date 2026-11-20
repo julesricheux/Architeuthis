@@ -17,7 +17,7 @@ Created on Thu Jan 15 11:13:35 2026
 
 import architeuthis.numpy as np #TODO fork aerosandbox.numpy
 
-from common import ArchiteuthisObject
+from common import ArchiteuthisObject, status
 
 # from herbie_loading import retrieve_weather_data #TODO rename herbie_wrapper
 
@@ -49,10 +49,10 @@ class Environment(ArchiteuthisObject):
             layer: The data object to add.
         """
         if layer in self.data:
-            print(f"🟦 {layer.name} already in {self.name}.")
+            self.info(f"🟦 {layer.name} already in {self.name}.")
         else:
             self.data.add(layer)
-            print(f"➕ {layer.name} added to {self.name}.")
+            self.info(f"➕ {layer.name} added to {self.name}.")
         
     def remove_data(
         self,
@@ -66,9 +66,9 @@ class Environment(ArchiteuthisObject):
         """
         if layer in self.data:
             self.data.remove(layer)
-            print(f"➖ {layer.name} removed from {self.name}.")
+            self.info(f"➖ {layer.name} removed from {self.name}.")
         else:
-            print(f"💔 {layer.name} not in {self.name}.")
+            status(f"💔 {layer.name} not in {self.name}.")
         
     def __call__(
         self,
