@@ -26,13 +26,13 @@ from dash import no_update
 from PIL import Image
 
 import architeuthis
-from architeuthis import share
+from architeuthis.dux import share
 from architeuthis.common import _HOME
 from architeuthis.exclusion import ExclusionZone, ExclusionZoneLibrary
 from architeuthis.forecast import DeterministicHerbieForecast
 from architeuthis.report import ROUTES_DIRECTORY, ReportCollection
 
-UI_SOURCE = os.path.join(os.path.dirname(architeuthis.__file__), "ui.py")
+UI_SOURCE = os.path.join(os.path.dirname(architeuthis.__file__), "dux", "ui.py")
 
 START = pd.Timestamp("now").floor("1d")
 TIME = (pd.date_range(START, periods=9, freq="6h") - pd.Timestamp("1970-01-01")).total_seconds().to_numpy()
@@ -176,7 +176,8 @@ def scene(client):
 
 
 def test_ui_can_be_launched_as_a_script(tmp_path):
-    # Python then puts architeuthis/ first on the path, where architeuthis/numpy hides numpy.
+    # Python then puts architeuthis/dux/ first on the path, and ui.py must import from the
+    # repository root, never from architeuthis/, where architeuthis/numpy hides numpy.
     # The refused proxy stops the script at its first forecast, after all its imports.
     environment = {key: value for key, value in os.environ.items() if key not in ("PYTHONPATH", "NO_PROXY", "no_proxy")}
     environment |= {
@@ -517,7 +518,7 @@ def test_quick_selection_of_routes(client):
 
 
 def test_style_of_the_labels_is_in_the_assets():
-    style = os.path.join(os.path.dirname(architeuthis.__file__), "assets", "style.css")
+    style = os.path.join(os.path.dirname(architeuthis.__file__), "dux", "assets", "style.css")
 
     with open(style, encoding="utf-8") as file:
         assert ".exclusion-zone-label" in file.read()

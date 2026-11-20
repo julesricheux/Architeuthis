@@ -18,7 +18,7 @@ import requests
 import xarray as xr
 from PIL import Image
 
-from architeuthis import share
+from architeuthis.dux import share
 from architeuthis.common import set_status_sink
 from architeuthis.exclusion import ExclusionZone
 from architeuthis.report import ReportCollection

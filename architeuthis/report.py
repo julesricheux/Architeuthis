@@ -8,8 +8,8 @@ and helpers for tables, GPX export and plots. A `ReportCollection` is a
 list of reports that can be selected, tabulated, saved and reloaded.
 Both can still be used as a plain dict and a plain list.
 
-The UI (`ui.py`) displays the most recent file of `~/data/routes/`, as
-written by `ReportCollection.save`.
+The analyst's page (`dux/ui.py`) displays the most recent file of
+`~/data/routes/`, as written by `ReportCollection.save`.
 """
 
 from __future__ import annotations
@@ -365,7 +365,7 @@ class ReportCollection(list):
         Write the routes as one HTML file to send aboard.
 
         The file opens in any browser, offline, on a 3D globe with the
-        forecasts given. See `architeuthis.share.share_routes`.
+        forecasts given. See `architeuthis.dux.share.share_routes`.
 
         Args:
             path: The file to write, by default in `~/data/shared/`.
@@ -378,7 +378,7 @@ class ReportCollection(list):
         Example:
             >>> reports.share(forecasts={"GFS": gfs}, routes=[0, 2])
         """
-        from architeuthis.share import share_routes
+        from architeuthis.dux.share import share_routes
 
         return share_routes(self, path, **options)
 

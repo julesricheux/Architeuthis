@@ -46,7 +46,8 @@ No graph, no grid search: the waypoints are continuous variables of a single non
 ## 🚀 Quick Start
 
 ```bash
-pip install architeuthis            # add [app] for the analyst's page, ui.py
+pip install architeuthis            # routing, data sources, reports and figures
+pip install "architeuthis[dux]"     # also the display tools: the analyst's page, dux/ui.py
 ```
 
 Or from source: `git clone https://github.com/julesricheux/Architeuthis.git`, then `conda env create -f environment.yaml` and run everything from the repository root (Python 3.11 or later).
@@ -196,7 +197,7 @@ reports.share(
 )                                           # ~/data/shared/<title>_<time>.html
 ```
 
-Or run `python -m architeuthis.ui`: the page shows the file as the crew will see it, beside checkboxes for the routes, the tooltips and the models, a description of each route, and comments placed by clicking the routes, and downloads it. See the [User Guide](docs/user_guide.md#sharing-routes).
+Or run `python -m architeuthis.dux.ui`, with the `dux` extra: the page shows the file as the crew will see it, beside checkboxes for the routes, the tooltips and the models, a description of each route, and comments placed by clicking the routes, and downloads it. See the [User Guide](docs/user_guide.md#sharing-routes).
 
 ---
 
@@ -295,7 +296,7 @@ Everything goes to `~/data/`:
 | --- | --- |
 | `topo/`, `cmems/`, `cds/`, `eumetsat/`, `wms/`, `iip/` | Downloads: relief, currents, reanalysis, satellite data, satellite images (by server, layer and box), iceberg limit |
 | `route_library/`, `route_sets/`, `passage_plans/`, `exclusion_zones/` | Your saved routes, plans and zones |
-| `routes/` | Reports saved by `ReportCollection.save`, read by `ui.py` |
+| `routes/` | Reports saved by `ReportCollection.save`, read by `dux/ui.py` |
 | `shared/`, `viewer/` | Files written by `ReportCollection.share`, and the MapLibre library they hold |
 
 Set `ARCHITEUTHIS_HOME` to move it, then open a new terminal: `setx ARCHITEUTHIS_HOME "D:\architeuthis-data"` on Windows, `export ARCHITEUTHIS_HOME="$HOME/architeuthis-data"` in `~/.bashrc` elsewhere. Herbie keeps the GRIB files in its own `save_dir` (`~/.config/herbie/config.toml`).

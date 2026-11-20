@@ -18,7 +18,7 @@ from architeuthis.exclusion import (
 )
 from architeuthis.forecast import Topography
 from architeuthis.icebergs import berg_zone
-from architeuthis.wrappers.leaflet_wrapper import exclusion_zone_overlay, exclusion_zone_overlays
+from architeuthis.dux.leaflet_wrapper import exclusion_zone_overlay, exclusion_zone_overlays
 
 SQUARE = [[0.5, 0.5], [0.5, 2.5], [3.5, 2.5], [3.5, 0.5], [0.5, 0.5]]
 

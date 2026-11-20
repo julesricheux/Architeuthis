@@ -136,7 +136,7 @@ def test_importing_share_downloads_nothing_until_a_page_is_written(tmp_path):
     # MapLibre is fetched when a page needs it, not at import.
     home, work, result = run(
         """
-import architeuthis.share
+import architeuthis.dux.share
 
 print(json.dumps({"loaded": sorted(set(sys.modules) & {"dash", "matplotlib.pyplot", "architeuthis.icebergs"})}))
 """,
@@ -145,6 +145,55 @@ print(json.dumps({"loaded": sorted(set(sys.modules) & {"dash", "matplotlib.pyplo
 
     assert result["loaded"] == []
     assert list((home / "data").iterdir()) == []
+    assert list(work.iterdir()) == []
+
+
+# What the dux extra installs, made unimportable as if it were not installed.
+WITHOUT_DUX = """
+for name in ("dash", "flask", "dash_leaflet", "dash_extensions", "dash_mantine_components", "dash_iconify"):
+    sys.modules[name] = None
+"""
+
+
+def test_architeuthis_works_without_the_dux_extra(tmp_path):
+    _, _, result = run(
+        WITHOUT_DUX
+        + """
+import architeuthis.core
+import architeuthis.forecast
+import architeuthis.satellite
+import architeuthis.sky
+import architeuthis.voyage
+import architeuthis.exclusion
+import architeuthis.toolbox.plot_utils
+import architeuthis.dux
+import architeuthis.dux.share
+from architeuthis.report import ReportCollection
+
+print(json.dumps({"share": callable(ReportCollection.share)}))
+""",
+        tmp_path,
+    )
+
+    assert result["share"] is True
+
+
+@pytest.mark.parametrize("module", ["ui", "json_wrapper", "leaflet_wrapper"])
+def test_the_dux_pages_name_the_extra_they_need(module, tmp_path):
+    home, work, result = run(
+        WITHOUT_DUX
+        + f"""
+from architeuthis.dux import MissingExtraError
+
+try:
+    import architeuthis.dux.{module}
+except MissingExtraError as error:
+    print(json.dumps({{"message": str(error)}}))
+""",
+        tmp_path,
+    )
+
+    assert 'pip install "architeuthis[dux]"' in result["message"]
     assert list(work.iterdir()) == []
 
 

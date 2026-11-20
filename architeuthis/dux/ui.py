@@ -4,7 +4,8 @@ Analyst's page to choose the routes to share, beside their globe.
 
 This is a script, not a library: importing it downloads forecasts and
 needs a report in `~/data/routes/`. Run it from the repository root
-with `python -m architeuthis.ui`. It serves on port 8052.
+with `python -m architeuthis.dux.ui`. It serves on port 8052 and needs
+the `dux` extra: `pip install architeuthis[dux]`.
 
 The page shows the viewer of `share.py` with the forecasts and the
 routes of a report file, and, beside it, what to share: routes, tooltip
@@ -21,13 +22,19 @@ Created on Sun Jan 25 21:18:08 2026
 import os
 import sys
 
-# `python ui.py` puts this folder first on the path, where architeuthis/numpy would hide the
-# real numpy. Everything is imported from the folder above instead.
+# `python ui.py` puts this folder first on the path, and `architeuthis/` must never be
+# there, where architeuthis/numpy would hide the real numpy. Everything is imported from
+# the repository root instead, two folders above.
 if "__file__" in globals():
     _ui_folder = os.path.dirname(os.path.abspath(__file__))
+    _package_folder = os.path.dirname(_ui_folder)
     sys.path[:] = [
-        os.path.dirname(_ui_folder),
-        *(path for path in sys.path if os.path.abspath(path or os.getcwd()) != _ui_folder),
+        os.path.dirname(_package_folder),
+        *(
+            path
+            for path in sys.path
+            if os.path.abspath(path or os.getcwd()) not in (_ui_folder, _package_folder)
+        ),
     ]
 
 import copy
@@ -48,14 +55,17 @@ matplotlib.use("Agg")
 
 from PIL import Image
 
-import dash_mantine_components as dmc
-from dash import ALL, Dash, Input, Output, State, ctx, dcc, html, no_update
-from dash import _dash_renderer
+from architeuthis.dux import require_extra
+
+with require_extra():
+    import dash_mantine_components as dmc
+    from dash import ALL, Dash, Input, Output, State, ctx, dcc, html, no_update
+    from dash import _dash_renderer
+    from flask import Response, abort, request
 
 # Dash Mantine Components 3 needs React 19, which Dash 4.5 ships but does not
 # load by default. This must run before the page is first served.
 _dash_renderer._set_react_version("19.2.4")
-from flask import Response, abort, request
 
 from architeuthis.common import _HOME, status
 from architeuthis.exclusion import (
@@ -68,7 +78,7 @@ from architeuthis.forecast import (
     EnsembleHerbieForecast,
 )
 from architeuthis.report import ReportCollection, latest_report_file
-from architeuthis.share import (
+from architeuthis.dux.share import (
     ROUTE_COLORS,
     VARIABLES,
     build_scene,

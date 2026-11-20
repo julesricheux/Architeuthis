@@ -579,7 +579,7 @@ reports.share(
 )                                           # ~/data/shared/saint-nazaire-to-baltimore_<time>.html
 ```
 
-`ReportCollection.share(path=None, **options)` calls `architeuthis.share.share_routes(reports, path=None, library="inline", verbose=True, **options)`, which returns the path of the file. Its options are those of `build_scene`:
+`ReportCollection.share(path=None, **options)` calls `architeuthis.dux.share.share_routes(reports, path=None, library="inline", verbose=True, **options)`, which returns the path of the file. Its options are those of `build_scene`:
 
 | Option | Default | Meaning |
 | --- | --- | --- |
@@ -619,13 +619,13 @@ In the page:
 - **Theme** (the sun or moon button, or `T`): a dark or a light map. The offline land is drawn flat over the weather, with a black coastline shaded on the sea side.
 - **Keys**: space plays, the arrows step, Shift and the arrows jump a day, `Esc` closes a tooltip. The choices of the layers, the theme and the picker are kept when the page is reloaded.
 
-### The analyst's page: `ui.py`
+### The analyst's page: `dux/ui.py`
 
 ```bash
-python -m architeuthis.ui
+python -m architeuthis.dux.ui
 ```
 
-`ui.py` needs the `[app]` extra and serves on port 8052. It opens on the most recently modified file of `~/data/routes/`, so `reports.save()` is all it takes for the latest routes to appear, and the others can be chosen from a list. The page shows the share file as the crew will see it, and beside it what goes into it: the routes (optimized ones, `solve` 1, ticked at first) with a description of each for the crew, the variables of the route tooltips, the models, the NOAA surface analysis, a title and a note. Clicking a point of a route in the preview opens a box to comment on it, to tell the crew what to expect or do there; `Ctrl+Enter` saves it, and clicking it again edits or deletes it. *Light map* switches the theme of the page and of the file. Each change shows at once in the preview, and *Download the share file* writes it. Comments belong to the routes of a file: choosing another file starts without any.
+`ui.py` needs the `dux` extra (`pip install "architeuthis[dux]"`) and serves on port 8052. It opens on the most recently modified file of `~/data/routes/`, so `reports.save()` is all it takes for the latest routes to appear, and the others can be chosen from a list. The page shows the share file as the crew will see it, and beside it what goes into it: the routes (optimized ones, `solve` 1, ticked at first) with a description of each for the crew, the variables of the route tooltips, the models, the NOAA surface analysis, a title and a note. Clicking a point of a route in the preview opens a box to comment on it, to tell the crew what to expect or do there; `Ctrl+Enter` saves it, and clicking it again edits or deletes it. *Light map* switches the theme of the page and of the file. Each change shows at once in the preview, and *Download the share file* writes it. Comments belong to the routes of a file: choosing another file starts without any.
 
 The models and the domain are set at the top of the script (`PRODUCT`, `MODELS`, `minimum_longitude`...), and every start downloads the forecasts. The iceberg limit and the zones of `~/data/exclusion_zones/` are always shared, whether or not a routing used them: the iceberg limit is shown at first, and the other zones are hidden at first, whatever their `visible`, and can be shown in the layers.
 

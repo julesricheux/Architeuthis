@@ -19,7 +19,7 @@ its own offset and scale. The page interpolates them in space and time.
 
 Example:
     >>> from architeuthis.report import ReportCollection
-    >>> from architeuthis.share import share_routes
+    >>> from architeuthis.dux.share import share_routes
     >>> reports = ReportCollection.latest()
     >>> share_routes(
     ...     reports.select(solve=1),
