@@ -81,6 +81,10 @@ resolution = 0.1  # deg, about 10 km: 800 x 250 pixels here, under 1 s an image
 native_resolution = "finest"  # server layers: MTG FCI on EUMETView (1 km IR, 0.5 km visible)
 # native_resolution = "coarsest"  # MSG SEVIRI on EUMETView (3 km, every 15 min); GIBS has one layer per channel
 time_step = None  # every image; "30min" or "1h" for fewer
+# Each satellite reads colder towards the limb of its disk, up to 15 K here:
+# the infrared corrected as if seen from straight above, so both agree
+limb_correction = True
+# limb_correction = False  # the brightness temperatures as measured
 clear_sky = 275.0  # K: warmer pixels fade out of the cloud layer
 
 # A zoom on Saint-Pierre-et-Miquelon and the south of Newfoundland, at the
@@ -94,7 +98,7 @@ zoom_scale = 4  # each pixel drawn as 4 x 4 interpolated ones
 
 clouds = GeostationaryImagery(
     "clouds", start, end, resolution=resolution, time_step=time_step, channels="ir",
-    native_resolution=native_resolution, **domain,
+    native_resolution=native_resolution, limb_correction=limb_correction, **domain,
 )
 # clouds = GeostationaryImagery("clouds", start, end, resolution=resolution, complete=False, **domain)  # every time of either satellite
 clouds.load_data()
@@ -120,7 +124,7 @@ print(
 
 daylight = GeostationaryImagery(
     "daylight", visible_start, visible_end, resolution=resolution, time_step=time_step,
-    channels=["ir", "visible"], native_resolution=native_resolution, **domain,
+    channels=["ir", "visible"], native_resolution=native_resolution, limb_correction=limb_correction, **domain,
 )
 # daylight = GeostationaryImagery("daylight", visible_start, visible_end, channels="visible", **domain)  # the visible only
 daylight.load_data()
@@ -194,7 +198,8 @@ fig.savefig("cloud_imagery_colormaps.png", dpi=150)
 
 zoom = GeostationaryImagery(
     "zoom", visible_start, visible_end, resolution=zoom_resolution, time_step="1h",
-    channels=["ir", "visible"], native_resolution=native_resolution, **zoom_domain,
+    channels=["ir", "visible"], native_resolution=native_resolution, limb_correction=limb_correction,
+    **zoom_domain,
 )
 zoom.load_data()
 

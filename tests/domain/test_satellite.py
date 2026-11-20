@@ -29,11 +29,13 @@ from architeuthis.satellite import (
     GIBSData,
     IMAGERY_CHANNELS,
     IMAGERY_COLORMAPS,
+    LIMB_COOLING,
+    limb_cooling,
     native_layers,
     WMSImageryData,
 )
 from architeuthis.toolbox import image_utils, wms_utils
-from architeuthis.toolbox.geo_utils import central_angle
+from architeuthis.toolbox.geo_utils import central_angle, geostationary_zenith
 from architeuthis.toolbox.windy_colormaps import SATELLITE_QUANTITIES, SATELLITE_STOPS, get_satellite_cmap
 
 DOMAIN = dict(min_lon=-20.0, max_lon=0.0, min_lat=40.0, max_lat=52.0)
@@ -492,6 +494,48 @@ def test_central_angle_from_the_sub_satellite_point():
     assert central_angle(90.0, 30.0, 0.0, 0.0) == pytest.approx(90.0)
 
 
+def test_zenith_angle_of_a_geostationary_satellite():
+    assert geostationary_zenith(0.0, -75.2, -75.2) == pytest.approx(0.0)
+    # Larger than the central angle, 90 deg at the limb of the disk
+    assert geostationary_zenith(47.0, -56.0, -75.2) == pytest.approx(57.2, abs=0.1)
+    assert geostationary_zenith(0.0, 81.3, 0.0) == pytest.approx(90.0, abs=0.01)
+    assert geostationary_zenith(0.0, 120.0, 0.0) > 90.0
+
+
+def test_limb_cooling_grows_towards_the_limb():
+    cooling = limb_cooling([0.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0])
+
+    assert cooling[0] == 0.0 and cooling[-2] == pytest.approx(LIMB_COOLING)
+    assert np.all(np.diff(cooling) >= 0.0)
+    assert cooling[-1] == cooling[-2]  # beyond the limb, not more
+    np.testing.assert_allclose(cooling[1:5], [1.75, 3.63, 6.73, 11.49], atol=0.01)
+
+
+def test_the_limb_correction_warms_the_infrared_by_the_zenith_angle(eumetview):
+    eumetview.load_data()
+    corrected = EUMETViewData(
+        "corrected", verbose=False, channels=["ir", "visible"], limb_correction=True, **IMAGERY_PERIOD, **IMAGERY_DOMAIN,
+    )
+    corrected.output_path = eumetview.output_path
+    corrected.load_data()
+
+    times = corrected.data["valid_time"]
+    lat, lon = np.meshgrid(corrected.data["latitude"], corrected.data["longitude"], indexing="ij")
+    cooling = limb_cooling(geostationary_zenith(lat, lon, 0.0))
+    assert cooling.min() > 1.0  # 40-45 N
+    np.testing.assert_allclose(
+        corrected.data["bt"].values, eumetview.data["bt"].sel(valid_time=times).values + cooling, rtol=1e-6,
+    )
+    # The visible is left as it is
+    np.testing.assert_allclose(corrected.data["brightness"].values, 51 / 255, rtol=1e-6)
+
+
+def test_the_limb_correction_needs_the_satellite():
+    with pytest.raises(ValueError, match="subsatellite_lon"):
+        WMSImageryData("server", "https://server", {"ir": "infrared"}, limb_correction=True)
+    assert WMSImageryData("server", "https://server", {"ir": "infrared"}, subsatellite_lon=0.0, limb_correction=True).limb_correction
+
+
 # ------------------------------------------------------------------------------
 # Geostationary imagery: sources
 # ------------------------------------------------------------------------------
@@ -841,6 +885,9 @@ def test_the_composite_raises_when_every_source_fails():
 
 def test_the_default_sources_are_eumetview_and_gibs_over_the_same_domain_and_channels():
     clouds = GeostationaryImagery("clouds", time_step="1h", channels=["ir", "visible"], **IMAGERY_PERIOD, **COMPOSITE_DOMAIN)
+    assert [source.limb_correction for source in clouds.sources] == [False, False]
+    corrected = GeostationaryImagery("clouds", limb_correction=True, **IMAGERY_PERIOD, **COMPOSITE_DOMAIN)
+    assert [source.limb_correction for source in corrected.sources] == [True, True]
 
     assert [type(source) for source in clouds.sources] == [EUMETViewData, GIBSData]
     assert clouds.channels == ["ir", "visible"]

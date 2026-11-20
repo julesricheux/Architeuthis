@@ -43,7 +43,7 @@ from architeuthis.common import ArchiteuthisSpatialData, Datetime, _HOME, status
 from architeuthis.copernicus import CopernicusMarineData
 from architeuthis.credentials import require_credentials
 from architeuthis.toolbox import image_utils, wms_utils
-from architeuthis.toolbox.geo_utils import central_angle
+from architeuthis.toolbox.geo_utils import central_angle, geostationary_zenith
 from architeuthis.toolbox.image_utils import values_to_rgba
 from architeuthis.toolbox.windy_colormaps import get_satellite_cmap
 
@@ -659,6 +659,21 @@ SUBSATELLITE_LONGITUDES = {
 # band along the seam where their levels are matched
 MATCH_WEIGHT = 0.05
 
+# Limb cooling of the infrared: a satellite that sees a place obliquely
+# looks through more atmosphere, and at the sides of the clouds, so it
+# reads it colder, LIMB_COOLING * (zenith / 90)**LIMB_EXPONENT in K.
+# Fitted on 2026-11-19 and 20, 6 times by day and night, comparing
+# quantiles of Meteosat MTG FCI 10.5 um and GOES-East ABI 10.3 um in
+# boxes of 2 x 5 deg over 75 W - 5 E, 35 - 60 N at 0.1 deg: their
+# difference, up to 15 K, is 1.0 K + cooling of one - cooling of the
+# other, with one law for both (16.8 and 19.8 K fitted apart). Residual
+# 4.1 K rather than 9.2 K; 4.5 K rather than 9.7 K at 4 other times. A
+# dependence on the temperature fits a little better but corrects cold
+# tops the most, up to 15 K at 60 deg: their larger extent seen from the
+# side, not a cooling, so it is left out. Parallax is not corrected.
+LIMB_COOLING = 18.4  # K, at a zenith angle of 90 deg
+LIMB_EXPONENT = 4
+
 # Images requested at once from a map server
 DOWNLOAD_WORKERS = 4
 
@@ -710,6 +725,28 @@ def native_layers(
             raise ValueError(f"No {channel} layer at {choice}: choose among {['finest', 'coarsest'] + names}.")
         chosen[channel] = options[choice]
     return chosen
+
+
+def limb_cooling(zenith) -> np.ndarray:
+    """
+    Cooling of infrared brightness temperatures seen obliquely.
+
+    Empirical (`LIMB_COOLING`, `LIMB_EXPONENT`): about 2 K at a zenith
+    angle of 50 deg, 4 K at 60, 7 K at 70, 12 K at 80, 18 K at 90. Add
+    it to estimate what the satellite would read straight above.
+
+    Args:
+        zenith: Zenith angles of the satellite, in degrees
+            (`geo_utils.geostationary_zenith`).
+
+    Returns:
+        The cooling, in K.
+
+    Example:
+        bt + limb_cooling(geostationary_zenith(lat, lon, -75.2))
+    """
+    zenith = np.clip(np.asarray(zenith, dtype=float), 0.0, 90.0)
+    return LIMB_COOLING * (zenith / 90.0) ** LIMB_EXPONENT
 
 
 def imagery_channels(channels: Union[str, Sequence[str]]) -> list[str]:
@@ -998,6 +1035,9 @@ class WMSImageryData(SatelliteImagery):
             to guess it from the server layer names
             (`SUBSATELLITE_LONGITUDES`).
         style: Style of the server layers, "" for their default.
+        limb_correction: Add to the infrared the cooling of an oblique
+            view (`limb_cooling`), to estimate what the satellite would
+            read straight above; needs the longitude of the satellite.
         verbose: Whether to report progress.
     """
 
@@ -1018,6 +1058,7 @@ class WMSImageryData(SatelliteImagery):
         palettes: Optional[dict] = None,
         subsatellite_lon: Optional[float] = None,
         style: str = "",
+        limb_correction: bool = False,
         verbose: bool = True,
     ):
         super().__init__(name, start, end, min_lon, max_lon, min_lat, max_lat, resolution, channels, verbose)
@@ -1040,6 +1081,9 @@ class WMSImageryData(SatelliteImagery):
                 None,
             )
         self.subsatellite_lon = subsatellite_lon
+        if limb_correction and subsatellite_lon is None:
+            raise ValueError(f"{name}: the limb correction needs the longitude of the satellite (subsatellite_lon).")
+        self.limb_correction = limb_correction
         self.output_path = os.path.join(_HOME, "wms", urlparse(url).hostname or "server")
         self.workers = DOWNLOAD_WORKERS
 
@@ -1321,6 +1365,9 @@ class WMSImageryData(SatelliteImagery):
             values = np.empty(pixels.shape[:-1], dtype=np.float32)
             for step, frame in enumerate(pixels):
                 values[step] = image_utils.invert_palette(frame, *palette, secondary=self.secondary[channel])
+            if channel == "ir" and self.limb_correction:
+                lat, lon = np.meshgrid(self.data["latitude"].values, self.data["longitude"].values, indexing="ij")
+                values += limb_cooling(geostationary_zenith(lat, lon, self.subsatellite_lon)).astype(np.float32)
             self.data[IMAGERY_CHANNELS[channel]] = (("valid_time", "latitude", "longitude"), values)
 
 
@@ -1359,6 +1406,8 @@ class EUMETViewData(WMSImageryData):
             one per channel (`native_layers`).
         wms_layers: Server layer of each channel, overriding the
             native resolution, None for none.
+        limb_correction: Add to the infrared the cooling of an oblique
+            view (`limb_cooling`).
         verbose: Whether to report progress.
 
     Example:
@@ -1381,6 +1430,7 @@ class EUMETViewData(WMSImageryData):
         channels: Union[str, Sequence[str]] = "ir",
         native_resolution: Union[str, dict] = "finest",
         wms_layers: Optional[dict] = None,
+        limb_correction: bool = False,
         verbose: bool = True,
     ):
         wms_layers = native_layers(EUMETVIEW_LAYERS, native_resolution) | (wms_layers or {})
@@ -1390,7 +1440,9 @@ class EUMETViewData(WMSImageryData):
         }
         super().__init__(
             name, EUMETVIEW_URL, wms_layers, start, end, min_lon, max_lon, min_lat, max_lat,
-            resolution, time_step, channels, palettes, verbose=verbose,
+            resolution, time_step, channels, palettes,
+            limb_correction=limb_correction,
+            verbose=verbose,
         )
 
 
@@ -1436,6 +1488,8 @@ class GIBSData(WMSImageryData):
         wms_layers: Server layer of each channel, overriding the
             native resolution, None for none; GOES-West or Himawari
             for example.
+        limb_correction: Add to the infrared the cooling of an oblique
+            view (`limb_cooling`).
         verbose: Whether to report progress.
     """
 
@@ -1453,13 +1507,16 @@ class GIBSData(WMSImageryData):
         channels: Union[str, Sequence[str]] = "ir",
         native_resolution: Union[str, dict] = "finest",
         wms_layers: Optional[dict] = None,
+        limb_correction: bool = False,
         verbose: bool = True,
     ):
         wms_layers = native_layers(GIBS_LAYERS, native_resolution) | (wms_layers or {})
         palettes = {"visible": image_utils.linear_gray_palette(0.0, 1.0 / 255.0)}
         super().__init__(
             name, GIBS_URL, wms_layers, start, end, min_lon, max_lon, min_lat, max_lat,
-            resolution, time_step, channels, palettes, verbose=verbose,
+            resolution, time_step, channels, palettes,
+            limb_correction=limb_correction,
+            verbose=verbose,
         )
 
     def _time_extent(self, channel: str) -> list[str]:
@@ -1531,7 +1588,10 @@ class GeostationaryImagery(SatelliteImagery):
     at 0 deg) and GOES-East (GIBS, at 75.2 W) cover the North Atlantic
     from the Americas to Europe, every 10 min.
 
-    Infrared images agree as they are, in K. Visible ones do not: the
+    Infrared images agree in K, within about 1 K where both satellites
+    see at the same angle; each reads colder towards its limb, up to
+    15 K over the North Atlantic, which `limb_correction` makes up for.
+    Visible ones do not agree: the
     brightness of a scene depends on the angles of the sun and of the
     satellite, so each image of the other sources is put on the levels
     of the first one along the seam (`match`,
@@ -1572,6 +1632,8 @@ class GeostationaryImagery(SatelliteImagery):
             image misses a part; else the times any source has.
         match: Match the levels of the sources along the seam, None for
             the visible only.
+        limb_correction: Add to the infrared of the default sources the
+            cooling of an oblique view (`limb_cooling`).
         verbose: Whether to report progress.
 
     Example:
@@ -1599,6 +1661,7 @@ class GeostationaryImagery(SatelliteImagery):
         seam_width: float = 2.0,
         complete: bool = True,
         match: Optional[bool] = None,
+        limb_correction: bool = False,
         verbose: bool = True,
     ):
         super().__init__(name, start, end, min_lon, max_lon, min_lat, max_lat, resolution, channels, verbose)
@@ -1608,6 +1671,7 @@ class GeostationaryImagery(SatelliteImagery):
                 start=start, end=end, min_lon=min_lon, max_lon=max_lon, min_lat=min_lat,
                 max_lat=max_lat, resolution=resolution, time_step=time_step, channels=self.channels,
                 native_resolution=native_resolution,
+                limb_correction=limb_correction,
                 verbose=verbose,
             )
             sources = [EUMETViewData(f"{name}_eumetview", **common), GIBSData(f"{name}_gibs", **common)]
