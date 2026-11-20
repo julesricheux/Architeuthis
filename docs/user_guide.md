@@ -6,7 +6,7 @@ The reference of Architeuthis: data sources, reports, figures, exclusion zones a
 - [Keeping and reusing results](#keeping-and-reusing-results)
 - [Plotting](#plotting)
 - [Exclusion zones](#exclusion-zones)
-- [Displaying routes: `ui.py`](#displaying-routes-uipy)
+- [Sharing routes](#sharing-routes)
 
 ## Data sources
 
@@ -355,6 +355,7 @@ reports = ReportCollection()
 reports.append(analysis.run(tags={"model": "ifs", "init_fac": 0.}))
 
 reports.save()                                  # ~/data/routes/output_<today>.json, displayed by ui.py
+reports.share(forecasts={"IFS": [atmosphere, wave]})  # one HTML file to send aboard
 reports = ReportCollection.latest()             # the most recent file of ~/data/routes/
 
 selected = reports.select(vessel="eff45", solve=1)
@@ -560,13 +561,72 @@ The zones of a routing are yours: the package holds no geographic zone, and `exa
 
 `ExclusionZone.from_geojson(path, feature_id)` reads a polygon from a GeoJSON file. `visible` only concerns the display: a hidden zone still applies to the routing.
 
-## Displaying routes: `ui.py`
+## Sharing routes
 
-```bash
-cd architeuthis
-python ui.py
+The routes, the forecasts of the voyage and the exclusion zones go aboard as one HTML file. It opens in any browser, without a server or a connection, on a 3D globe with a timeline and a layers panel: send it by email, or copy it to the ship.
+
+```python
+from architeuthis.report import ReportCollection
+
+reports = ReportCollection.latest()
+reports.share(
+    forecasts={"IFS": [atmosphere, wave], "GFS": [gfs_atmosphere, gfs_wave]},
+    routes=[1, 3],                          # indices of the reports, all by default
+    variables=["sog", "tws", "twa", "swh"],   # shown on the routes, in this order
+    zones=[iceberg_zone(), zone],
+    title="Saint-Nazaire to Baltimore",
+    note="Expect the low to cross the route on Saturday: keep north.",
+)                                           # ~/data/shared/saint-nazaire-to-baltimore_<time>.html
 ```
 
-`ui.py` serves on port 8052 and must be started from the `architeuthis/` folder. It displays the most recently modified file of `~/data/routes/`, so `reports.save()` is all it takes for the latest routes to appear at its next start. Each report needs the entries `model`, `vessel`, `member`, `init_fac`, `solve` and `fuel`, and optimized routes (`solve` 1) are shown when the page opens.
+`ReportCollection.share(path=None, **options)` calls `architeuthis.share.share_routes(reports, path=None, library="inline", verbose=True, **options)`, which returns the path of the file. Its options are those of `build_scene`:
 
-The iceberg limit and the zones of `~/data/exclusion_zones/` are drawn with their label on the map, whether or not a routing used them. Each one can be hidden in the layers control at the top right of the map. The iceberg limit is listed as `Iceberg limit (unavailable)` when no bulletin could be obtained, so that it is not taken for a limit far from the route.
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `forecasts` | `None` | Layers by label. Each value is a `Forecast`, an `xarray.Dataset` or a list of them, the others interpolated on the grid of the first. Read: `u10` and `v10` (or `si10` and `wdir10`), `gust` (or `i10fg`), `msl` (or `prmsl`), `swh` with `mwd` (or `dirpw`), `uo` and `vo`. |
+| `routes` | all | Indices of the reports to share. A route keeps the colour of its index. |
+| `variables` | `share.DEFAULT_VARIABLES` that the reports have | Per-segment entries shown when hovering a route. `share.VARIABLES` gives their label, unit and description. |
+| `labels` | `route_label` | One name per report, by default from its tags: `IFS eff60`, `GFS eff45 m3 (baseline)`. |
+| `zones` | `()` | `ExclusionZone` objects or `[lat, lon]` lists. An empty one, such as the iceberg limit without a bulletin, is listed as unavailable. |
+| `overlays` | `()` | Images drawn over the globe: dicts with `label`, `url` (an address or `share.png_data_uri(content)`), `bounds` (`[[lat, lon], [lat, lon]]`), `visible`, `opacity` and `time`, the valid time of a chart (epoch seconds or a date, naive dates in UTC). Showing a chart with a time brings the page to that time. |
+| `comments` | `None` | The analyst's notes on the routes, by report index: `{index: {"description": text, "points": {segment: text}}}`, or just the description as a text. A segment is an index of `ctim`. A report's own `description` entry is used when none is given. |
+| `title`, `note` | today's date, `""` | Shown at the top of the page; the note is the analyst's message to the crew. |
+| `member` | first | Ensemble member of the forecasts. |
+| `settings` | `None` | Initial choices of the page: `theme` (`"dark"`, the default, or `"light"`), and for `ui.py` the routes, sources, overlays and tooltip variables shown. |
+| `resolution`, `margin`, `time_margin` | 0.5 deg, 10 deg, 12 h | Grid of the forecast frames, and the forecast kept around the routes and before and after them. |
+
+```python
+reports.share(
+    comments={
+        1: {
+            "description": "Northern option: shorter, but meets the low on Saturday.",
+            "points": {12: "Slow down here to let the front pass ahead."},
+        },
+    },
+    settings={"theme": "light"},
+)
+```
+
+The forecasts are kept around the routes only, and their fake final steps are left out. Each frame is a PNG of 8-bit values, so that a crossing with two models over a week weighs about 3 to 5 MB. Speeds are in knots and pressures in hPa. `library="inline"` puts MapLibre GL JS in the file, downloaded once to `~/data/viewer/`; when it cannot be downloaded, the file loads it from a CDN, and then needs a connection when it is opened, with a ⚠️ status. `library="cdn"` does that on purpose, for a lighter file. `build_scene` and `viewer_html(scene, library)` give the content and the page without writing a file.
+
+In the page:
+
+- **Timeline**: play and pause, steps, a speed from 1 to 24 h of forecast per second, the frames of each source, and the schedule of each route, routes of the same schedule grouped in one bar, with a dot where the analyst commented on the route. Charts with a valid time have a lane of their own: clicking one shows it at its time. Click or drag anywhere on it; *Now* goes to the current time.
+- **Globe**: the boats move along their routes. Hovering a boat shows the description of its route; hovering a point of a route shows its time, the analyst's comment there, marked by a bubble, and the chosen variables; hovering the sea shows the position, wind with its Beaufort force, waves, current and pressure.
+- **Weather picker** (the target button under the zoom, or `P`): a pin to drag anywhere, or to move by clicking the map, which tells the wind, gusts, waves, current and pressure there as the time changes.
+- **Glyphs**: wind barbs and wave and current arrows take the colour of the field under them, made vivid, and sit on a fixed lattice that only the zoom changes. A wave glyph points where the waves go: a solid head for each 4 m and an open chevron for each metre left, so that 3 m is three chevrons, 4 m one head and 9 m two heads and a chevron; a dot is a sea under half a metre.
+- **Layers** (the button left of the title, or `L`): source, field (wind, gusts, waves, current, pressure), wind barbs or wave and current arrows, isobars with or without their pressure labels, and opacity; each route with its fuel, distance and description, and a badge when it did not converge or touches land or a zone (`max_z` > 0); the exclusion zones; the basemap (the land of the file offline, OpenStreetMap online), OpenSeaMap sea marks, latitude and longitude lines and the overlays.
+- **Theme** (the sun or moon button, or `T`): a dark or a light map. The offline land is drawn flat over the weather, with a black coastline shaded on the sea side.
+- **Keys**: space plays, the arrows step, Shift and the arrows jump a day, `Esc` closes a tooltip. The choices of the layers, the theme and the picker are kept when the page is reloaded.
+
+### The analyst's page: `ui.py`
+
+```bash
+python -m architeuthis.ui
+```
+
+`ui.py` needs the `[app]` extra and serves on port 8052. It opens on the most recently modified file of `~/data/routes/`, so `reports.save()` is all it takes for the latest routes to appear, and the others can be chosen from a list. The page shows the share file as the crew will see it, and beside it what goes into it: the routes (optimized ones, `solve` 1, ticked at first) with a description of each for the crew, the variables of the route tooltips, the models, the NOAA surface analysis, a title and a note. Clicking a point of a route in the preview opens a box to comment on it, to tell the crew what to expect or do there; `Ctrl+Enter` saves it, and clicking it again edits or deletes it. *Light map* switches the theme of the page and of the file. Each change shows at once in the preview, and *Download the share file* writes it. Comments belong to the routes of a file: choosing another file starts without any.
+
+The models and the domain are set at the top of the script (`PRODUCT`, `MODELS`, `minimum_longitude`...), and every start downloads the forecasts. The iceberg limit and the zones of `~/data/exclusion_zones/` are always shared, whether or not a routing used them: the iceberg limit is shown at first, and the other zones are hidden at first, whatever their `visible`, and can be shown in the layers.
+
+The NOAA chart gives its valid time only in its picture. `ui.py` takes it as the last synoptic hour (00, 06, 12 or 18 UTC) at least 1.5 h before the chart's `Last-Modified` date, as it is published about 2 hours after its time; the label of the option shows it. Ticking the chart brings the preview to that time.

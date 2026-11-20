@@ -227,6 +227,25 @@ and this project follows Semantic Versioning https://semver.org
 
 ---
 
+## Unreleased
+
+### Added
+- Routes can be shared aboard as one HTML file (#10): `ReportCollection.share(path=None, **options)` and `share.share_routes` write the chosen routes, the forecasts around them and the exclusion zones in a page that opens in any browser, offline, on a 3D globe drawn by MapLibre GL JS 5 (downloaded once to `~/data/viewer/` and put in each file, from a CDN when it cannot be downloaded). Files go to `~/data/shared/` by default, and weigh a few MB for a week with two models.
+- The page has a timeline (play, steps, speed, the frames of each source and the schedule of each route, routes of the same schedule grouped), a layers panel (source, wind, gusts, waves, current or pressure, wind barbs or arrows, isobars, opacity, routes with their fuel, distance and warnings, exclusion zones, an offline land map or OpenStreetMap, OpenSeaMap sea marks, latitude and longitude lines, overlays), boats moving along their routes, tooltips with the variables the analyst chose, a readout of the weather under the cursor with the Beaufort force, a note to the crew and keyboard shortcuts.
+- `share.build_scene` gives the content of a page as JSON-ready data and `share.viewer_html` the page; `route_label`, `route_labels`, `segment_variables` and `default_variables` name routes and list their variables. Forecasts are read from `u10`/`v10` or `si10`/`wdir10`, `gust`, `msl` or `prmsl`, `swh` with `mwd` or `dirpw`, and `uo`/`vo`, as `Forecast` objects or datasets, and stored as 8-bit PNG frames around the routes.
+- `architeuthis/data/land.json`, a light world land map for the offline page.
+- The analyst describes each route and comments on points of it, which the crew reads on the globe and the timeline: `build_scene(comments=...)`, and in `ui.py` a box per route and a click on the preview.
+- A weather picker to drag on the globe (`P`), a light and a dark theme (`T`, `settings={"theme": ...}`), isobars without their pressure labels, and charts at their valid time: an overlay with a `time` brings the page to it when shown, and has its mark on the timeline.
+
+### Changed
+- `ui.py` is now the analyst's page for sharing: beside a live preview of the file, it chooses the report file of `~/data/routes/`, the routes, the variables of the route tooltips, the models, the NOAA surface analysis, a title and a note, and downloads the file. It runs from anywhere with `python -m architeuthis.ui`, without debug mode, and writes nothing to the working directory. The globe replaces the Mercator map. Only the iceberg limit shows at first, the zones of the library being hidden, and the NOAA analysis comes with its valid time, estimated from the date of the chart.
+- The page is flat: panels, labels and glyphs have no outline or shadow, except the thin white outline of the routes. The sea is dark grey, the land flat over the weather with a black coastline shaded on the sea side, and wind barbs and wave and current arrows take the vivid colour of the field under them, on a lattice that panning and rotating the globe leave in place. Wave glyphs tell the height: a head for each 4 m, a chevron for each metre left.
+
+### Removed
+- The Leaflet map of `ui.py`, its forecast raster, arrow and contour routes, its EUMETSAT animation, and the tracked `assets/noaa_overlay.png` that it overwrote at each start. `wrappers/leaflet_wrapper.py` and `wrappers/json_wrapper.py` stay.
+
+---
+
 ## v0.4.0 - Planned
 
 ### Removed

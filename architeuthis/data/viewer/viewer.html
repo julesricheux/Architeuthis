@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="Architeuthis">
+<title><!--@TITLE@--></title>
+<!--@MAPLIBRE_CSS@-->
+<!--@VIEWER_CSS@-->
+</head>
+<body>
+<div id="map" aria-label="Map"></div>
+
+<div id="left">
+  <header id="header" class="glass">
+    <button id="panel-toggle" class="icon-button" type="button" title="Layers and routes (L)" aria-expanded="false" aria-controls="panel"></button>
+    <div class="title-block">
+      <h1 id="title"></h1>
+      <div id="subtitle"></div>
+    </div>
+    <button id="note-toggle" class="chip" type="button" hidden>Note</button>
+    <button id="theme-toggle" class="icon-button" type="button" title="Light or dark map (T)"></button>
+  </header>
+  <div id="note" class="glass" hidden></div>
+  <aside id="panel" class="glass" hidden></aside>
+</div>
+
+<div id="readout" class="glass" hidden></div>
+<div id="legend" class="glass" hidden></div>
+<div id="loading" class="glass">Loading the forecast…</div>
+<div id="error" class="glass" hidden></div>
+
+<footer id="timeline" class="glass">
+  <div class="tl-controls">
+    <button id="tl-prev" class="icon-button" type="button" title="Previous forecast step (←)"></button>
+    <button id="tl-play" class="icon-button play" type="button" title="Play (space)"></button>
+    <button id="tl-next" class="icon-button" type="button" title="Next forecast step (→)"></button>
+    <div id="tl-time" aria-live="polite"></div>
+    <div class="tl-spacer"></div>
+    <button id="tl-now" class="chip" type="button" title="Go to the current time" hidden>Now</button>
+    <label class="tl-speed" title="Playback speed">
+      <span>Speed</span>
+      <select id="tl-speed">
+        <option value="1">1 h/s</option>
+        <option value="3">3 h/s</option>
+        <option value="6">6 h/s</option>
+        <option value="12">12 h/s</option>
+        <option value="24">1 day/s</option>
+      </select>
+    </label>
+  </div>
+  <div class="tl-body">
+    <div id="tl-labels"></div>
+    <div id="tl-lanes">
+      <div id="tl-axis"></div>
+      <div id="tl-rows"></div>
+      <div id="tl-cursor"><div id="tl-handle"></div></div>
+      <div id="tl-hover" hidden></div>
+    </div>
+  </div>
+</footer>
+
+<script type="application/json" id="architeuthis-scene"><!--@SCENE@--></script>
+<!--@MAPLIBRE_JS@-->
+<!--@VIEWER_JS@-->
+</body>
+</html>

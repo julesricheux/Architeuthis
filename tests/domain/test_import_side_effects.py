@@ -132,6 +132,22 @@ print(json.dumps({"loaded": sorted(set(sys.modules) & {"dash", "dash_leaflet", "
     assert "dash_leaflet" not in result["loaded"]
 
 
+def test_importing_share_downloads_nothing_until_a_page_is_written(tmp_path):
+    # MapLibre is fetched when a page needs it, not at import.
+    home, work, result = run(
+        """
+import architeuthis.share
+
+print(json.dumps({"loaded": sorted(set(sys.modules) & {"dash", "matplotlib.pyplot", "architeuthis.icebergs"})}))
+""",
+        tmp_path,
+    )
+
+    assert result["loaded"] == []
+    assert list((home / "data").iterdir()) == []
+    assert list(work.iterdir()) == []
+
+
 def test_reading_the_scripts_zones_downloads_the_iceberg_limit_only_then(tmp_path):
     home, _, result = run(
         """

@@ -360,6 +360,28 @@ class ReportCollection(list):
             status(f"➕ {len(self)} reports saved to {path}.")
         return path
 
+    def share(self, path: Optional[str] = None, **options) -> str:
+        """
+        Write the routes as one HTML file to send aboard.
+
+        The file opens in any browser, offline, on a 3D globe with the
+        forecasts given. See `architeuthis.share.share_routes`.
+
+        Args:
+            path: The file to write, by default in `~/data/shared/`.
+            **options: Options of `share_routes`, such as `forecasts`,
+                `routes`, `variables`, `zones`, `title` and `note`.
+
+        Returns:
+            The path of the file.
+
+        Example:
+            >>> reports.share(forecasts={"GFS": gfs}, routes=[0, 2])
+        """
+        from architeuthis.share import share_routes
+
+        return share_routes(self, path, **options)
+
     @classmethod
     def load(cls, path: str) -> "ReportCollection":
         """

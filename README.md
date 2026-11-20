@@ -35,7 +35,7 @@ No graph, no grid search: the waypoints are continuous variables of a single non
 - 🧊 **Real-world constraints**: land, shallow water, exclusion zones, the iceberg limit, maximum power, your own rules
 - 🎲 **Forecast uncertainty**: optimize each ensemble member, test a plan against other models, members or vessels
 - 🛰️ **Satellite observations**: ASCAT winds to check the forecasts, and one seamless cloud layer from Meteosat and GOES-East
-- 📊 **Ready-to-use outputs**: A4 reports, maps, tables, GPX tracks and an interactive viewer
+- 📊 **Ready-to-use outputs**: A4 reports, maps, tables, GPX tracks, and a 3D globe of routes and forecasts to send aboard as one file
 
 **Architeuthis** provides the **onshore weather routing support** of [Neoliner Origin](https://www.neoline.eu/) 🌬️⛵⚓
 
@@ -46,7 +46,7 @@ No graph, no grid search: the waypoints are continuous variables of a single non
 ## 🚀 Quick Start
 
 ```bash
-pip install architeuthis            # add [app] for the interactive viewer
+pip install architeuthis            # add [app] for the analyst's page, ui.py
 ```
 
 Or from source: `git clone https://github.com/julesricheux/Architeuthis.git`, then `conda env create -f environment.yaml` and run everything from the repository root (Python 3.11 or later).
@@ -108,7 +108,7 @@ report = analysis.run()
 reports = ReportCollection([report])
 print(reports.summary())
 reports.to_gpx()     # a track for your navigation system
-reports.save()       # for the viewer
+reports.save()       # for ui.py
 plot_report(report)  # one A4 page: speed, sails, power, waves and wind
 ```
 
@@ -180,6 +180,23 @@ Quantities your model does not use can be computed all the same, to constrain th
 - **Set a realistic `max_power`, or `None`:** a huge power limit unsettles the solver. `max_power=None` leaves the power free; until 0.4.0, leaving it out still gives 1e12 kW, with a warning.
 
 The complete script is [`examples/function_polar_routing.py`](examples/function_polar_routing.py), and the [User Guide](docs/user_guide.md) has the details.
+
+---
+
+## 📤 Sharing with the Crew
+
+The routes, the forecasts of the voyage and the exclusion zones fit in one HTML file of a few MB. It opens in any browser, offline, on a 3D globe, dark or light: boats moving along their routes, a timeline of the forecasts, wind barbs, wave glyphs that tell the height, isobars, a weather picker to drag anywhere, the values the analyst chose on each route, and their comments on the strategy.
+
+```python
+reports.share(
+    forecasts={"IFS": [atmosphere, wave]},
+    routes=[0, 2],                          # leave out the routes the crew does not need
+    variables=["sog", "tws", "twa", "swh"],   # shown when hovering a route
+    note="Expect the low to cross the route on Saturday: keep north.",
+)                                           # ~/data/shared/<title>_<time>.html
+```
+
+Or run `python -m architeuthis.ui`: the page shows the file as the crew will see it, beside checkboxes for the routes, the tooltips and the models, a description of each route, and comments placed by clicking the routes, and downloads it. See the [User Guide](docs/user_guide.md#sharing-routes).
 
 ---
 
@@ -278,7 +295,8 @@ Everything goes to `~/data/`:
 | --- | --- |
 | `topo/`, `cmems/`, `cds/`, `eumetsat/`, `wms/`, `iip/` | Downloads: relief, currents, reanalysis, satellite data, satellite images (by server, layer and box), iceberg limit |
 | `route_library/`, `route_sets/`, `passage_plans/`, `exclusion_zones/` | Your saved routes, plans and zones |
-| `routes/` | Reports saved by `ReportCollection.save`, read by the viewer |
+| `routes/` | Reports saved by `ReportCollection.save`, read by `ui.py` |
+| `shared/`, `viewer/` | Files written by `ReportCollection.share`, and the MapLibre library they hold |
 
 Set `ARCHITEUTHIS_HOME` to move it, then open a new terminal: `setx ARCHITEUTHIS_HOME "D:\architeuthis-data"` on Windows, `export ARCHITEUTHIS_HOME="$HOME/architeuthis-data"` in `~/.bashrc` elsewhere. Herbie keeps the GRIB files in its own `save_dir` (`~/.config/herbie/config.toml`).
 

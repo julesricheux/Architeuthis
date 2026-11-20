@@ -1,15 +1,16 @@
 """
-The real ui.py, run without starting its server: the latest routes and the exclusion zones must
-reach the page, and each layer must be hideable.
+The real ui.py, run without starting its server: the latest routes, the forecasts and the
+exclusion zones must reach the preview, and the download must hold the analyst's choices.
 
-Everything that ui.py downloads is replaced: forecasts, the NOAA chart and the coastline file
-that it reads from its working directory, which is a temporary folder here because ui.py writes
-into assets/.
+Everything that ui.py downloads is replaced: forecasts, the NOAA chart and MapLibre, cached in a
+temporary folder. ui.py runs from a temporary folder too, so that nothing it might write lands
+in the checkout.
 """
 
 import io
 import json
 import os
+import re
 import runpy
 import subprocess
 import sys
@@ -21,9 +22,11 @@ import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
+from dash import no_update
 from PIL import Image
 
 import architeuthis
+from architeuthis import share
 from architeuthis.common import _HOME
 from architeuthis.exclusion import ExclusionZone, ExclusionZoneLibrary
 from architeuthis.forecast import DeterministicHerbieForecast
@@ -45,7 +48,6 @@ VARIABLES = {
 
 
 def load_forecast(self):
-    # Fields vary with latitude: ui.py cannot draw contours of a constant field.
     variation = np.broadcast_to(
         (LATITUDE - LATITUDE.mean())[None, :, None] / np.ptp(LATITUDE),
         (TIME.size, LATITUDE.size, LONGITUDE.size),
@@ -64,13 +66,23 @@ def load_forecast(self):
     )
 
 
-class Chart:
-    """The NOAA chart that ui.py downloads at each start."""
+CHART_WRITTEN = "Fri, 20 Nov 2026 08:15:49 GMT"
 
-    def __init__(self):
-        buffer = io.BytesIO()
-        Image.new("RGB", (4, 4), "white").save(buffer, format="GIF")
-        self.content = buffer.getvalue()
+
+class Answer:
+    """What the servers send: the NOAA chart, or MapLibre."""
+
+    def __init__(self, url):
+        self.headers = {}
+        if url.endswith(".js"):
+            self.content = b"window.maplibregl = {}; // fake maplibregl"
+        elif url.endswith(".css"):
+            self.content = b".maplibregl-map { color: red; }"
+        else:
+            buffer = io.BytesIO()
+            Image.new("RGB", (4, 4), "white").save(buffer, format="GIF")
+            self.content = buffer.getvalue()
+            self.headers = {"Last-Modified": CHART_WRITTEN}
 
     def raise_for_status(self):
         pass
@@ -83,7 +95,14 @@ def walk(component):
             yield from walk(item)
     elif isinstance(component, dict) and "props" in component:
         yield component
-        yield from walk(component["props"].get("children"))
+        for value in component["props"].values():
+            yield from walk(value)
+
+
+def scene_of(page):
+    """The scene embedded in a viewer page."""
+    match = re.search(r'<script type="application/json" id="architeuthis-scene">(.*?)</script>', page, flags=re.DOTALL)
+    return json.loads(match.group(1))
 
 
 @pytest.fixture(scope="module")
@@ -93,12 +112,13 @@ def tagged_reports(routing, baseline_report, optimized_report):
 
 @pytest.fixture(scope="module")
 def user_zone():
+    # Shown at first in the library, hidden at first by ui.py.
     return ExclusionZone(
         "safety",
         [[45.0, -30.0], [45.0, -25.0], [40.0, -25.0]],
         label="Safety margin",
         color="#00ff00",
-        visible=False,
+        visible=True,
         verbose=False,
     )
 
@@ -106,16 +126,12 @@ def user_zone():
 @pytest.fixture(scope="module")
 def ui(tmp_path_factory, tagged_reports, user_zone):
     work = tmp_path_factory.mktemp("ui")
-    (work / "assets").mkdir()
-    (work / "assets" / "countries-coastline-1km.geo.json").write_text(
-        json.dumps({"type": "FeatureCollection", "features": []})
-    )
 
     routes = Path(ROUTES_DIRECTORY)
     library = ExclusionZoneLibrary(verbose=False)
-    older = ReportCollection([tagged_reports[0]]).save(str(routes / "z_older.json"))
+    older = ReportCollection([tagged_reports[0]]).save(str(routes / "z_older.json"), verbose=False)
     os.utime(older, (1000, 1000))
-    latest = tagged_reports.save(str(routes / "a_latest.json"))
+    latest = tagged_reports.save(str(routes / "a_latest.json"), verbose=False)
     zone_path = library.save(user_zone)
 
     previous = os.getcwd()
@@ -124,10 +140,10 @@ def ui(tmp_path_factory, tagged_reports, user_zone):
     plt.switch_backend("svg")
     try:
         with patch.object(DeterministicHerbieForecast, "load_data", load_forecast), patch(
-            "requests.get", lambda *args, **kwargs: Chart()
-        ):
+            "requests.get", lambda url, *args, **kwargs: Answer(url)
+        ), patch.object(share, "VIEWER_DIRECTORY", str(work / "viewer")):
             namespace = runpy.run_path(UI_SOURCE, run_name="ui_under_test")
-        yield namespace
+            yield namespace
     finally:
         plt.switch_backend("agg")
         os.chdir(previous)
@@ -144,18 +160,24 @@ def client(ui):
 def layout(client):
     response = client.get("/_dash-layout")
     assert response.status_code == 200
-    return response.get_json()
+    # Components with a pattern-matching identifier, a dict, are found through their parents.
+    return {
+        component["props"]["id"]: component["props"]
+        for component in walk(response.get_json())
+        if isinstance(component["props"].get("id"), str)
+    }
 
 
 @pytest.fixture(scope="module")
-def overlays(layout):
-    found = [component for component in walk(layout) if component["type"] == "Overlay"]
-    return {component["props"].get("name"): component["props"] for component in found}
+def scene(client):
+    response = client.get("/viewer?file=a_latest.json&member=1")
+    assert response.status_code == 200
+    return scene_of(response.get_data(as_text=True))
 
 
 def test_ui_can_be_launched_as_a_script(tmp_path):
     # Python then puts architeuthis/ first on the path, where architeuthis/numpy hides numpy.
-    # The refused proxy stops the script at its first download, after all its imports.
+    # The refused proxy stops the script at its first forecast, after all its imports.
     environment = {key: value for key, value in os.environ.items() if key not in ("PYTHONPATH", "NO_PROXY", "no_proxy")}
     environment |= {
         "HOME": str(tmp_path),
@@ -177,11 +199,12 @@ def test_ui_can_be_launched_as_a_script(tmp_path):
     )
 
     assert "No module named" not in done.stderr
-    assert "remove_white_pixels" in done.stderr
+    assert "NOAA surface analysis unavailable" in done.stdout
+    assert "load_data" in done.stderr
 
 
 def test_ui_draws_without_a_gui_backend(ui):
-    # A GUI backend, the default in a terminal, kills the process at the first raster or contour.
+    # A GUI backend, the default in a terminal, kills the process from a server thread.
     assert ui["matplotlib"].get_backend().lower() == "agg"
 
 
@@ -194,78 +217,303 @@ def test_ui_reads_the_most_recently_modified_file(ui):
     assert len(ui["reports"]) == 2
 
 
-def test_latest_routes_are_on_the_page(overlays, tagged_reports):
-    for report in tagged_reports:
-        name = f"{report['model']} {report['init_fac']} {report['vessel'][3:]} {report['fuel']:.1f} m{report['member']}"
-        assert name in overlays
+def test_ui_writes_nothing_where_it_runs(ui):
+    assert sorted(path.name for path in Path.cwd().iterdir()) == ["viewer"]
 
 
-def test_only_optimized_routes_are_shown_at_first(overlays, tagged_reports):
-    baseline, optimized = tagged_reports
-    assert overlays[f"ifs 0.0 45 {baseline['fuel']:.1f} m0"]["checked"] is False
-    assert overlays[f"gfs 0.0 60 {optimized['fuel']:.1f} m0"]["checked"] is True
+def test_maplibre_is_put_in_the_pages_once_downloaded(ui, client):
+    page = client.get("/viewer?file=a_latest.json").get_data(as_text=True)
+
+    assert ui["LIBRARY"] == "inline"
+    assert "fake maplibregl" in page
+    assert "unpkg.com" not in page
 
 
-def test_routes_are_drawn_where_the_report_says(overlays, tagged_reports):
-    optimized = tagged_reports[1]
-    overlay = overlays[f"gfs 0.0 60 {optimized['fuel']:.1f} m0"]
-
-    features = overlay["children"]["props"]["data"]["features"]
-    line = next(feature for feature in features if feature["properties"].get("kind") == "route")
-    assert line["geometry"]["coordinates"][0] == pytest.approx([optimized["lon"][0], optimized["lat"][0]])
+# ----------------------------------------------------------------------
+# Choices of the analyst
+# ----------------------------------------------------------------------
 
 
-def test_iceberg_limit_can_be_hidden_under_its_label(overlays):
-    assert overlays["Iceberg limit"]["checked"] is True
+def test_report_files_are_listed_the_latest_first(layout):
+    select = layout["file-select"]
+
+    assert select["value"] == "a_latest.json"
+    assert [option["value"] for option in select["data"]] == ["a_latest.json", "z_older.json"]
 
 
-def test_zones_of_the_library_are_on_the_page(overlays):
-    assert overlays["Safety margin"]["checked"] is False
+def test_only_optimized_routes_are_chosen_at_first(layout):
+    checkboxes = [component for component in walk(layout["routes-options"]["children"]) if component["type"] == "Checkbox"]
+
+    assert layout["routes-select"]["value"] == ["r1"]
+    assert [checkbox["props"]["value"] for checkbox in checkboxes] == ["r0", "r1"]
 
 
-def test_zone_labels_are_written_on_the_map(layout):
-    labels = {
+def test_each_route_takes_a_description(layout):
+    boxes = [component["props"] for component in walk(layout["routes-options"]["children"]) if component["type"] == "Textarea"]
+
+    assert [box["id"] for box in boxes] == [{"type": "route-description", "index": index} for index in (0, 1)]
+    assert [box["value"] for box in boxes] == ["", ""]
+
+
+def test_the_map_opens_dark_with_no_comment(layout):
+    assert layout["theme-switch"]["checked"] is False
+    assert layout["provider"]["forceColorScheme"] == "dark"
+    assert layout["route-comments"]["data"] == {}
+
+
+def test_the_page_follows_the_theme_of_the_map(ui):
+    assert ui["color_scheme"](True) == "light"
+    assert ui["color_scheme"](False) == "dark"
+
+
+def test_routes_are_offered_under_their_label(layout, tagged_reports):
+    labels = [
         component["props"]["children"]
-        for component in walk(layout)
-        if component["type"] == "Tooltip" and component["props"].get("className") == "exclusion-zone-label"
-    }
+        for component in walk(layout["routes-options"]["children"])
+        if component["type"] == "Text"
+    ]
 
-    assert labels == {"Iceberg limit", "Safety margin"}
-
-
-def test_zone_lines_follow_their_outline(ui, layout):
-    lines = {component["props"]["id"]: component["props"] for component in walk(layout) if component["type"] == "Polyline"}
-
-    assert lines["exclusion-zone-safety"]["positions"] == next(
-        zone.outline for zone in ui["exclusion_zones"] if zone.name == "safety"
-    )
-    assert lines["exclusion-zone-safety"]["color"] == "#00ff00"
+    assert labels == share.route_labels(tagged_reports)
 
 
-def test_every_layer_is_in_the_layers_control(layout):
-    control = next(component for component in walk(layout) if component["type"] == "LayersControl")
-    names = {child["props"].get("name") for child in control["props"]["children"]}
+def test_tooltips_offer_every_variable_and_show_the_defaults(layout, tagged_reports):
+    hover = layout["hover-select"]
+    offered = [option["value"] for option in hover["data"]]
 
-    assert {"Iceberg limit", "Safety margin"} <= names
+    assert hover["value"] == share.default_variables(tagged_reports)
+    assert offered[: len(hover["value"])] == hover["value"]
+    assert set(offered) == set(share.segment_variables(tagged_reports[0])) | set(share.segment_variables(tagged_reports[1]))
 
 
-def test_page_and_callbacks_are_served(client, ui):
-    assert client.get("/").status_code == 200
+def test_every_model_is_offered(layout):
+    assert layout["sources-select"]["value"] == ["ifs", "gfs"]
+
+
+def test_members_are_hidden_for_deterministic_forecasts(ui, layout):
+    assert ui["PRODUCT"] == "oper"
+    assert layout["member-select"]["value"] == ui["DEFAULT_MEMBER"]
+
+
+def test_another_file_comes_with_its_own_defaults(ui):
+    options, routes, data, hover, title, comments = ui["select_file"]("z_older.json")
+
+    # Its only route is a baseline: with no optimized route, all are chosen.
+    assert routes == ["r0"]
+    assert len(options) == 1
+    assert hover == share.default_variables(ui["load_reports"]("z_older.json"))
+    assert title.startswith("Routes departing ")
+    # The comments were on the routes of the other file.
+    assert comments == {}
+
+
+def test_the_preview_follows_the_file_and_member(ui):
+    assert ui["show_file"]("z_older.json", 3) == "/viewer?file=z_older.json&member=3"
+    assert ui["show_file"]("a b.json", None) == f"/viewer?file=a%20b.json&member={ui['DEFAULT_MEMBER']}"
+
+
+def test_files_outside_the_routes_folder_are_refused(ui):
+    with pytest.raises(FileNotFoundError):
+        ui["load_reports"]("../exclusion_zones/safety.json")
+
+
+# ----------------------------------------------------------------------
+# Preview
+# ----------------------------------------------------------------------
+
+
+def test_the_preview_shows_every_route_with_the_defaults_chosen(scene, tagged_reports):
+    assert [route["id"] for route in scene["routes"]] == ["r0", "r1"]
+    assert scene["settings"]["routes"] == ["r1"]
+    assert scene["settings"]["hover"] == share.default_variables(tagged_reports)
+    assert scene["settings"]["overlays"] == []
+    assert scene["title"].startswith("Routes departing ")
+
+
+def test_the_preview_holds_both_models(scene):
+    assert [source["id"] for source in scene["sources"]] == ["ifs", "gfs"]
+    for source in scene["sources"]:
+        assert source["layers"] == ["wind", "waves", "pressure"]
+        assert len(source["times"]) == len(TIME)
+
+
+def test_iceberg_limit_and_library_zones_are_on_the_globe(scene, user_zone):
+    zones = {zone["label"]: zone for zone in scene["zones"]}
+
+    assert zones["Safety margin"]["color"] == "#00ff00"
+    assert zones["Safety margin"]["outline"] == [[lon, lat] for lat, lon in user_zone.outline]
+
+
+def test_only_the_iceberg_limit_is_shown_at_first(ui, scene, user_zone):
+    zones = {zone["label"]: zone for zone in scene["zones"]}
+
+    assert zones["Iceberg limit"]["visible"] is True
+    assert zones["Safety margin"]["visible"] is False
+    # The zone of the library is left as it is.
+    assert user_zone.visible is True
+
+
+def test_the_noaa_chart_can_be_drawn_over_the_globe(scene):
+    (overlay,) = scene["overlays"]
+
+    assert overlay["label"] == "NOAA surface analysis"
+    assert overlay["url"].startswith("data:image/png;base64,")
+    assert (overlay["north"], overlay["west"], overlay["south"], overlay["east"]) == (65.15, -100.0, 14.4, 10.0)
+
+
+def test_the_noaa_chart_is_shown_at_its_valid_time(ui, scene):
+    (overlay,) = scene["overlays"]
+
+    # Written at 08:15 UTC: the analysis of 06 UTC.
+    assert overlay["time"] == pd.Timestamp("2026-11-20 06:00", tz="UTC").timestamp()
+    assert ui["noaa_label"]() == "NOAA surface analysis, Fri 20 06 UTC"
+
+
+@pytest.mark.parametrize(
+    "written, valid",
+    [
+        ("Fri, 20 Nov 2026 08:15:49 GMT", "2026-11-20 06:00"),
+        ("Fri, 20 Nov 2026 07:29:00 GMT", "2026-11-20 00:00"),
+        ("Fri, 20 Nov 2026 01:00:00 GMT", "2026-11-19 18:00"),
+        ("Fri, 20 Nov 2026 09:15:49 +0100", "2026-11-20 06:00"),
+    ],
+)
+def test_the_analysis_time_is_the_synoptic_hour_before_the_file(ui, written, valid):
+    assert ui["analysis_time"](written) == pd.Timestamp(valid, tz="UTC")
+
+
+@pytest.mark.parametrize("written", [None, "", "yesterday"])
+def test_an_unknown_file_date_gives_no_analysis_time(ui, written):
+    assert ui["analysis_time"](written) is None
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["file=nothing.json", "file=../exclusion_zones/safety.json", "file=a_latest.json&member=first"],
+)
+def test_unknown_files_are_not_found(client, query):
+    assert client.get(f"/viewer?{query}").status_code == 404
+
+
+def test_page_and_callbacks_are_served(client):
+    page = client.get("/")
     response = client.get("/_dash-dependencies")
+
+    assert page.status_code == 200
     assert response.status_code == 200
     assert len(response.get_json()) > 0
+    # The bridge that sends the choices to the preview.
+    assert "architeuthis:settings" in page.get_data(as_text=True)
 
 
-@pytest.mark.parametrize("model", ["ifs", "gfs"])
-def test_forecast_routes_answer_for_each_model(client, model):
-    raster = client.get(f"/raster.png?var=si10&time=0&member=1&model={model}")
-    arrows = client.get(f"/wind_arrows.geojson?time=0&qvar=wdir10&density=2&member=1&model={model}")
-    contours = client.get(f"/contour_field.geojson?var=msl&time=0&member=1&model={model}")
+def test_the_viewer_answers_the_bridge():
+    with open(share._TEMPLATES / "viewer.js", encoding="utf-8") as file:
+        script = file.read()
 
-    assert raster.status_code == 200
-    assert raster.data.startswith(b"\x89PNG")
-    assert arrows.get_json()["type"] == "FeatureCollection"
-    assert contours.get_json()["type"] == "FeatureCollection"
+    assert '"architeuthis:ready"' in script
+    assert '"architeuthis:settings"' in script
+    # And sends back the comments and the theme, which the bridge receives.
+    assert '"architeuthis:comments"' in script
+    assert '"architeuthis:theme"' in script
+
+
+# ----------------------------------------------------------------------
+# Download
+# ----------------------------------------------------------------------
+
+
+def test_nothing_is_downloaded_before_a_click(ui):
+    assert ui["download"](None, "a_latest.json", ["r1"], [], ["ifs"], "", "", 1, False) == (no_update, no_update)
+
+
+def test_the_download_holds_the_choices(ui, tagged_reports):
+    data, info = ui["download"](1, "a_latest.json", ["r0"], ["twa", "sog"], ["gfs"], "Crossing 12", "Keep north", 1, True)
+    scene = scene_of(data["content"])
+
+    assert data["filename"] == "Crossing_12.html"
+    assert data["type"] == "text/html"
+    assert [route["id"] for route in scene["routes"]] == ["r0"]
+    assert scene["routes"][0]["label"] == share.route_labels(tagged_reports)[0]
+    assert list(scene["variables"]) == ["twa", "sog"]
+    assert [source["label"] for source in scene["sources"]] == ["GFS"]
+    assert [overlay["label"] for overlay in scene["overlays"]] == ["NOAA surface analysis"]
+    assert {zone["label"] for zone in scene["zones"]} == {"Iceberg limit", "Safety margin"}
+    assert (scene["title"], scene["note"]) == ("Crossing 12", "Keep north")
+    assert scene["settings"] == {"routes": None, "sources": None, "overlays": None, "hover": None, "theme": "dark"}
+    assert "fake maplibregl" in data["content"]
+    assert info.startswith("Crossing_12.html: 1 routes, ")
+
+
+def test_the_download_holds_the_descriptions_comments_and_theme(ui):
+    data, _ = ui["download"](
+        1,
+        "a_latest.json",
+        ["r0", "r1"],
+        [],
+        [],
+        "Crossing",
+        "",
+        1,
+        False,
+        ["South of the low", ""],
+        [{"type": "route-description", "index": 0}, {"type": "route-description", "index": 1}],
+        {"r1": {"2": "Gybe here", "5": ""}},
+        True,
+    )
+    first, second = scene_of(data["content"])["routes"]
+
+    assert (first["description"], first["comments"]) == ("South of the low", [])
+    assert (second["description"], second["comments"]) == ("", [{"k": 2, "text": "Gybe here"}])
+    assert scene_of(data["content"])["settings"]["theme"] == "light"
+
+
+def test_route_notes_gather_descriptions_and_comments_by_report(ui):
+    notes = ui["route_notes"](
+        ["A", "B"],
+        [{"type": "route-description", "index": 3}, {"type": "route-description", "index": 0}],
+        {"r3": {"1": "x"}, "r7": {}},
+    )
+
+    assert notes == {3: {"description": "A", "points": {1: "x"}}, 0: {"description": "B"}, 7: {"points": {}}}
+    assert ui["route_notes"]() == {}
+
+
+def test_a_download_without_title_is_named_after_the_departure(ui):
+    data, _ = ui["download"](1, "a_latest.json", [], [], [], None, None, None, False)
+    scene = scene_of(data["content"])
+
+    assert scene["routes"] == [] and scene["sources"] == [] and scene["overlays"] == []
+    assert scene["title"].startswith("Routes departing ")
+    assert data["filename"].startswith("Routes_departing_")
+
+
+def test_quick_selection_of_routes(client):
+    dependencies = client.get("/_dash-dependencies").get_json()
+    callback = next(
+        dependency
+        for dependency in dependencies
+        if dependency["output"].startswith("routes-select.value@")
+    )
+
+    def press(button):
+        response = client.post(
+            "/_dash-update-component",
+            json={
+                "output": callback["output"],
+                "outputs": {"id": "routes-select", "property": callback["output"].split(".", 1)[1]},
+                "inputs": [
+                    {"id": name, "property": "n_clicks", "value": 1 if name == button else None}
+                    for name in ("routes-optimized", "routes-all", "routes-none")
+                ],
+                "changedPropIds": [f"{button}.n_clicks"],
+                "state": [{"id": "file-select", "property": "value", "value": "a_latest.json"}],
+            },
+        )
+        assert response.status_code == 200
+        return next(iter(response.get_json()["response"].values()))["value"]
+
+    assert press("routes-all") == ["r0", "r1"]
+    assert press("routes-none") == []
+    assert press("routes-optimized") == ["r1"]
 
 
 def test_style_of_the_labels_is_in_the_assets():

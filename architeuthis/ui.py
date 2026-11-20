@@ -1,10 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-Dash and Leaflet viewer of forecast fields and saved route reports.
+Analyst's page to choose the routes to share, beside their globe.
 
 This is a script, not a library: importing it downloads forecasts and
-needs a report in `~/data/routes/`. Run it from inside `architeuthis/`.
-It serves on port 8052.
+needs a report in `~/data/routes/`. Run it from the repository root
+with `python -m architeuthis.ui`. It serves on port 8052.
+
+The page shows the viewer of `share.py` with the forecasts and the
+routes of a report file, and, beside it, what to share: routes, tooltip
+variables, forecasts, title and a note to the crew. Each route takes a
+description, and clicking a point of a route in the viewer comments on
+it. Changes show at once in the viewer, and the download button writes
+the same page as one HTML file, which opens in any browser, offline.
 
 Created on Sun Jan 25 21:18:08 2026
 
@@ -23,1153 +30,875 @@ if "__file__" in globals():
         *(path for path in sys.path if os.path.abspath(path or os.getcwd()) != _ui_folder),
     ]
 
+import copy
 import io
-import json
-from io import BytesIO
+from datetime import timedelta
+from email.utils import parsedate_to_datetime
 from pathlib import Path
+from urllib.parse import quote
 
-import requests
+import numpy as np
 import pandas as pd
+import requests
 import xarray as xr
-import seaborn as sns
 import matplotlib
 
-# The routes draw images in server threads, where a GUI backend such as Qt kills the process.
+# Nothing is drawn with pyplot any more, but a GUI backend kills the process from a server thread.
 matplotlib.use("Agg")
 
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 from PIL import Image
 
 import dash_mantine_components as dmc
-import dash_leaflet as dl
-from dash import html, dcc
-from dash.dependencies import Input, Output, State
-from dash_iconify import DashIconify
-from dash_extensions.enrich import DashProxy
+from dash import ALL, Dash, Input, Output, State, ctx, dcc, html, no_update
 from dash import _dash_renderer
 
 # Dash Mantine Components 3 needs React 19, which Dash 4.5 ships but does not
 # load by default. This must run before the page is first served.
 _dash_renderer._set_react_version("19.2.4")
-from flask import send_file, request, jsonify
+from flask import Response, abort, request
 
-# from herbie.toolbox import ccrs
-import cartopy.crs as ccrs
-from architeuthis.toolbox.windy_colormaps import get_wind_cmap, get_wave_cmap
-
-import architeuthis.numpy as np
-from architeuthis.forecast import (
-    DeterministicHerbieForecast,
-    EnsembleHerbieForecast,
-)
-from architeuthis.common import _HOME
+from architeuthis.common import _HOME, status
 from architeuthis.exclusion import (
     ExclusionZoneLibrary,
     iceberg_zone,
     merge_exclusion_zones,
 )
+from architeuthis.forecast import (
+    DeterministicHerbieForecast,
+    EnsembleHerbieForecast,
+)
 from architeuthis.report import ReportCollection, latest_report_file
-
-from architeuthis.toolbox.chart_utils import density_from_zoom
-from architeuthis.toolbox.geo_utils import lonlat_to_web_mercator
-from architeuthis.wrappers.json_wrapper import (
-    route_to_geojson,
-    point_to_layer,
-    style_func,
-)
-from architeuthis.wrappers.leaflet_wrapper import exclusion_zone_overlays
-
-sns.set_theme(palette="viridis")
-
-# ---------- CONFIG ----------
-# DATA_PATH = "data.nc"   # <-- put your xarray dataset here
-TILE_SIZE = 256         # tile pixel size
-# Replace these names with the actual variable names in your dataset:
-DEFAULT_QUIVER_VAR = "wdir10" # true wind direction
-DEFAULT_RASTER_VAR = "si10" # true wind speed
-DEFAULT_VECTOR_VAR = "msl" # mean sea level pressure
-TIME_DIM = "valid_time" 
-MEMBER_DIM = "number"
-LAT_NAME = "latitude"
-LON_NAME = "longitude"
-DEFAULT_MEMBER=1
-DEFAULT_MODEL="ifs"
-# ----------------------------
-
-PRODUCT = "oper"
-MODELS = ["ifs", "gfs"]
-# MODELS = ["gfs"]
-
-# PRODUCT = "enfo"
-# MODELS = ["ifs"]
-
-PRODUCTS = {
-    "ifs":{
-        "oper": {"ens": False},
-        "enfo": {"ens": True},
-    },
-    "gfs":{
-        "pgrb2.0p25": {"ens": False},
-    },
-}
-
-DEFAULT_RASTER_VARS = ["si10", "msl", "swh", "mwp"]
-DEFAULT_QUIVER_VARS = ["wdir10", "mwd"]
-
-dir_to_speed = {
-    "wdir10": "si10",
-    "mwd": "swh",
-}
-
-# Weather sensor icon
-weather_icon = dict(
-    # iconUrl="./assets/icons/wi--thermometer-internal.png",
-    # iconUrl="./assets/icons/sensor.png",
-    # iconUrl="./assets/icons/material-symbols-light--target.png",
-    iconUrl="./assets/icons/mdi--target.png",
-    # iconSize=[512, 512],
-    # iconAnchor=[256, 512],
-    iconSize=np.array([512, 512])/18,
-    # iconAnchor=np.array([256, 512])/8,
-    # iconSize=[128, 128],
-    # iconAnchor=[0, 0],
-)
-
-# Theme toggle button
-theme_toggle = dmc.ActionIcon(
-    [
-        dmc.Paper(DashIconify(icon="radix-icons:moon", width=25), darkHidden=True),
-        dmc.Paper(DashIconify(icon="radix-icons:sun", width=25), lightHidden=True),
-    ],
-    variant="transparent",
-    color="yellow",
-    id="color-scheme-toggle",
-    size="lg",
+from architeuthis.share import (
+    ROUTE_COLORS,
+    VARIABLES,
+    build_scene,
+    default_variables,
+    maplibre_files,
+    png_data_uri,
+    route_labels,
+    segment_variables,
+    viewer_html,
 )
 
 # ---------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------
-SFC_URL = "https://ocean.weather.gov/shtml/A_full_00hrsfc.gif"
-SFC_OUTPUT = Path("assets/noaa_overlay.png")  # Dash auto-serves assets/
-WHITE_THRESHOLD = 250  # RGB threshold for "white"
 
+DEFAULT_MEMBER = 1
 
-# ---------------------------------------------------------------------
-# Image preprocessing
-# ---------------------------------------------------------------------
-def remove_white_pixels(
-    image_url: str,
-    output_path: Path,
-    threshold: int = 240,
-):
-    """
-    Download an image and make its white pixels transparent.
+PRODUCT = "oper"
+MODELS = ["ifs", "gfs"]
 
-    Args:
-        image_url: Address of the image.
-        output_path: Path of the file to write.
-        threshold: Value of the three channels above which a pixel
-            counts as white.
-    """
-    response = requests.get(image_url, timeout=30)
-    response.raise_for_status()
+# PRODUCT = "enfo"
+# MODELS = ["ifs"]
 
-    img = Image.open(BytesIO(response.content)).convert("RGBA")
-    data = np.array(img)
-
-    r, g, b, a = np.rollaxis(data, axis=-1)
-
-    white_mask = (
-        (r >= threshold) &
-        (g >= threshold) &
-        (b >= threshold)
-    )
-
-    data[white_mask, 3] = 0  # set alpha channel to transparent
-
-    Image.fromarray(data, mode="RGBA").save(output_path)
-
-
-# Generate processed image once at startup
-SFC_OUTPUT.parent.mkdir(exist_ok=True)
-remove_white_pixels(SFC_URL, SFC_OUTPUT, WHITE_THRESHOLD)
-
-
-
-#%% PARAMETERS
-    
-# minimum_longitude=-80.
-# maximum_longitude=0.
-# minimum_latitude=30.
-# maximum_latitude=60.
-
-minimum_longitude=-70
-maximum_longitude=5.
-minimum_latitude=30.
-maximum_latitude=60.
+minimum_longitude = -70
+maximum_longitude = 5.
+minimum_latitude = 30.
+maximum_latitude = 60.
 
 # minimum_longitude=-90.
 # maximum_longitude=-72.
 # minimum_latitude=9.
 # maximum_latitude=18.
 
-# minimum_longitude=-90.
-# maximum_longitude=-50.
-# minimum_latitude=10.
-# maximum_latitude=50.
-
 steps_00_12 = list(range(0, 145, 3)) + list(range(150, 361, 6))
 
-# # departure = np.array([36.995605446063365, -75.94119037659861]) # Chesapeake exit
-# arrival = np.array([46.921716725164956, -2.976149174402496]) # Montoir pilot
-# # arrival = np.array([36.995605446063365, -75.94119037659861]) # Chesapeake exit
-# # departure = np.array([46.921716725164956, -2.976149174402496]) # Montoir pilot
-# departure = np.array([46.781, -56.091]) # SPM pilot
-# # arrival = np.array([46.781, -56.091]) # SPM pilot
-
-# etd = pd.to_datetime("2026-01-25T01:00").timestamp()
-# eta = pd.to_datetime("2026-02-02T23:00").timestamp()
-# # eta = pd.to_datetime("2026-02-05T23:00").timestamp()
-# # eta = pd.to_datetime("2026-01-22T12:00").timestamp()
+# NOAA's analysis of the North Atlantic surface, drawn between these corners.
+SFC_URL = "https://ocean.weather.gov/shtml/A_full_00hrsfc.gif"
+SFC_BOUNDS = [[65.15, -100.0], [14.4, 10.0]]
+WHITE_THRESHOLD = 250  # RGB threshold for "white"
 
 
+# ---------------------------------------------------------------------
+# NOAA surface analysis
+# ---------------------------------------------------------------------
+def remove_white_pixels(
+    image: bytes,
+    threshold: int = 240,
+) -> bytes:
+    """
+    Make the white pixels of an image transparent.
 
-#%% BUILD WIND INTERPOLATORS
+    Args:
+        image: The image file, in any format Pillow reads.
+        threshold: Value of the three channels above which a pixel
+            counts as white.
 
-# mirror_date = pd.Timestamp('2026-02-12 00:00:00')
-# mirror_end = pd.Timestamp('2026-01-31 23:00:00')
+    Returns:
+        The image as PNG bytes.
+    """
+    data = np.array(Image.open(io.BytesIO(image)).convert("RGBA"))
+    white = (data[..., 0] >= threshold) & (data[..., 1] >= threshold) & (data[..., 2] >= threshold)
+    data[white, 3] = 0  # set alpha channel to transparent
+
+    buffer = io.BytesIO()
+    Image.fromarray(data, mode="RGBA").save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def analysis_time(last_modified):
+    """
+    The valid time of the NOAA analysis, from the date of its file.
+
+    The chart gives its time only in its picture. It is drawn every
+    6 hours and published about 2 hours later: its time is taken as
+    the last synoptic hour at least 1.5 hours before the file changed.
+
+    Args:
+        last_modified: The `Last-Modified` header of the chart, or
+            None.
+
+    Returns:
+        The valid time as a UTC `pd.Timestamp`, or None if unknown.
+    """
+    if not last_modified:
+        return None
+    try:
+        written = pd.Timestamp(parsedate_to_datetime(last_modified))
+    except (TypeError, ValueError):
+        return None
+    written = written.tz_localize("UTC") if written.tzinfo is None else written.tz_convert("UTC")
+    # A datetime.timedelta: pd.Timedelta warns with NumPy 2.5.
+    return (written - timedelta(minutes=90)).floor("6h")
+
+
+def noaa_chart():
+    """
+    The latest NOAA surface analysis and its valid time.
+
+    Returns:
+        The chart as PNG bytes with white made transparent, and its
+        time from `analysis_time`; None and None if unavailable.
+    """
+    try:
+        response = requests.get(SFC_URL, timeout=30)
+        response.raise_for_status()
+        chart = remove_white_pixels(response.content, WHITE_THRESHOLD)
+    except (requests.RequestException, OSError) as error:
+        status(f"⚠️ NOAA surface analysis unavailable: {error}")
+        return None, None
+    return chart, analysis_time(response.headers.get("Last-Modified"))
+
+
+NOAA_CHART, NOAA_TIME = noaa_chart()
+
+
+#%% FORECASTS
 
 recent = pd.Timestamp("now").floor("1d8h").floor("1d")
 # recent = pd.Timestamp('2026-11-08 00:00:00')
 
 ATMOS = {}
+WAVE = {}
+domain = dict(
+    min_lon=minimum_longitude, max_lon=maximum_longitude,
+    min_lat=minimum_latitude, max_lat=maximum_latitude,
+    date=recent,
+)
 
-# # IFS atmospheric data
 if PRODUCT == "oper":
-    # IFS atmospheric data
     ATMOS["ifs"] = DeterministicHerbieForecast(
-        "wind_ifs", model="ifs", product="oper", regex=r":10[u|v]:|:msl:", fxx=steps_00_12,
-        min_lon=minimum_longitude, max_lon=maximum_longitude,
-        min_lat=minimum_latitude, max_lat=maximum_latitude,
-        date=recent,
+        "wind_ifs", model="ifs", product="oper", regex=r":10[u|v]:|:msl:", fxx=steps_00_12, **domain,
     )
-    # GFS atmospheric data
     ATMOS["gfs"] = DeterministicHerbieForecast(
-        "wind_gfs", model="gfs", product="pgrb2.0p25", regex=r"(?:U|V)GRD:10 m|PRMSL", fxx=steps_00_12,
-        min_lon=minimum_longitude, max_lon=maximum_longitude,
-        min_lat=minimum_latitude, max_lat=maximum_latitude,
-        date=recent,
+        "wind_gfs", model="gfs", product="pgrb2.0p25", regex=r"(?:U|V)GRD:10 m|PRMSL", fxx=steps_00_12, **domain,
     )
-    
+    WAVE["ifs"] = DeterministicHerbieForecast(
+        "wave_ifs", model="ifs", product="wave", regex=r":swh:|:mwd:", fxx=steps_00_12, **domain,
+    )
+    WAVE["gfs"] = DeterministicHerbieForecast(
+        "wave_gfs", model="gfs_wave", product="global.0p25", regex=r":HTSGW:|:DIRPW:", fxx=steps_00_12, **domain,
+    )
 elif PRODUCT == "enfo":
     ATMOS["ifs"] = EnsembleHerbieForecast(
-        "wind_ens", model="ifs", product="enfo", regex=r":10[u|v]:|:msl:", fxx=steps_00_12,
-        min_lon=minimum_longitude, max_lon=maximum_longitude,
-        min_lat=minimum_latitude, max_lat=maximum_latitude,
-        date=recent,
+        "wind_ens", model="ifs", product="enfo", regex=r":10[u|v]:|:msl:", fxx=steps_00_12, **domain,
+    )
+    WAVE["ifs"] = EnsembleHerbieForecast(
+        "wave_ens", model="ifs", product="waef", regex=r":swh:|:mwd:", fxx=steps_00_12, **domain,
     )
 else:
-    raise(ValueError, "PRODUCT should be in ['enfo', 'oper']")
-
+    raise ValueError("PRODUCT should be in ['enfo', 'oper']")
 
 for model in MODELS:
     ATMOS[model].load_data()
-    
-if PRODUCT == "oper":
-    ATMOS["gfs"].data["msl"] = ATMOS["gfs"].data["prmsl"] # TODO find a better fix
-
-# atmos.add_interpolator("u10", "valid_time", "latitude", "longitude")
-# atmos.add_interpolator("v10", "valid_time", "latitude", "longitude")
-
-
-#%% BUILD WAVE INTERPOLATORS
-
-# # IFS ocean data
-# wave = DeterministicHerbieForecast(
-#     "wave", model="ifs", product="wave", regex=r":swh:|:mwd:", fxx=steps_00_12,
-#     min_lon=minimum_longitude, max_lon=maximum_longitude,
-#     min_lat=minimum_latitude, max_lat=maximum_latitude,
-#     # date=mirror_date
-# )
-
-
-# recent = pd.Timestamp("now").floor("1d")
-# recent = pd.Timestamp('2026-11-08 00:00:00')
-
-WAVE = {}
-
-# # IFS atmospheric data
-if PRODUCT == "oper":
-    # IFS wave data
-    WAVE["ifs"] = DeterministicHerbieForecast(
-        "wave_ifs", model="ifs", product="wave", regex=r":swh:|:mwd:", fxx=steps_00_12,
-        min_lon=minimum_longitude, max_lon=maximum_longitude,
-        min_lat=minimum_latitude, max_lat=maximum_latitude,
-        date=recent,
-    )
-    # GFS wave data
-    WAVE["gfs"] = DeterministicHerbieForecast(
-        "wave_gfs", model="gfs_wave", product="global.0p25", regex=r":HTSGW:|:DIRPW:", fxx=steps_00_12,
-        min_lon=minimum_longitude, max_lon=maximum_longitude,
-        min_lat=minimum_latitude, max_lat=maximum_latitude,
-        date=recent
-    )
-elif PRODUCT == "enfo":
-    WAVE["ifs"] = EnsembleHerbieForecast(
-        "wave_ens", model="ifs", product="waef", regex=r":swh:|:mwd:", fxx=steps_00_12,
-        min_lon=minimum_longitude, max_lon=maximum_longitude,
-        min_lat=minimum_latitude, max_lat=maximum_latitude,
-        date=recent,
-    )
-else:
-    raise(ValueError, "PRODUCT should be in ['enfo', 'oper']")
-
-for model in MODELS:
     WAVE[model].load_data()
-    
-if PRODUCT == "oper":
-    WAVE["gfs"].data["mwd"] = WAVE["gfs"].data["dirpw"] # TODO find a better fix
 
-# wave.add_interpolator("swh", "valid_time", "latitude", "longitude")
-# wave.add_interpolator("mwd", "valid_time", "latitude", "longitude")
-
-
-#%% BUILD CURRENT INTERPOLATORS
-
-# # Mercator SMOC data
-# current = CopernicusForecast("current", dataset="cmems_mod_glo_phy_anfc_0.083deg_PT1H-m", variables=["uo", "vo"],
-#                              min_lon=minimum_longitude, max_lon=maximum_longitude,
-#                              min_lat=minimum_latitude, max_lat=maximum_latitude,
-#                              date=mirror_date, end=mirror_end)
-# current.load_data()
-
-# # current.add_interpolator("uo", "time", "latitude", "longitude", latitude_slice=slice(None, None, 10))
-# # current.add_interpolator("vo", "time", "latitude", "longitude", latitude_slice=slice(None, None, 10))
-
-
-#%% BUILD TOPOGRAPHY
-
-# topo = Topography("topo", depth_offset=10.,
-#                   min_lon=minimum_longitude, max_lon=maximum_longitude,
-#                   min_lat=minimum_latitude, max_lat=maximum_latitude,)
-# topo.load_data()
-
-# # topo.add_interpolator(
-# #     "distance_to_iso0",
-# #     "latitude_topography_earth2014_egm2008_lmax_2048_lmax_2048",
-# #     "longitude_topography_earth2014_egm2008_lmax_2048_lmax_2048",
-# #     var_key="z"
-# # )
-
-#%%
-
+# One dataset per model, the waves on the grid of the wind. share.py reads the GFS names
+# (prmsl, dirpw) as well as the IFS ones.
 DS = {}
-
-if PRODUCT == "oper":
-    for model in MODELS:
-        for model in MODELS:
-            atm = ATMOS[model].data
-            wav = WAVE[model].data
-            DS[model] = xr.merge(
-                [atm, wav.interp_like(atm)],
-                    join="exact",
-                    compat="no_conflicts",
-                ).expand_dims({"number": [1]})
-elif PRODUCT == "enfo":
-    for model in MODELS:    
-            atm = ATMOS[model].data
-            wav = WAVE[model].data
-            DS[model] = xr.merge(
-                [atm, wav.interp_like(atm)],
-                join="exact",
-                compat="no_conflicts",
-            )
-else:
-    raise(ValueError, "PRODUCT should be in ['enfo', 'oper']")
-
 for model in MODELS:
-    DS[model].herbie.with_wind()
+    atmosphere = ATMOS[model].data
+    DS[model] = xr.merge(
+        [atmosphere, WAVE[model].data.interp_like(atmosphere)],
+        join="exact",
+        compat="no_conflicts",
+    )
 
-times = pd.to_datetime(DS[MODELS[0]][TIME_DIM].to_numpy().astype("datetime64[s]"))
+FORECASTS = {model.upper(): DS[model] for model in MODELS}
 
-marks = [
-    {"value":i, "label":  t.strftime("%Y-%m-%d")}
-    for i, t in enumerate(times)
-    if t.hour == 0 and t.minute == 0 and t.second == 0
-]
+
+#%% ROUTES AND ZONES
 
 ROUTES_DIR = Path(_HOME, "routes")
 
-# Select most recently modified file
+# The most recently modified file is shown first
 latest_file = latest_report_file(ROUTES_DIR)
-
 reports = ReportCollection.load(latest_file)
 
-# The latest iceberg limit, and the zones you stored in ~/data/exclusion_zones/
-exclusion_zones = merge_exclusion_zones([iceberg_zone()], ExclusionZoneLibrary())
+def shared_zones() -> list:
+    """
+    The zones of the globe, of which only the iceberg limit shows.
+
+    The latest iceberg limit is shown at first, and the zones stored in
+    `~/data/exclusion_zones/` are hidden at first, whatever their
+    `visible`.
+    """
+    iceberg = iceberg_zone()
+    zones = []
+    for zone in merge_exclusion_zones([iceberg], ExclusionZoneLibrary()):
+        if zone is not iceberg:
+            zone = copy.copy(zone)
+            zone.visible = False
+        zones.append(zone)
+    return zones
 
 
-# Load the GeoJSON file
-with open("./assets/countries-coastline-1km.geo.json") as f:
-    countries_geojson = json.load(f)
+exclusion_zones = shared_zones()
+
+# MapLibre is put in the pages, so that shared files open offline, once downloaded.
+LIBRARY = "inline" if maplibre_files() is not None else "cdn"
 
 
-# Create a GeoJSON layer
-countries_layer = dl.GeoJSON(
-    data=countries_geojson,
-    id="countries-layer",
-    options=dict(style=dict(color="black", weight=0.33)),  # customize border color & weight
-    # hoverStyle=dict(weight=2, color="yellow")          # optional hover effect
-)
+def report_files() -> list:
+    """
+    The report files of `~/data/routes/`, the most recent first.
+    """
+    return sorted(ROUTES_DIR.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
 
-# sanity checks
-for model in MODELS:
-    assert LAT_NAME in DS[model].coords, f"Dataset must have coordinate '{LAT_NAME}'"
-    assert LON_NAME in DS[model].coords, f"Dataset must have coordinate '{LON_NAME}'"
-    assert TIME_DIM in DS[model].dims, f"Dataset must have time dimension '{TIME_DIM}'"
 
-n_time = DS[MODELS[0]].sizes[TIME_DIM]
-vars_available = list(DS[MODELS[0]].data_vars.keys())
-RASTER_VARS = list(set(DEFAULT_RASTER_VARS).intersection(vars_available))
-QUIVER_VARS = list(set(DEFAULT_QUIVER_VARS).intersection(vars_available))
+def report_path(name: str) -> Path:
+    """
+    The path of a report file of `~/data/routes/`, from its name.
 
-app = DashProxy(
-    external_scripts=["https://code.iconify.design/3/3.1.1/iconify.min.js"]
-)
+    Any other name, such as a path outside this folder, raises
+    `FileNotFoundError`.
+    """
+    for path in report_files():
+        if path.name == name:
+            return path
+    raise FileNotFoundError(name)
 
+
+def load_reports(name: str) -> ReportCollection:
+    """
+    The reports of a file of `~/data/routes/`.
+    """
+    return ReportCollection.load(report_path(name))
+
+
+def default_routes(collection) -> list:
+    """
+    Identifiers of the routes shared by default: the optimized ones.
+
+    All of them when none is optimized.
+    """
+    optimized = [f"r{index}" for index, report in enumerate(collection) if report.get("solve")]
+    return optimized or [f"r{index}" for index in range(len(collection))]
+
+
+def default_title(collection) -> str:
+    """
+    The title of a share file, from the first departure.
+    """
+    if not len(collection):
+        return "Routes"
+    etd = min(pd.to_datetime(report["etd"], unit="s") for report in collection)
+    return f"Routes departing {etd:%d %b %Y}"
+
+
+def all_variables(collection) -> list:
+    """
+    The per-segment variables of any report, defaults first.
+    """
+    found = []
+    for report in collection:
+        found += [name for name in segment_variables(report) if name not in found]
+    defaults = default_variables(collection)
+    return defaults + [name for name in found if name not in defaults]
+
+
+def overlays() -> list:
+    """
+    The images that can be drawn over the map: the NOAA analysis.
+    """
+    if NOAA_CHART is None:
+        return []
+    return [
+        {
+            "label": "NOAA surface analysis",
+            "url": png_data_uri(NOAA_CHART),
+            "bounds": SFC_BOUNDS,
+            "visible": True,
+            "time": NOAA_TIME,
+        }
+    ]
+
+
+def noaa_label() -> str:
+    """
+    The label of the NOAA analysis, with its valid time.
+    """
+    if NOAA_CHART is None:
+        return "NOAA surface analysis (unavailable)"
+    if NOAA_TIME is None:
+        return "NOAA surface analysis"
+    return f"NOAA surface analysis, {NOAA_TIME:%a %d %H} UTC"
+
+
+_preview = {}
+
+
+def preview_scene(name: str, member: int) -> dict:
+    """
+    The scene of the preview: every route, variable and forecast.
+
+    The analyst's choices are sent to the page as they change. The
+    scene of the last file and member is kept.
+    """
+    path = report_path(name)
+    key = (path.name, path.stat().st_mtime, member)
+    if key not in _preview:
+        collection = ReportCollection.load(path)
+        _preview.clear()
+        _preview[key] = build_scene(
+            collection,
+            forecasts=FORECASTS,
+            variables=all_variables(collection),
+            zones=exclusion_zones,
+            overlays=overlays(),
+            title=default_title(collection),
+            member=member,
+            settings={
+                "routes": default_routes(collection),
+                "hover": default_variables(collection),
+                "overlays": [],
+            },
+        )
+    return _preview[key]
+
+
+def viewer_url(name: str, member: int = DEFAULT_MEMBER) -> str:
+    """
+    The address of the preview of a report file.
+    """
+    return f"/viewer?file={quote(name)}&member={member}"
+
+
+# ---------------------------------------------------------------------
+# Server
+# ---------------------------------------------------------------------
+
+# The page needs no asset of its own: the viewer brings its style and scripts.
+app = Dash(__name__, title="Architeuthis", assets_ignore=r".*", update_title=None)
 server = app.server
 
-@server.route("/wind_arrows.geojson")
-def wind_arrows():
+
+@server.route("/viewer")
+def viewer():
     """
-    Serve arrows representing wind vectors, as GeoJSON.
+    The viewer of a report file, as it will be shared.
 
-    Returns a GeoJSON FeatureCollection containing arrows representing
-    wind vectors for a given time index. Arrow length and thickness
-    scale with wind speed.
+    The query gives `file`, a name in `~/data/routes/`, and `member`.
     """
-    time_index = int(request.args.get("time", "0"))
-    qvar = request.args.get("qvar", DEFAULT_QUIVER_VAR)
-    density = int(request.args.get("density", "10"))
-    m = int(request.args.get("member", DEFAULT_MEMBER))
-    model = request.args.get("model", DEFAULT_MODEL)
-    
-    # print(m)
-    
-    q = DS[model][qvar].isel({TIME_DIM: time_index}).sel({MEMBER_DIM: m})
-    s = DS[model][dir_to_speed[qvar]].isel({TIME_DIM: time_index}).sel({MEMBER_DIM: m})
-    
-    q_arr = np.asarray(q.values)
-    s_arr = np.asarray(s.values)
-    
-    lats = np.asarray(DS[model][LAT_NAME].values)
-    lons = np.asarray(DS[model][LON_NAME].values)
-
-    lat_idx = np.arange(0, lats.size, max(1, density))
-    lon_idx = np.arange(0, lons.size, max(1, density))
-
-    features = []
-    for i in lat_idx:
-        for j in lon_idx:
-            try:
-                lat = float(lats[i])
-                lon = float(lons[j])
-                qq = float(q_arr[i, j])
-                ss = float(s_arr[i, j])
-            except Exception:
-                continue
-            
-
-            # Skip calm wind to avoid clutter
-            if ss < 0.1:
-                continue
-
-            # ------------------------------------------------------------
-            # Arrow geometry
-            # ------------------------------------------------------------
-            # Length scales with speed (adjust factor for your map units)
-            length_scale = 0.03   # degrees per (m/s), tune to your taste
-            L = ss * length_scale
-            
-            uu = -np.sind(qq) * ss
-            vv = -np.cosd(qq) * ss
-
-            # Compute normalized direction
-            dx = (uu / ss) * L
-            dy = (vv / ss) * L
-
-            # Arrow shaft: start → end
-            x0, y0 = lon - dx/2., lat - dy/2.
-            x1, y1 = lon + dx/2., lat + dy/2.
-
-            # ------------------------------------------------------------
-            # Arrowhead (optional)
-            # ------------------------------------------------------------
-            # Small triangle at the tip
-            head_scale = 0.4 * L
-            hx = x1 - dx * 0.2
-            hy = y1 - dy * 0.2
-
-            # perpendicular vector
-            px = -dy * 0.15
-            py = dx * 0.15
-
-            # Triangle points
-            head_left = [hx + px, hy + py]
-            head_right = [hx - px, hy - py]
-
-            # Full arrow coordinates (shaft + triangle)
-            coords = [
-                [x0, y0],
-                [x1, y1],
-                head_left,
-                [x1, y1],
-                head_right
-            ]
-
-            # ------------------------------------------------------------
-            # GeoJSON features
-            # ------------------------------------------------------------
-            feature = {
-                "type": "Feature",
-                "geometry": {
-                    "type": "LineString",
-                    "coordinates": coords
-                },
-                "properties": {
-                    "u": uu,
-                    "v": vv,
-                    "speed": ss,
-                    # thickness proportional to speed
-                    "weight": max(1, ss * 10),
-                    # color suggestions (override in Dash)
-                    "color": "#3182bd",
-                    # direction bearing (optional)
-                    "bearing": (qq+180) % 360
-                }
-            }
-
-            features.append(feature)
-
-    return jsonify({"type": "FeatureCollection", "features": features})
+    name = request.args.get("file", latest_file.name)
+    try:
+        member = int(request.args.get("member", DEFAULT_MEMBER))
+        scene = preview_scene(name, member)
+    except (FileNotFoundError, ValueError):
+        abort(404)
+    return Response(viewer_html(scene, library=LIBRARY), mimetype="text/html")
 
 
-@server.route("/contour_field.geojson")
-def contour_field():
+# ---------------------------------------------------------------------
+# Layout
+# ---------------------------------------------------------------------
+
+
+def file_options() -> list:
     """
-    Serve the contours of a field as GeoJSON.
-
-    The query gives `var`, `time`, `member` and `model`. Values are
-    divided by 100 and the levels are 2 apart.
+    The report files as options, with their date.
     """
-    var = request.args.get("var", DEFAULT_VECTOR_VAR)
-    t   = int(request.args.get("time", 0))
-    m   = int(request.args.get("member", DEFAULT_MEMBER))
-    model = request.args.get("model", DEFAULT_MODEL)
-
-    da = DS[model][var].isel({TIME_DIM: t}).sel({MEMBER_DIM: m}).values / 1e2
-    lats = DS[model][LAT_NAME].values
-    lons = DS[model][LON_NAME].values
-    
-    # lons, lats = lonlat_to_web_mercator(lons, lats)
-    
-    vmin = np.nanmin(da)
-    vmax = np.nanmax(da)
-    delta = 2  # contour every 10 units
-    levels = np.arange(np.floor(vmin / delta) * delta,
-                       np.ceil(vmax / delta) * delta + 1,
-                       delta)
-        
-    X, Y = np.meshgrid(lons, lats)
-    
-    fig = plt.figure(figsize=(6,4), dpi=50)
-    # ax = plt.axes(projection=ccrs.PlateCarree())
-    # cs = ax.contour(X, Y, da, levels=levels, colors='black',)
-    ax  = plt.axes()  # IMPORTANT: no projection → raw mercator coords
-    cs = ax.contourf(X, Y, da, levels=levels, colors='black',)
-    
-    plt.close(fig)   # avoid rendering
-
-    # --- Convert contour to GeoJSON manually ---
-    features = []
-
-    for i_level, (path, level) in enumerate(zip(cs.get_paths(), cs.levels)):
-
-        # path = cs.get_paths()[i_level]
-        # Path may contain multiple polygons/subpaths
-        for poly in path.to_polygons():
-            if len(poly) < 2:
-                continue
-
-            # poly = Nx2 array (x,y) already in EPSG:3857
-            coords = poly.tolist()
-
-            feature = {
-                "type": "Feature",
-                "properties": {
-                    "value": float(level),
-                    "stroke": "#FFFFFF",
-                    "stroke-width": 1,
-                },
-                "geometry": {
-                    "type": "LineString",
-                    "coordinates": coords,
-                },
-            }
-
-            features.append(feature)
-
-    return jsonify({"type": "FeatureCollection", "features": features})
+    return [
+        {
+            "value": path.name,
+            "label": f"{path.stem} · {pd.Timestamp(path.stat().st_mtime, unit='s'):%d %b %H:%M}",
+        }
+        for path in report_files()
+    ]
 
 
-@server.route("/raster.png")
-def raster_png():
+def route_options(collection) -> list:
     """
-    Serve a field as a PNG image in the Mercator projection.
+    One checkbox per route, with its colour, fuel and distance.
 
-    The query gives `var`, `time`, `member` and `model`. `swh` uses the
-    wave colormap and other variables the wind one.
+    Under each, a box takes the description of the route for the crew.
     """
-    var = request.args.get("var", DEFAULT_RASTER_VAR)
-    t   = int(request.args.get("time", 0))
-    m   = int(request.args.get("member", DEFAULT_MEMBER))
-    model = request.args.get("model", DEFAULT_MODEL)
-
-    da = DS[model][var].isel({TIME_DIM: t}).sel({MEMBER_DIM: m}).values
-    lats = DS[model][LAT_NAME].values
-    lons = DS[model][LON_NAME].values
-    
-    lons, lats = lonlat_to_web_mercator(lons, lats)
-    
-    # sp = ds[DEFAULT_VECTOR_VAR].isel({TIME_DIM: t}).sel({MEMBER_DIM: m}).values / 100.
-    
-    # vmin = np.nanmin(sp)
-    # vmax = np.nanmax(sp)
-    # delta = 10  # contour every 15 units
-    # levels = np.arange(np.floor(vmin / delta) * delta,
-    #                    np.ceil(vmax / delta) * delta + 1,
-    #                    delta)
-        
-    X, Y = np.meshgrid(lons, lats)
-    
-    if var == 'swh':
-        cmap, norm = get_wave_cmap()
-    else:
-        cmap, norm = get_wind_cmap()
-
-    # Matplotlib figure to buffer
-    fig = plt.figure(figsize=(6,4), dpi=100)
-    ax = plt.axes(projection=ccrs.Mercator())
-    
-    # Plot the data in lat/lon
-    # pc = ax.imshow(da, origin="lower", extent=[lons.min(), lons.max(), lats.min(), lats.max()], cmap=cmap, norm=norm,)# transform=ccrs.PlateCarree())
-    pc = ax.pcolormesh(lons, lats, da, cmap=cmap, norm=norm,)# transform=ccrs.PlateCarree())
-    # pc = ax.contourf(X, Y, da, cmap=cmap, norm=norm,)# transform=ccrs.PlateCarree())
-    # cs = ax.contour(lons, lats, da, colors='white',)# transform=ccrs.PlateCarree())
-    # cs = ax.contour(lons, lats, sp, levels=levels, colors='white')# transform=ccrs.PlateCarree())
-    
-    ax.axis('off')
-    plt.axis("off")
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", bbox_inches="tight", pad_inches=0)
-    plt.close(fig)
-    buf.seek(0)
-    return send_file(buf, mimetype="image/png")
-
-
-
-def discrete_cmap_hex(
-    cmap_name: str,
-    n: int,
-):
-    """
-    Return n discrete colors sampled from a matplotlib colormap.
-
-    The colors are hex strings.
-    """
-    cmap = plt.get_cmap(cmap_name, n)
-    return [mcolors.to_hex(cmap(i)) for i in range(n)]
-
-
-COLORS = discrete_cmap_hex("nipy_spectral", len(reports))
-
-def create_report_overlays(
-    reports,
-    valid_time=0,
-):
-    """
-    One map overlay per report, checked if the report was optimized.
-
-    Args:
-        reports: The reports, one color of `COLORS` each.
-        valid_time: Time at which each route shows its position.
-
-    Returns:
-        A list of `dl.Overlay`.
-    """
-    overlays = []
-
-    for i, (report, color) in enumerate(zip(reports, COLORS)):
-        overlays.append(
-            dl.Overlay(
-                id=f"overlay-{i}",
-                children=dl.GeoJSON(
-                    id=f"route-geojson-{i}",
-                    data=route_to_geojson(
-                        report,
-                        valid_time=valid_time,
-                        color=color,
+    options = []
+    for index, (report, label) in enumerate(zip(collection, route_labels(collection))):
+        color = ROUTE_COLORS[index % len(ROUTE_COLORS)]
+        details = []
+        if report.get("fuel") is not None:
+            details.append(f"{report['fuel']:.1f} t")
+        if report.get("dist") is not None:
+            details.append(f"{report['dist']:.0f} nm")
+        badges = []
+        if report.get("status") == 2:
+            badges.append(dmc.Badge("not converged", color="orange", variant="light", size="xs"))
+        # z is positive on land, in shallow water and inside exclusion zones.
+        if "z" in report and float(np.max(report["z"])) > 0:
+            badges.append(dmc.Badge("land or zone", color="red", variant="light", size="xs"))
+        description = report.get("description")
+        options.append(
+            dmc.Stack(
+                [
+                    dmc.Checkbox(
+                        value=f"r{index}",
+                        label=dmc.Group(
+                            [
+                                html.Span(style={"display": "inline-block", "width": 16, "height": 4, "borderRadius": 2, "background": color}),
+                                dmc.Text(label, size="sm", fw=600),
+                                *badges,
+                            ],
+                            gap=6,
+                            wrap="nowrap",
+                        ),
+                        description=" · ".join(details),
                     ),
-                    pointToLayer=point_to_layer,
-                    style=style_func,
-                    zoomToBounds=False,
-                ),
-                name=(
-                    f"{report['model']} "
-                    f"{report['init_fac']} "
-                    f"{str(report['vessel']).removeprefix('eff')} "
-                    f"{report['fuel']:.1f} "
-                    f"m{report['member']}"
-                ),
-                checked=bool(report["solve"]),
+                    dmc.Textarea(
+                        id={"type": "route-description", "index": index},
+                        placeholder="Description of this route for the crew",
+                        value=description if isinstance(description, str) else "",
+                        autosize=True,
+                        minRows=1,
+                        maxRows=6,
+                        size="xs",
+                        ml=32,
+                    ),
+                ],
+                gap=4,
             )
         )
-
-    return overlays
-
-
-# def create_report_overlays(reports, valid_time=0):
-#     overlays = []
-#     for i, report in enumerate(reports):
-#         overlays.append(
-#             dl.Overlay(
-#                 id=f"overlay-{i}",
-#                 children=dl.GeoJSON(
-#                     id=f"route-geojson-{i}",
-#                     data=route_to_geojson(report, valid_time=valid_time),
-#                     pointToLayer=point_to_layer,
-#                     style=style_func,
-#                     zoomToBounds=False,
-#                 ),
-#                 name=f"{report['model']} {report['init_fac']} {report['vessel'][3:]} {report['fuel']:.1f}",
-#                 checked=True  # Overlay visible by default
-#             )
-#         )
-#     return overlays
+    return options
 
 
-image_bounds = [[40.712216, -74.22655], [40.773941, -74.12544]]
+def variable_options(collection) -> list:
+    """
+    The tooltip variables as options, with their description.
+    """
+    options = []
+    for name in all_variables(collection):
+        label, unit, _, description = VARIABLES.get(name, (name, "", 2, name))
+        options.append({"value": name, "label": f"{label} · {description}" + (f" ({unit})" if unit else "")})
+    return options
 
-# Prepare dropdown variables
-varlist = vars_available
-initial_raster = DEFAULT_RASTER_VAR if DEFAULT_RASTER_VAR in RASTER_VARS else RASTER_VARS[0]
-initial_quiver = DEFAULT_QUIVER_VAR if DEFAULT_QUIVER_VAR in QUIVER_VARS else QUIVER_VARS[0]
 
-iconUrl = "/assets/icons/ic--sharp-keyboard-arrow-up.png"
-size = np.array([512, 512])/10
-marker = dict(rotate=True, markerOptions=dict(icon=dict(iconUrl=iconUrl, iconSize=size, iconAnchor=size/2)))
+def section(title, *children):
+    """
+    A titled group of controls.
+    """
+    return dmc.Stack([dmc.Text(title, size="xs", fw=700, c="dimmed", tt="uppercase"), *children], gap=6)
 
-patterns = [
-    dict(repeat="10", dash=dict(pixelSize=5, pathOptions=dict(color="#fff", weight=1, opacity=0.9))),
-    dict(offset="0%", repeat="10%", marker=marker),
-]
-rotated_markers = dl.PolylineDecorator(
-    id="route",
-    positions=reports[0]["pos"],
-    patterns=patterns,
+
+sidebar = dmc.Stack(
+    gap="lg",
+    children=[
+        dmc.Stack(
+            gap=2,
+            children=[
+                dmc.Group(
+                    [
+                        dmc.Title("Share routes", order=3),
+                        dmc.Switch(id="theme-switch", label="Light map", checked=False, size="sm"),
+                    ],
+                    justify="space-between",
+                ),
+                dmc.Text(
+                    "Choose what the crew will see, then download one HTML file. "
+                    "It opens in any browser, offline.",
+                    size="sm",
+                    c="dimmed",
+                ),
+            ],
+        ),
+        dmc.Select(
+            id="file-select",
+            label="Routes file",
+            data=file_options(),
+            value=latest_file.name,
+            allowDeselect=False,
+        ),
+        section(
+            "Message",
+            dmc.TextInput(id="title-input", placeholder="Title", value=default_title(reports)),
+            dmc.Textarea(
+                id="note-input",
+                placeholder="Note to the crew, shown under the title",
+                autosize=True,
+                minRows=2,
+                maxRows=8,
+            ),
+        ),
+        section(
+            "Routes to share",
+            dmc.Group(
+                [
+                    dmc.Button("Optimized", id="routes-optimized", variant="subtle", size="compact-xs"),
+                    dmc.Button("All", id="routes-all", variant="subtle", size="compact-xs"),
+                    dmc.Button("None", id="routes-none", variant="subtle", size="compact-xs"),
+                ],
+                gap=4,
+            ),
+            dmc.CheckboxGroup(
+                id="routes-select",
+                children=dmc.Stack(route_options(reports), gap=10, id="routes-options"),
+                value=default_routes(reports),
+            ),
+            dmc.Text(
+                "Click a point of a route in the preview to comment on it: "
+                "the crew reads the comment there.",
+                size="xs",
+                c="dimmed",
+            ),
+        ),
+        section(
+            "Tooltips",
+            dmc.MultiSelect(
+                id="hover-select",
+                placeholder="Variables shown on the routes",
+                data=variable_options(reports),
+                value=default_variables(reports),
+                searchable=True,
+                clearable=True,
+                hidePickedOptions=True,
+            ),
+        ),
+        section(
+            "Weather",
+            dmc.CheckboxGroup(
+                id="sources-select",
+                children=dmc.Group([dmc.Checkbox(label=model.upper(), value=model) for model in MODELS]),
+                value=list(MODELS),
+            ),
+            html.Div(
+                dmc.NumberInput(
+                    id="member-select",
+                    label="Ensemble member",
+                    value=DEFAULT_MEMBER,
+                    min=0,
+                    max=50,
+                    w=160,
+                ),
+                # Deterministic forecasts have a single member.
+                style={"display": "block" if PRODUCT == "enfo" else "none"},
+            ),
+            dmc.Checkbox(
+                id="noaa-check",
+                label=noaa_label(),
+                description="Valid time estimated from the date of the file" if NOAA_TIME is not None else None,
+                checked=False,
+                disabled=NOAA_CHART is None,
+            ),
+        ),
+        dmc.Stack(
+            gap=4,
+            children=[
+                dmc.Button("Download the share file", id="download-button", fullWidth=True, size="md"),
+                dmc.Text(id="download-info", size="xs", c="dimmed"),
+                dcc.Download(id="download"),
+            ],
+        ),
+    ],
 )
 
 app.layout = dmc.MantineProvider(
-    id="mantine-provider",
-    children=[
-        dcc.Store(id="theme-store", data="light"),
-        
-        dcc.Store(id="model-store",),
-        dcc.Store(id="product-store",),
-        dcc.Store(id="dataset-store"),
-        
-        dmc.Drawer(
-            title="OPTIONS",
-            id="options-drawer",
-            padding="md",
-            position="right",
-            children=dmc.Stack(
-            )
-        ),
-        
-        dmc.Paper([
-            dmc.Group([
-                dmc.Group([
-                
-                    dmc.Select(id="model-select", data=[{"label": v, "value": v} for v in MODELS], value=MODELS[0], w=200, label="Model", allowDeselect=False),
-                    dmc.Select(id="product-select", data=[{"label": v, "value": v} for v in [PRODUCT]], value=PRODUCT, w=200, label="Product", allowDeselect=False, disabled=(PRODUCT != "enfo")),
-                    # dmc.Select(id="product-select", data=[{"label": v, "value": v} for v in PRODUCTS[MODELS[0]].keys()], value=list(PRODUCTS[MODELS[0]].keys())[0], w=200, label="Product", allowDeselect=False),
-                    dmc.NumberInput(id="member-select", value=1, min=1, max=50, w=75, label="Member", disabled=(PRODUCT != "enfo")),
-                    
-                    # dmc.ActionIcon([dmc.Paper(DashIconify(icon="material-symbols:downloading", width=25))], id="save-toggle", variant="transparent", size="lg", color="yellow"),
-                    
-                ]),
-                dmc.Group([
-                    dmc.Select(id="raster-var", data=[{"label": v, "value": v} for v in RASTER_VARS], value=initial_raster, w=150, label="Scalar variable", allowDeselect=False),
-                    dmc.Select(id="quiver-var", data=[{"label": v, "value": v} for v in QUIVER_VARS], value=initial_quiver, w=150, label="Directional component", allowDeselect=False),
-                    
-                    # dmc.Image(id="neoline-logo", src="/assets/img/Logo_Neoline_Grand_Picto_RVB.png", w=140),
-                    # dmc.ActionIcon([dmc.Paper(DashIconify(icon="line-md:cog-filled", width=25))], id="options-toggle", variant="transparent", size="lg", color="yellow"),
-                    # theme_toggle,
-                
-                ]),
-            ], grow=True),
-            
-            dmc.Stack([
-                dmc.Group(
-                    children=[
-                        dmc.Slider(
-                            id="time-slider", min=0, max=n_time-1, step=1, value=0,
-                            size="lg", radius="xs",
-                            showLabelOnHover=True, labelAlwaysOn=True,
-                            marks=marks,
-                            # marks = [
-                            #     {"value":i, "label":t.strftime("%b %d")}
-                            #     for i, t in enumerate(pd.to_datetime(ds[TIME_DIM].values))
-                            #     if t.hour == 0 and t.minute == 0 and t.second == 0
-                            # ],
-                            updatemode="drag"
-                        ),
-                    ],
-                    grow=True
-                ),
-                
-                dmc.Group([
-                    dmc.Text(f"Forecast time: {str(DS[MODELS[0]].time.data)[:16]}"),
-                    dmc.Text("Valid time: -", id="fxx-valid-time",),
-                ]),
-            ]),
-        ]),
-        # ], style={"position":"relative","zIndex":"400","background":"rgba(255,255,255,0.9)","padding":"10px","margin":"10px","borderRadius":"6px"}),
-        
-        dmc.Divider(),
-        
-        dmc.Group(
-            dl.Map(
-                id="map",
-                center=[45., -40.],
-                zoom=5,
-                children=[
-                    dl.FeatureGroup([
-                        dl.EditControl(id="edit_control"),
-                        dl.MeasureControl(id="control"),
-                    ]),
-                    dl.ScaleControl(position="bottomleft"),
-                    dl.LayersControl([
-                        dl.BaseLayer(dl.TileLayer(  # base layer
-                            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-                            attribution="© OpenStreetMap contributors"
-                        ), name="base map"),
-                        dl.Overlay(dl.ImageOverlay(
-                            id="raster",
-                            url=f"/raster.png?var={initial_raster}&time=0",
-                            bounds=[
-                                [float(DS[MODELS[0]][LAT_NAME].min()), float(DS[MODELS[0]][LON_NAME].min())],
-                                [float(DS[MODELS[0]][LAT_NAME].max()), float(DS[MODELS[0]][LON_NAME].max())],
-                            ],
-                            zIndex=1,
-                        ), name="contour", checked=True),
-                        # Overlay layer: nautical chart from OpenSeaMap
-                        dl.Overlay(dl.TileLayer(
-                            url="https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",
-                            attribution="© OpenSeaMap contributors",
-                            zIndex=10,
-                        ), name="seamark"),
-                        dl.Overlay(dl.TileLayer(
-                            url="https://tiles.openseamap.org/harbour/{z}/{x}/{y}.png",
-                            attribution="© OpenSeaMap contributors",
-                            zIndex=10,
-                        ), name="harbour"),
-                        dl.Overlay(dl.TileLayer(
-                            url="https://tiles.openseamap.org/light/{z}/{x}/{y}.png",
-                            attribution="© OpenSeaMap contributors",
-                            zIndex=10,
-                        ), name="lights"),
-                        dl.Overlay(dl.TileLayer(
-                            url="https://tiles.openseamap.org/lock/{z}/{x}/{y}.png",
-                            attribution="© OpenSeaMap contributors",
-                            zIndex=10,
-                        ), name="locks"),
-                        # dl.TileLayer(id="tile-layer", url="/tiles/{z}/{x}/{y}.png?var={var}&time={time}"),
-                        dl.Overlay(countries_layer, name="borders", checked=True),
-                        dl.Overlay(dl.GeoJSON(id="field", options=dict(style=dict(color="white", weight=.5))), name="field", checked=True),
-                        dl.Overlay(dl.GeoJSON(id="arrows", options=dict(style=dict(color="white", weight=2.5, opacity=0.75))), name="arrows", checked=True),
-                        
-                        dl.Overlay(
-                            dl.ImageOverlay(
-                                url="/assets/noaa_overlay.png",
-                                bounds=[[65.15, -100], [14.4, 10]],
-                                opacity=1.0,
-                            ),
-                            name="Latest NOAA SFC", checked=False,
-                        ),
-                        dl.Overlay(
-                            dl.ImageOverlay(
-                                url="https://modeles20.meteociel.fr/satellite/animsatirmtgalt.gif",
-                                bounds=[[65.15, -100], [14.5, 10]],
-                                opacity=1.0,
-                            ),
-                            name="EUMETSAT IR gif", checked=False,
-                        ),
-                        
-                        # Iceberg limit and other exclusion zones: see exclusion_zone_overlays below.
-                        # dl.Overlay(
-                        #     dl.GeoJSON(
-                        #         id="berg-limit",
-                        #         data=berg_geojson,
-                        #     ),
-                        #     dl.Polyline(positions=polygon, fill=True, color="#ff0000", fillOpacity=0.2),
-                        #     name="Iceberg limit", checked=True,
-                        # ),
-
-                        # dl.Overlay(rotated_markers, id="active-route", checked=True),
-                        
-                        # dl.GeoJSON(
-                        #     id="route-geojson",
-                        #     data=route_to_geojson(reports[0], valid_time=0),
-                        #     pointToLayer=point_to_layer,
-                        #     style=style_func,
-                        #     zoomToBounds=False,
-                        # ),
-                        
-                        dl.Marker(
-                            id="sensor", position=[45., -40.],
-                            children=dl.Tooltip(id="sensor-tooltip", permanent=True, direction="left", className="weather-tooltip"),
-                            draggable=True, interactive=True, bubblingMouseEvents=True,
-                            # icon=DashIconify(icon="clarity:settings-line", width=200),
-                            icon=weather_icon,
-                        ),
-                    ] + exclusion_zone_overlays(exclusion_zones) + create_report_overlays(reports)
-                    )
-                ],
-                style={"position":"relative", "width":"100%","height":"100%"},
+    id="provider",
+    forceColorScheme="dark",
+    children=html.Div(
+        style={"display": "flex", "height": "100vh", "width": "100vw", "overflow": "hidden"},
+        children=[
+            html.Div(
+                sidebar,
+                style={
+                    "width": 380,
+                    "flex": "none",
+                    "overflowY": "auto",
+                    "padding": "18px 18px 24px",
+                    "background": "var(--mantine-color-body)",
+                    "borderRight": "1px solid var(--mantine-color-default-border)",
+                },
             ),
-            # style={"position":"absolute", 'width': '100%', 'height': '80vh', 'max-height': '80vh', "zIndex": "-1"},
-            style={"position":"absolute", 'width': '100%', 'height': '100%', "zIndex": "-1"},
-        ),
-    ]
+            html.Iframe(
+                id="viewer-frame",
+                src=viewer_url(latest_file.name),
+                title="Preview of the share file",
+                style={"flex": "1", "border": "0", "height": "100%"},
+            ),
+            dcc.Store(id="viewer-settings"),
+            # The analyst's comments on points of the routes, sent by the preview:
+            # {"r<index>": {"<segment>": text}}.
+            dcc.Store(id="route-comments", data={}),
+        ],
+    ),
 )
+
+
+# ---------------------------------------------------------------------
+# Callbacks
+# ---------------------------------------------------------------------
 
 
 @app.callback(
-    Output("sensor-tooltip", "children"),
-    Input("member-select", "value"),
-    Input("sensor", "clickData"),
-    Input("time-slider", "value"),
-    Input("model-select", "value"),
-    State("sensor", "position"),
+    Output("routes-options", "children"),
+    Output("routes-select", "value"),
+    Output("hover-select", "data"),
+    Output("hover-select", "value"),
+    Output("title-input", "value"),
+    Output("route-comments", "data"),
+    Input("file-select", "value"),
+    prevent_initial_call=True,
 )
-def display_data(m, click_data, time_index, model, pos):
+def select_file(name):
     """
-    Tooltip of the weather at the position clicked on the map.
+    The choices of another report file, at their defaults.
+
+    Its routes come with their own descriptions and no comment.
 
     Args:
-        m: Selected member.
-        click_data: Data of the click, or None before any click.
-        time_index: Selected index of the time slider.
-        model: Selected model.
-        pos: Position of the sensor marker.
-
-    Returns:
-        The content of the tooltip, or None without any click.
+        name: Name of the file in `~/data/routes/`.
     """
-    
-    if click_data is not None:
-        # print(click_data["latlng"])
-        # pos = [lat, lon]
-    
-        lat = click_data["latlng"]["lat"]
-        lon = click_data["latlng"]["lng"]
-    
-        # Extract variables (nearest-neighbour selection)
-        # try:
-        # subDs = ds.isel({"TIME_DIM":time}).sel({"longitude":lon, "latitude":lat}, method="nearest")
-        subDs = DS[model].isel({TIME_DIM:time_index}).sel({MEMBER_DIM: m}).interp(longitude=[lon], latitude=[lat], method="linear")
-        si10 = float(subDs["si10"].values.squeeze()) / 0.51444
-        wdir10 = float(subDs["wdir10"].values.squeeze())
-        swh = float(subDs["swh"].values.squeeze())
-        mwd = float(subDs["mwd"].values.squeeze())
-        
-        # block = (
-        #     # f"<b>Time:</b> {time}<br>"
-        #     # f"<b>Lat:</b> {lat:.3f} | <b>Lon:</b> {lon:.3f}<br>"
-        #     f"<b>TWS\t</b> {si10:.1f} kts<br>"
-        #     f"<b>SWH\t</b> {swh:.1f} m"
-        # )
-        blocks = (
-            f"{lat:7.3f}° {lon:7.3f}°",
-            f"TWS {si10:4.1f} kts\n",
-            f"TWD {wdir10:3.0f} deg\n",
-            f"SWH {swh:4.1f} m",
-            f"MWD {mwd:3.0f} deg",
-        )
-        
-        # print(blocks)
-        
-        tt = html.Div([dmc.Text(t, size="xs", fw=100,) for t in blocks])
-    
-        return tt
-    
-    
-# # Trigger mode (draw marker).
-# @app.callback(Output("edit_control", "drawToolbar"), Input("draw_marker", "n_clicks"))
-# def trigger_mode(n_clicks):
-#     return dict(mode="marker", n_clicks=n_clicks)  # include n_click to ensure prop changes
-
-
-# # Trigger mode (edit) + action (remove all)
-# @app.callback(Output("edit_control", "editToolbar"), Input("clear_all", "n_clicks"))
-# def trigger_action(n_clicks):
-#     return dict(mode="remove", action="clear all", n_clicks=n_clicks)  # include n_click to ensure prop changes
-
-# @app.callback(
-#     [Output("route-geojson-0", "data") for i in range(len(reports))],
-#     Input("time-slider", "value")
-# )
-# def update_time_index(time_index):
-#     valid_time = ds.valid_time.data[time_index]
-#     return (route_to_geojson(reports[0], valid_time=valid_time),)
-
-@app.callback(
-    [Output(f"route-geojson-{i}", "data") for i in range(len(reports))],
-    Input("time-slider", "value"),
-    Input("model-select", "value"),
-)
-def update_time_index(time_index, model):
-    """
-    Update the routes when the time or the model changes.
-
-    Args:
-        time_index: Selected index of the time slider.
-        model: Selected model.
-
-    Returns:
-        The GeoJSON of the route if there is one report, otherwise one
-            per report.
-    """
-    valid_time = DS[model].valid_time.data[time_index]
-    updates = tuple(route_to_geojson(report, valid_time=valid_time, color=color) for report, color in zip(reports, COLORS))
-    if len(reports) == 1:
-        return updates[0]
-    if len(reports) > 1:
-        return updates
-    
-
-# TODO set product list from model first
-# @app.callback(
-#     Output("member-select", "disabled"),
-    
-#     Input("model-select", "value"),
-#     Input("product-select", "value"),
-# )
-# def update_weather_model(model, product):
-#     return not PRODUCTS[model][product]["ens"]
-
-
-# @app.callback(
-    
-# )
-# def load_weather_model():
-#     pass
-
-@app.callback(
-    Output("raster", "url"),
-    Input("member-select", "value"),
-    Input("raster-var", "value"),
-    Input("time-slider", "value"),
-    Input("model-select", "value"),
-)
-def update_raster(m, var, time_index, model):
-    """
-    The address of the raster image for the current selection.
-
-    Args:
-        m: Selected member.
-        var: Selected variable.
-        time_index: Selected index of the time slider.
-        model: Selected model.
-    """
-    return f"/raster.png?var={var}&time={time_index}&member={m}&model={model}"
-
-
-@app.callback(
-    Output("field", "data"),
-    Input("member-select", "value"),
-    Input("time-slider", "value"),
-    Input("model-select", "value"),
-)
-def update_contour(m, time_index, model):
-    """
-    The contours of the field for the current selection.
-
-    Args:
-        m: Selected member.
-        time_index: Selected index of the time slider.
-        model: Selected model.
-    """
-    url = f"/contour_field.geojson?var={DEFAULT_VECTOR_VAR}&time={time_index}&member={m}&model={model}"
-    
-    with server.test_request_context(url):
-        resp = contour_field()
-        return json.loads(resp.get_data(as_text=True))
-
-
-@app.callback(
-    Output("fxx-valid-time", "children"),
-    Input("time-slider", "value"),
-    Input("model-select", "value"),
-)
-def update_valid_time(time_index, model):
-    """
-    The text showing the valid time of the current selection.
-
-    Args:
-        time_index: Selected index of the time slider.
-        model: Selected model.
-    """
-    vt = pd.to_datetime(DS[model].valid_time.data[time_index], unit="s").strftime("%Y-%m-%dT%H:%M")
-    return f"Valid time: {vt}"
-
-
-@app.callback(
-    Output("arrows", "data"),
-    Input("member-select", "value"),
-    Input("quiver-var", "value"),
-    Input("time-slider", "value"),
-    Input("model-select", "value"),
-    Input("map", "zoom"),
-)
-def update_arrows(m, qvar, time_index, model, zoom):
-    """
-    The arrows for the current selection, thinned by the zoom.
-
-    Args:
-        m: Selected member.
-        qvar: Selected variable.
-        time_index: Selected index of the time slider.
-        model: Selected model.
-        zoom: Zoom level of the map.
-    """
-    
-    density=density_from_zoom(zoom)
-    
-    url = (
-        f"/wind_arrows.geojson"
-        f"?time={time_index}&qvar={qvar}&density={density}&member={m}&model={model}"
+    collection = load_reports(name)
+    return (
+        route_options(collection),
+        default_routes(collection),
+        variable_options(collection),
+        default_variables(collection),
+        default_title(collection),
+        {},
     )
 
-    with server.test_request_context(url):
-        resp = wind_arrows()
-        return json.loads(resp.get_data(as_text=True))
+
+@app.callback(
+    Output("provider", "forceColorScheme"),
+    Input("theme-switch", "checked"),
+)
+def color_scheme(light):
+    """
+    The theme of this page, that of the map.
+
+    Args:
+        light: Whether the light theme is chosen.
+    """
+    return "light" if light else "dark"
+
+
+@app.callback(
+    Output("viewer-frame", "src"),
+    Input("file-select", "value"),
+    Input("member-select", "value"),
+    prevent_initial_call=True,
+)
+def show_file(name, member):
+    """
+    The preview of a report file and ensemble member.
+
+    Args:
+        name: Name of the file in `~/data/routes/`.
+        member: Ensemble member of the forecasts.
+    """
+    return viewer_url(name, int(member if member is not None else DEFAULT_MEMBER))
+
+
+@app.callback(
+    Output("routes-select", "value", allow_duplicate=True),
+    Input("routes-optimized", "n_clicks"),
+    Input("routes-all", "n_clicks"),
+    Input("routes-none", "n_clicks"),
+    State("file-select", "value"),
+    prevent_initial_call=True,
+)
+def quick_select(optimized, every, none, name):
+    """
+    Select the optimized routes, all of them or none.
+
+    Args:
+        optimized: Clicks on "Optimized".
+        every: Clicks on "All".
+        none: Clicks on "None".
+        name: Name of the report file.
+    """
+    collection = load_reports(name)
+    if ctx.triggered_id == "routes-none":
+        return []
+    if ctx.triggered_id == "routes-all":
+        return [f"r{index}" for index in range(len(collection))]
+    return default_routes(collection)
+
+
+# The viewer answers "architeuthis:ready" once loaded: the bridge then sends it the current
+# choices, which may have changed while it was loading. The viewer sends back the comments
+# of the analyst ("architeuthis:comments") and its theme ("architeuthis:theme").
+app.clientside_callback(
+    """
+    function (routes, hover, sources, title, note, noaa, texts, comments, light, ids) {
+        const descriptions = {};
+        (ids || []).forEach(function (id, i) { descriptions["r" + id.index] = (texts || [])[i] || ""; });
+        const settings = {
+            routes: routes || [],
+            hover: hover || [],
+            sources: sources || [],
+            overlays: noaa ? ["o0"] : [],
+            title: title || "",
+            note: note || "",
+            theme: light ? "light" : "dark",
+            editable: true,
+            descriptions: descriptions,
+            comments: comments || {},
+        };
+        window.architeuthisSettings = settings;
+        if (!window.architeuthisBridge) {
+            window.architeuthisBridge = true;
+            window.addEventListener("message", function (event) {
+                const data = event.data;
+                if (!data) return;
+                if (data.type === "architeuthis:ready" && event.source) {
+                    event.source.postMessage({type: "architeuthis:settings", settings: window.architeuthisSettings}, "*");
+                } else if (data.type === "architeuthis:comments") {
+                    window.dash_clientside.set_props("route-comments", {data: data.comments || {}});
+                } else if (data.type === "architeuthis:theme") {
+                    window.dash_clientside.set_props("theme-switch", {checked: data.theme === "light"});
+                }
+            });
+        }
+        const frame = document.getElementById("viewer-frame");
+        if (frame && frame.contentWindow) {
+            frame.contentWindow.postMessage({type: "architeuthis:settings", settings: settings}, "*");
+        }
+        return settings;
+    }
+    """,
+    Output("viewer-settings", "data"),
+    Input("routes-select", "value"),
+    Input("hover-select", "value"),
+    Input("sources-select", "value"),
+    Input("title-input", "value"),
+    Input("note-input", "value"),
+    Input("noaa-check", "checked"),
+    Input({"type": "route-description", "index": ALL}, "value"),
+    Input("route-comments", "data"),
+    Input("theme-switch", "checked"),
+    State({"type": "route-description", "index": ALL}, "id"),
+)
+
+
+def route_notes(descriptions=None, ids=None, comments=None) -> dict:
+    """
+    The descriptions and comments of the analyst, by report index.
+
+    Args:
+        descriptions: Texts of the description boxes.
+        ids: Identifiers of these boxes, `{"index": <report index>}`.
+        comments: Comments on points of the routes, as the preview
+            sends them: `{"r<index>": {"<segment>": text}}`.
+
+    Returns:
+        `{index: {"description": text, "points": {segment: text}}}`,
+        the `comments` of `share.build_scene`.
+    """
+    notes = {}
+    for identifier, text in zip(ids or [], descriptions or []):
+        notes.setdefault(int(identifier["index"]), {})["description"] = text or ""
+    for route, points in (comments or {}).items():
+        notes.setdefault(int(str(route).lstrip("r")), {})["points"] = {int(k): text for k, text in (points or {}).items()}
+    return notes
+
+
+@app.callback(
+    Output("download", "data"),
+    Output("download-info", "children"),
+    Input("download-button", "n_clicks"),
+    State("file-select", "value"),
+    State("routes-select", "value"),
+    State("hover-select", "value"),
+    State("sources-select", "value"),
+    State("title-input", "value"),
+    State("note-input", "value"),
+    State("member-select", "value"),
+    State("noaa-check", "checked"),
+    State({"type": "route-description", "index": ALL}, "value"),
+    State({"type": "route-description", "index": ALL}, "id"),
+    State("route-comments", "data"),
+    State("theme-switch", "checked"),
+    prevent_initial_call=True,
+)
+def download(
+    clicks,
+    name,
+    routes,
+    hover,
+    sources,
+    title,
+    note,
+    member,
+    noaa,
+    descriptions=None,
+    description_ids=None,
+    comments=None,
+    light=False,
+):
+    """
+    The share file of the current choices.
+
+    Args:
+        clicks: Clicks on the download button.
+        name: Name of the report file.
+        routes: Identifiers of the routes to share, `r<index>`.
+        hover: Variables of the tooltips.
+        sources: Models of the forecasts to share.
+        title: Title of the page.
+        note: Note to the crew.
+        member: Ensemble member of the forecasts.
+        noaa: Whether to share the NOAA surface analysis.
+        descriptions: Descriptions of the routes.
+        description_ids: Identifiers of their boxes.
+        comments: Comments on points of the routes.
+        light: Whether the map opens in the light theme.
+    """
+    if not clicks:
+        return no_update, no_update
+    collection = load_reports(name)
+    title = title or default_title(collection)
+    scene = build_scene(
+        collection,
+        routes=sorted(int(route[1:]) for route in routes or []),
+        forecasts={model.upper(): DS[model] for model in MODELS if model in (sources or [])},
+        variables=hover or [],
+        zones=exclusion_zones,
+        overlays=overlays() if noaa else [],
+        title=title,
+        note=note or "",
+        comments=route_notes(descriptions, description_ids, comments),
+        member=int(member if member is not None else DEFAULT_MEMBER),
+        settings={"theme": "light" if light else "dark"},
+    )
+    text = viewer_html(scene, library=LIBRARY)
+    size = len(text.encode("utf-8")) / 1e6
+    filename = f"{''.join(c if c.isalnum() or c in '-_' else '_' for c in title).strip('_') or 'routes'}.html"
+    info = f"{filename}: {len(scene['routes'])} routes, {size:.1f} MB."
+    if LIBRARY == "cdn":
+        info += " MapLibre could not be downloaded: the file needs a connection to open."
+    return dict(content=text, filename=filename, type="text/html"), info
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=8052)
+    app.run(debug=False, port=8052)
