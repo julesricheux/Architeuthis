@@ -965,11 +965,12 @@ class WMSImageryData(SatelliteImagery):
     covered is answered from it, so that loading it again asks the
     server nothing. An empty image is left out; one empty for good
     (`EMPTY_FINAL_AFTER`) is recorded there too. If the server cannot
-    be reached, the images on disk are used, with a warning. Images are requested
-    `workers` at a time (`DOWNLOAD_WORKERS`), and in tiles when larger
-    than `wms_utils.MAX_SIZE` pixels a side. Their pixels are in
-    `rgba_<channel>` and, given the palette of the server layer, their
-    values in the quantity of the channel (see
+    be reached, the images on disk are used, with a warning.
+
+    Images are requested `workers` at a time (`DOWNLOAD_WORKERS`), and
+    in tiles when larger than `wms_utils.MAX_SIZE` pixels a side. Their
+    pixels are in `rgba_<channel>` and, given the palette of the server
+    layer, their values in the quantity of the channel (see
     `image_utils.invert_palette`).
 
     Args:

@@ -601,11 +601,12 @@ def test_a_period_on_disk_is_opened_without_asking_the_server(eumetview, monkeyp
     # The index of the layer: the period the server listed, its times, the empty image
     index = again._read_index("ir")
     assert index["covered"] == [[pd.Timestamp("2026-11-19 15:45Z").timestamp(), pd.Timestamp("2026-11-19 16:20Z").timestamp()]]
-    assert len(index["times"]) == 4 and list(index["empty"]) == [again._box()]
+    # 15:50, 16:00 (empty) and 16:20: the server has no 16:10
+    assert len(index["times"]) == 3 and list(index["empty"]) == [again._box()]
     # A part of the period, or another box, is answered from the index too
-    part = EUMETViewData("part", verbose=False, start="2026-11-19 16:00", end="2026-11-19 16:10", **IMAGERY_DOMAIN)
+    part = EUMETViewData("part", verbose=False, start="2026-11-19 15:55", end="2026-11-19 16:20", **IMAGERY_DOMAIN)
     part.output_path = str(tmp_path)
-    assert list(part._times("ir").strftime("%H:%M")) == ["16:00", "16:10"]
+    assert list(part._times("ir").strftime("%H:%M")) == ["16:00", "16:20"]
 
 
 def test_a_later_period_asks_the_server_again(eumetview, monkeypatch):

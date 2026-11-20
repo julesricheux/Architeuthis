@@ -224,8 +224,9 @@ def run_script(script, folder):
         source = quick_start_of_readme()
     else:
         source = (EXAMPLES / script).read_text(encoding="utf-8").replace("members = list(range(1,51,1))", "members = [1, 2]")
-        # Pixels of 1 deg rather than 0.05: the same script, 400 times fewer pixels
-        source = source.replace("resolution = 0.05", "resolution = 1.0").replace("zoom_resolution = 0.01", "zoom_resolution = 1.0")
+        # Pixels of 1 deg, whatever resolution the script sets: the same
+        # script, far fewer pixels
+        source = re.sub(r"^(zoom_)?resolution = [0-9.]+", r"\1resolution = 1.0", source, flags=re.M)
     run_file = folder / script
     run_file.write_text(source, encoding="utf-8")
 
