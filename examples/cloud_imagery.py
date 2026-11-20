@@ -59,23 +59,25 @@ domain = {"min_lon": -75.0, "max_lon": 5.0, "min_lat": 35.0, "max_lat": 60.0}
 
 # Infrared: the last 3 hours, every 10 min. GIBS is about an hour behind
 # EUMETView, and only the times both have are kept, so the latest image is
-# about an hour old.
-now = pd.Timestamp("now", tz="UTC")
+# about an hour old. Images are kept in ~/data/wms/: a second run opens
+# them from the disk rather than downloading them again, and asks the
+# servers nothing for a period whose times it already knows.
+now = pd.Timestamp("now", tz="UTC").floor("10min")
 end = now
-start = end - pd.Timedelta(hours=3)
+start = end - pd.Timedelta(3, unit="h")
 # start, end = "2026-11-19 12:00Z", "2026-11-19 15:00Z"
 
 # Daylight: 3 hours around the latest midday over the mid-Atlantic (14 UTC),
 # at least an hour ago so that GIBS has it, for the visible
-midday = now.floor("1D") + pd.Timedelta(hours=14)
-if midday > now - pd.Timedelta(hours=2, minutes=30):
-    midday -= pd.Timedelta(days=1)
-visible_start, visible_end = midday - pd.Timedelta(hours=1.5), midday + pd.Timedelta(hours=1.5)
+midday = now.floor("1D") + pd.Timedelta(14, unit="h")
+if midday > now - pd.Timedelta(150, unit="min"):
+    midday -= pd.Timedelta(1, unit="D")
+visible_start, visible_end = midday - pd.Timedelta(1.5, unit="h"), midday + pd.Timedelta(1.5, unit="h")
 
-resolution = 0.1  # deg, about 5 km: 1600 x 500 pixels here, about 1 s an image
+resolution = 0.1  # deg, about 10 km: 800 x 250 pixels here, under 1 s an image
 # resolution = 0.05  # deg, about 5 km: 1600 x 500 pixels here, about 1 s an image
 # resolution = 0.02  # deg, all the detail of the infrared: 4000 x 1250 pixels, 2-3 s an image
-# resolution = 0.01  # deg, all the detail of the infrared: 4000 x 1250 pixels, 2-3 s an image
+# resolution = 0.01  # deg, all the detail of the visible: 8000 x 2500 pixels, 5-7 s an image
 native_resolution = "finest"  # server layers: MTG FCI on EUMETView (1 km IR, 0.5 km visible)
 # native_resolution = "coarsest"  # MSG SEVIRI on EUMETView (3 km, every 15 min); GIBS has one layer per channel
 time_step = None  # every image; "30min" or "1h" for fewer

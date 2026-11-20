@@ -41,7 +41,7 @@ domain = {"min_lon": -20.0, "max_lon": 0.0, "min_lat": 40.0, "max_lat": 52.0}
 # The last 36 hours: Copernicus Marine is about a day behind, so both sources
 # have passes in this period
 end = pd.Timestamp("now", tz="UTC").floor("1h")
-start = end - pd.Timedelta(hours=36)
+start = end - pd.Timedelta(36, unit="h")
 # start, end = "2026-11-17 00:00Z", "2026-11-18 00:00Z"
 
 grid_step = 0.125  # deg, the grid of Copernicus Marine, to match both sources
