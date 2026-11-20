@@ -175,7 +175,7 @@ and this project follows Semantic Versioning https://semver.org
 
 ---
 
-## [Unreleased]
+## v0.3.2 - 2026-11-20
 
 ### Added
 - A routing analysis runs without a complete environment: `atmosphere`, `wave` and `current` are optional arguments of `RoutingAnalysis`, None by default, and each one left out is a calm source whose fields are zero, a calm wind (`u10`, `v10`), a flat sea (`swh`, `uw`, `vw`) or no current (`uo`, `vo`). `forecast.calm_forecast(source)` builds these sources, `Forecast` objects without data whose models are zero functions of the time and position, and `forecast.ENVIRONMENT_FIELDS` lists their fields. The time grid comes from the first source with data, or is every 3 hours (`core.DEFAULT_TIME_STEP`) without any. The topography is still required, now checked with a `TypeError` since it has a default of None.
