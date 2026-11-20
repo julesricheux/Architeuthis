@@ -19,6 +19,7 @@ from architeuthis.credentials import MissingCredentialError
 from architeuthis.satellite import (
     ASCAT_SOURCES,
     EUMETVIEW_CALIBRATIONS,
+    EUMETVIEW_LAYERS,
     ASCATData,
     CopernicusASCATData,
     CopernicusSatelliteData,
@@ -26,12 +27,14 @@ from architeuthis.satellite import (
     EUMETViewData,
     GeostationaryImagery,
     GIBSData,
-    IMAGERY_LAYERS,
+    IMAGERY_CHANNELS,
+    IMAGERY_COLORMAPS,
+    native_layers,
     WMSImageryData,
 )
 from architeuthis.toolbox import image_utils, wms_utils
 from architeuthis.toolbox.geo_utils import central_angle
-from architeuthis.toolbox.windy_colormaps import SATELLITE_STOPS, get_satellite_cmap
+from architeuthis.toolbox.windy_colormaps import SATELLITE_QUANTITIES, SATELLITE_STOPS, get_satellite_cmap
 
 DOMAIN = dict(min_lon=-20.0, max_lon=0.0, min_lat=40.0, max_lat=52.0)
 START, END = "2026-11-17 06:00", "2026-11-18 12:00"
@@ -515,7 +518,7 @@ def eumetview(tmp_path, monkeypatch):
     and 16:20, of the infrared."""
     asked = []
 
-    def get_map(url, layer, bounds, size, time=None, style=""):
+    def get_map(url, layer, bounds, size, time=None, style="", timeout=None):
         asked.append((layer, time))
         return server_image(layer, size, time)
 
@@ -565,30 +568,34 @@ def test_an_empty_image_is_left_out_and_not_cached(eumetview, tmp_path, capsys):
     assert [time.strftime("%H:%M") for _, time in eumetview.asked] == ["16:00"]
 
 
-def test_several_layers_take_the_times_every_channel_has(eumetview):
-    eumetview = EUMETViewData("eumetview", verbose=False, layers=["visible", "ir", "blue"], **IMAGERY_PERIOD, **IMAGERY_DOMAIN)
+def test_several_channels_take_the_times_every_channel_has(eumetview):
+    eumetview = EUMETViewData("eumetview", verbose=False, channels=["visible", "ir", "visible"], **IMAGERY_PERIOD, **IMAGERY_DOMAIN)
     eumetview.output_path = str(Path(eumetview.output_path).parent / "tests")
     eumetview.load_data()
 
-    assert eumetview.layers == ["visible", "ir", "blue"]
     assert eumetview.channels == ["visible", "ir"]
+    assert eumetview.variables == ["brightness", "bt"]
     assert set(eumetview.wms_layers.values()) == {"mtg_fd:vis06_hrfi", "mtg_fd:ir105_hrfi"}
     # 16:20 has no visible image: only 15:50 is in both
     assert list(eumetview.times().strftime("%H:%M")) == ["15:50"]
     np.testing.assert_allclose(eumetview.data["brightness"], 0.2)
     assert eumetview.data["bt"].shape == eumetview.data["brightness"].shape
-    for layer in ("ir", "blue", "visible"):
-        assert eumetview.image(0, layer=layer).shape == (5, 10, 4)
+    for channel, colormap in (("ir", None), ("ir", "infra"), ("ir", "blue"), ("visible", None)):
+        assert eumetview.image(0, channel, colormap=colormap).shape == (5, 10, 4)
 
 
-def test_a_layer_not_loaded_cannot_be_drawn(eumetview):
+def test_the_colour_scale_is_chosen_when_drawing(eumetview):
     eumetview.load_data()
 
-    assert eumetview.image(0, layer="blue").shape == (5, 10, 4)  # the same channel as "ir"
-    with pytest.raises(ValueError, match="needs brightness"):
-        eumetview.image(0, layer="visible")
-    with pytest.raises(ValueError, match="Unknown imagery layer"):
-        eumetview.image(0, layer="water_vapour")
+    # One channel, several colour scales: Infra+ by default, Blue on demand
+    np.testing.assert_array_equal(eumetview.image(0), eumetview.image(0, "ir", colormap="infra"))
+    assert not np.array_equal(eumetview.image(0, colormap="blue"), eumetview.image(0))
+    with pytest.raises(ValueError, match="does not draw bt"):
+        eumetview.image(0, colormap="visible")
+    with pytest.raises(ValueError, match="visible channel is not loaded"):
+        eumetview.image(0, "visible")
+    with pytest.raises(ValueError, match="Unknown imagery channel"):
+        eumetview.image(0, "blue")
 
 
 def test_every_image_empty_raises(eumetview, monkeypatch):
@@ -623,7 +630,7 @@ def gibs_server(monkeypatch):
         assert url.endswith("Clean_Longwave_Infrared_Window_Band.xml")
         return SimpleNamespace(text=GIBS_COLORMAP, raise_for_status=lambda: None)
 
-    def get_map(url, layer, bounds, size, time=None, style=""):
+    def get_map(url, layer, bounds, size, time=None, style="", timeout=None):
         level = 51 if "Visible" in layer else 100
         return image_utils.encode_png(grey_image(np.full((size[1], size[0]), level)))
 
@@ -663,7 +670,7 @@ def test_gibs_visible_needs_no_colormap(gibs_server, monkeypatch, tmp_path):
         raise AssertionError("no colormap to download")
 
     monkeypatch.setattr("architeuthis.satellite.requests.get", get)
-    goes = GIBSData("goes", layers="visible", verbose=False, **IMAGERY_PERIOD, **IMAGERY_DOMAIN)
+    goes = GIBSData("goes", channels="visible", verbose=False, **IMAGERY_PERIOD, **IMAGERY_DOMAIN)
     goes.output_path = str(tmp_path)
     goes.load_data()
 
@@ -673,7 +680,7 @@ def test_gibs_visible_needs_no_colormap(gibs_server, monkeypatch, tmp_path):
 
 def test_a_source_without_a_server_layer_for_a_channel_is_refused():
     with pytest.raises(ValueError, match="no server layer"):
-        WMSImageryData("server", "https://server", {"ir": "infrared"}, layers=["ir", "visible"])
+        WMSImageryData("server", "https://server", {"ir": "infrared"}, channels=["ir", "visible"])
 
 
 # ------------------------------------------------------------------------------
@@ -683,11 +690,11 @@ def test_a_source_without_a_server_layer_for_a_channel_is_refused():
 COMPOSITE_DOMAIN = dict(min_lon=-75.0, max_lon=5.0, min_lat=35.0, max_lat=60.0, resolution=5.0)
 
 
-def source(cls, name, times, values, error=None, layers="ir", resolution=5.0):
-    """A source of the composite domain whose `load_data` gives, for each channel of its
-    layers, uniform `values` (or a function of latitude and longitude, or a dict of either by
+def source(cls, name, times, values, error=None, channels="ir", resolution=5.0):
+    """A source of the composite domain whose `load_data` gives, for each of its channels,
+    uniform `values` (or a function of latitude and longitude, or a dict of either by
     quantity), or fails."""
-    imagery = cls(name, verbose=False, layers=layers, **IMAGERY_PERIOD, **(COMPOSITE_DOMAIN | {"resolution": resolution}))
+    imagery = cls(name, verbose=False, channels=channels, **IMAGERY_PERIOD, **(COMPOSITE_DOMAIN | {"resolution": resolution}))
     latitude, longitude = imagery.grid()
 
     def load_data():
@@ -709,7 +716,7 @@ def source(cls, name, times, values, error=None, layers="ir", resolution=5.0):
 
 
 def composite(*sources, **options):
-    options = {"layers": sources[0].layers} | options
+    options = {"channels": sources[0].channels} | options
     domain = COMPOSITE_DOMAIN | {"resolution": sources[0].resolution}
     clouds = GeostationaryImagery("clouds", sources=sources, verbose=False, **IMAGERY_PERIOD, **domain, **options)
     clouds.load_data()
@@ -761,8 +768,8 @@ def test_the_composite_raises_when_every_source_fails():
         )
 
 
-def test_the_default_sources_are_eumetview_and_gibs_over_the_same_domain_and_layers():
-    clouds = GeostationaryImagery("clouds", time_step="1h", layers=["blue", "visible"], **IMAGERY_PERIOD, **COMPOSITE_DOMAIN)
+def test_the_default_sources_are_eumetview_and_gibs_over_the_same_domain_and_channels():
+    clouds = GeostationaryImagery("clouds", time_step="1h", channels=["ir", "visible"], **IMAGERY_PERIOD, **COMPOSITE_DOMAIN)
 
     assert [type(source) for source in clouds.sources] == [EUMETViewData, GIBSData]
     assert clouds.channels == ["ir", "visible"]
@@ -770,7 +777,7 @@ def test_the_default_sources_are_eumetview_and_gibs_over_the_same_domain_and_lay
     for source_ in clouds.sources:
         assert (source_.min_lon, source_.max_lat, source_.resolution, source_.time_step) == (-75.0, 60.0, 5.0, "1h")
         assert source_.size == clouds.size
-        assert source_.layers == ["blue", "visible"]
+        assert source_.channels == ["ir", "visible"]
     meteosat, goes = clouds.sources
     assert meteosat.wms_layers == {"ir": "mtg_fd:ir105_hrfi", "visible": "mtg_fd:vis06_hrfi"}
     assert goes.wms_layers == {"ir": "GOES-East_ABI_Band13_Clean_Infrared", "visible": "GOES-East_ABI_Band2_Red_Visible_1km"}
@@ -785,8 +792,8 @@ def scene(lat, lon):
 
 
 def test_visible_levels_of_the_other_sources_are_matched_along_the_seam():
-    meteosat = source(EUMETViewData, "meteosat", [0.0, 600.0], scene, layers="visible", resolution=1.0)
-    goes = source(GIBSData, "goes", [0.0, 600.0], lambda lat, lon: 0.5 * scene(lat, lon) + 0.1, layers="visible", resolution=1.0)
+    meteosat = source(EUMETViewData, "meteosat", [0.0, 600.0], scene, channels="visible", resolution=1.0)
+    goes = source(GIBSData, "goes", [0.0, 600.0], lambda lat, lon: 0.5 * scene(lat, lon) + 0.1, channels="visible", resolution=1.0)
 
     daylight = composite(meteosat, goes)
 
@@ -804,10 +811,10 @@ def test_visible_levels_of_the_other_sources_are_matched_along_the_seam():
 def test_infrared_and_visible_together_only_the_visible_matched():
     values = {"bt": lambda lat, lon: 250.0 + lon / 10.0, "brightness": scene}
     goes_values = {"bt": lambda lat, lon: 260.0 + lon / 10.0, "brightness": lambda lat, lon: 0.5 * scene(lat, lon) + 0.1}
-    layers = ["ir", "visible"]
+    channels = ["ir", "visible"]
     clouds = composite(
-        source(EUMETViewData, "meteosat", [0.0], values, layers=layers, resolution=1.0),
-        source(GIBSData, "goes", [0.0], goes_values, layers=layers, resolution=1.0),
+        source(EUMETViewData, "meteosat", [0.0], values, channels=channels, resolution=1.0),
+        source(GIBSData, "goes", [0.0], goes_values, channels=channels, resolution=1.0),
     )
 
     assert clouds.matched == ["visible"]
@@ -822,8 +829,8 @@ def test_infrared_and_visible_together_only_the_visible_matched():
 
 def test_a_dark_visible_reference_is_not_matched():
     night = composite(
-        source(EUMETViewData, "meteosat", [0.0], 0.0, layers="visible", resolution=1.0),
-        source(GIBSData, "goes", [0.0], scene, layers="visible", resolution=1.0),
+        source(EUMETViewData, "meteosat", [0.0], 0.0, channels="visible", resolution=1.0),
+        source(GIBSData, "goes", [0.0], scene, channels="visible", resolution=1.0),
     )
 
     np.testing.assert_allclose(night.data["gain"], 1.0)
@@ -831,9 +838,9 @@ def test_a_dark_visible_reference_is_not_matched():
 
 def test_the_sources_of_a_composite_give_its_channels():
     with pytest.raises(ValueError, match="No source gives the ir channel"):
-        GeostationaryImagery("clouds", sources=[source(EUMETViewData, "meteosat", [0.0], scene, layers="visible")])
-    with pytest.raises(ValueError, match="Unknown imagery layer"):
-        GeostationaryImagery("clouds", layers=["ir", "water_vapour"])
+        GeostationaryImagery("clouds", sources=[source(EUMETViewData, "meteosat", [0.0], scene, channels="visible")])
+    with pytest.raises(ValueError, match="Unknown imagery channel"):
+        GeostationaryImagery("clouds", channels=["ir", "water_vapour"])
 
 
 # ------------------------------------------------------------------------------
@@ -841,37 +848,49 @@ def test_the_sources_of_a_composite_give_its_channels():
 # ------------------------------------------------------------------------------
 
 
-def colour_of(layer, value):
-    """RGB of a value in the colour scale of a layer, 0-255."""
-    colormap, norm = get_satellite_cmap(layer)
-    return np.round(np.array(colormap(norm(value))[:3]) * 255).astype(int).tolist()
+def colour_of(name, value):
+    """RGBA of a value in a colour scale, 0-255."""
+    colormap, norm = get_satellite_cmap(name)
+    return np.round(np.array(colormap(norm(value))) * 255).astype(int).tolist()
 
 
-def test_ir_follows_the_infra_legend_of_windy():
-    colormap, norm = get_satellite_cmap("ir")
+def test_infra_follows_the_infra_plus_legend_of_windy():
+    colormap, norm = get_satellite_cmap("infra")
 
     assert (norm.vmin, norm.vmax) == (182.0, 321.0)
-    assert colour_of("ir", 321.0) == [24, 24, 24]
-    assert colour_of("ir", 182.0) == [48, 0, 0]
+    assert colour_of("infra", 321.0) == [24, 24, 24, 255]
+    assert colour_of("infra", 182.0) == [48, 0, 0, 255]
     # The step at 240 K: grey above, coloured cloud tops below
-    assert np.allclose(colour_of("ir", 240.1), [240, 240, 240], atol=3)
-    assert np.allclose(colour_of("ir", 239.9), [64, 64, 163], atol=3)
-    assert np.allclose(colour_of("ir", 220.0), [163, 253, 61], atol=3)
-    assert np.allclose(colour_of("ir", 210.0), [251, 128, 34], atol=3)
+    assert np.allclose(colour_of("infra", 240.1), [240, 240, 240, 255], atol=3)
+    assert np.allclose(colour_of("infra", 239.9), [64, 64, 163, 255], atol=3)
+    assert np.allclose(colour_of("infra", 220.0), [163, 253, 61, 255], atol=3)
+    assert np.allclose(colour_of("infra", 210.0), [251, 128, 34, 255], atol=3)
 
 
-def test_blue_is_a_deep_blue_sea_under_white_clouds():
-    sea, cloud = colour_of("blue", 290.0), colour_of("blue", 210.0)
+def test_blue_is_white_clouds_over_a_transparent_clear_sky():
+    assert colour_of("blue", 290.0)[3] == 0
+    assert colour_of("blue", 300.0)[3] == 0  # warmer than the scale: still clear
+    assert np.allclose(colour_of("blue", 270.0), [255, 255, 255, 128], atol=1)
+    assert colour_of("blue", 250.0) == [255, 255, 255, 255]
+    # Colder tops darker, down to dark grey at 190 K
+    assert colour_of("blue", 190.0) == [64, 64, 64, 255]
+    assert 64 < colour_of("blue", 220.0)[0] < 255
+    # And values_to_rgba keeps that transparency
+    colormap, norm = get_satellite_cmap("blue")
+    rgba = image_utils.values_to_rgba(np.array([200.0, 280.0, 295.0, np.nan]), colormap, norm.vmin, norm.vmax)
+    assert rgba[0, 3] == 255 and 0 < rgba[1, 3] < 128 and rgba[2:, 3].tolist() == [0, 0]
 
-    assert sea[2] > sea[0] + 30 and max(sea) < 100
-    assert min(cloud) > 240
 
-
-def test_every_layer_has_a_colour_scale():
-    assert set(SATELLITE_STOPS) == set(IMAGERY_LAYERS)
-    assert get_satellite_cmap("visible")[1].vmax == 1.0
-    with pytest.raises(ValueError, match="Unknown satellite layer"):
+def test_each_channel_draws_with_the_colour_scales_of_its_quantity():
+    assert set(SATELLITE_STOPS) == set(SATELLITE_QUANTITIES)
+    assert set(SATELLITE_QUANTITIES.values()) == set(IMAGERY_CHANNELS.values())
+    for channel, colormap in IMAGERY_COLORMAPS.items():
+        assert SATELLITE_QUANTITIES[colormap] == IMAGERY_CHANNELS[channel]
+    assert get_satellite_cmap("visible", quantity="brightness")[1].vmax == 1.0
+    with pytest.raises(ValueError, match="Unknown satellite colour scale"):
         get_satellite_cmap("rainbow")
+    with pytest.raises(ValueError, match=r"does not draw brightness: choose among \['visible'\]"):
+        get_satellite_cmap("blue", quantity="brightness")
 
 
 def test_dark_pixels_fade_out_below_a_value():
@@ -892,3 +911,110 @@ def test_quantile_fit_finds_the_transform_between_two_distributions():
     assert image_utils.quantile_fit(values, np.zeros(1000), min_spread=0.02) == (1.0, 0.0)
     mask = np.zeros(1000, dtype=bool)
     assert image_utils.quantile_fit(values, reference, mask) == (1.0, 0.0)
+
+
+# ------------------------------------------------------------------------------
+# Resolution: tiled requests and smooth upscaling
+# ------------------------------------------------------------------------------
+
+
+def test_a_large_map_is_requested_in_tiles_that_join_on_the_pixel_grid(monkeypatch):
+    asked = []
+
+    def get_map(url, layer, bounds, size, time=None, style="", timeout=None):
+        asked.append((bounds, size))
+        min_lon, min_lat, max_lon, max_lat = bounds
+        width, height = size
+        # Each pixel tells the longitude and latitude of its centre
+        lon = min_lon + (max_lon - min_lon) * (np.arange(width) + 0.5) / width
+        lat = max_lat - (max_lat - min_lat) * (np.arange(height) + 0.5) / height
+        rgba = np.zeros((height, width, 4), dtype=np.uint8)
+        rgba[..., 0] = np.round(lon + 100)[None, :]
+        rgba[..., 1] = np.round(lat + 100)[:, None]
+        rgba[..., 3] = 255
+        return image_utils.encode_png(rgba)
+
+    monkeypatch.setattr(wms_utils, "get_map", get_map)
+    rgba = wms_utils.get_map_array("https://server", "layer", (-10.0, 40.0, 0.0, 45.0), (10, 5), max_size=4)
+
+    assert [size for _, size in asked] == [(4, 4), (4, 4), (2, 4), (4, 1), (4, 1), (2, 1)]
+    assert asked[0][0] == (-10.0, 41.0, -6.0, 45.0)
+    assert rgba.shape == (5, 10, 4)
+    # The same pixels as one request: longitudes west to east, latitudes north to south
+    np.testing.assert_array_equal(rgba[0, :, 0], np.round(np.arange(-9.5, 0.0, 1.0) + 100))
+    np.testing.assert_array_equal(rgba[:, 0, 1], np.round(np.arange(44.5, 40.0, -1.0) + 100))
+
+
+def test_rescale_interpolates_smoothly_and_keeps_nan_in_place():
+    values = np.array([[0.0, 10.0], [20.0, 30.0]], dtype=np.float32)
+
+    fine = image_utils.rescale(values, 4)
+    assert fine.shape == (8, 8)
+    # Bilinear: no overshoot, monotonic, the mean kept
+    assert fine.min() >= 0.0 and fine.max() <= 30.0
+    assert np.all(np.diff(fine, axis=1) >= 0) and np.all(np.diff(fine, axis=0) >= 0)
+    assert fine.mean() == pytest.approx(15.0, abs=1e-4)
+    assert np.unique(image_utils.rescale(values, 4, order=0)).tolist() == [0.0, 10.0, 20.0, 30.0]
+    assert image_utils.rescale(values, 1) is not None and image_utils.rescale(values, 0.5).shape == (1, 1)
+
+    holed = values.copy()
+    holed[0, 0] = np.nan
+    fine = image_utils.rescale(holed, 4)
+    assert np.isnan(fine[:2, :2]).all() and np.isfinite(fine[4:, 4:]).all()
+    assert np.nanmin(fine) >= 10.0  # NaN neither spreads nor drags the values
+    assert np.isnan(image_utils.rescale(np.full((2, 2), np.nan), 2)).all()
+
+
+def test_an_image_can_be_cropped_and_upscaled_for_display(eumetview):
+    eumetview.load_data()
+    box = (-8.0, -4.0, 42.0, 44.0)
+
+    assert eumetview.extent() == [-10.0, 0.0, 40.0, 45.0]
+    assert eumetview.extent(box) == [-8.0, -4.0, 42.0, 44.0]
+    assert eumetview.image(0, box=box).shape == (2, 4, 4)
+    zoom = eumetview.image(0, box=(-10.0, -8.0, 43.0, 45.0), scale=4)
+    assert zoom.shape == (8, 8, 4)
+    # The black north-west pixel of the server, smoothed into its neighbours
+    assert len(np.unique(zoom[..., 0])) > 2
+    with pytest.raises(ValueError, match="No pixel"):
+        eumetview.image(0, box=(20.0, 30.0, 0.0, 10.0))
+
+
+def test_a_repeated_grey_reads_warm_in_a_warm_area_and_cold_among_cold_tops():
+    # Greys 100 and 102 are warm, grey 101 a cold entry between them (as grey 155 of GIBS
+    # between 270.8 K and 270.3 K); red, a cold top of the main part
+    colours = np.array([[100, 100, 100], [102, 102, 102], [200, 0, 0], [101, 101, 101]])
+    values = np.array([270.0, 269.0, 210.0, 196.0])
+    secondary = np.array([False, False, False, True])
+    grey = np.where(np.arange(80)[:, None] % 2 == 0, 100, 102) * np.ones((1, 80), dtype=int)
+    rgba = np.stack([grey, grey, grey, np.full_like(grey, 255)], axis=-1).astype(np.uint8)
+    rgba[70, 40:60, :3] = 101  # a streak in a warm area, far from any known pixel
+    rgba[5:20, 5:20, :3] = [200, 0, 0]  # a cold cloud top...
+    rgba[10:15, 10:15, :3] = 101  # ...with a colder core
+
+    bt = image_utils.invert_palette(rgba, colours, values, secondary=secondary)
+
+    assert bt[70, 40:60].min() >= 269.0
+    np.testing.assert_allclose(bt[10:15, 10:15], 196.0)
+    np.testing.assert_allclose(bt[60:, :], np.clip(bt[60:, :], 269.0, 270.0))
+
+
+def test_the_native_resolution_of_the_server_layers_is_chosen():
+    assert native_layers(EUMETVIEW_LAYERS) == {"ir": "mtg_fd:ir105_hrfi", "visible": "mtg_fd:vis06_hrfi"}
+    assert native_layers(EUMETVIEW_LAYERS, "coarsest") == {"ir": "msg_fes:ir108", "visible": "msg_fes:vis006"}
+    assert native_layers(EUMETVIEW_LAYERS, {"ir": "3km"}) == {"ir": "msg_fes:ir108", "visible": "mtg_fd:vis06_hrfi"}
+    with pytest.raises(ValueError, match=r"No visible layer at 1km: choose among \['finest', 'coarsest', '0.5km', '3km'\]"):
+        native_layers(EUMETVIEW_LAYERS, "1km")
+
+    meteosat = EUMETViewData("meteosat", channels=["ir", "visible"], native_resolution="3km", verbose=False, **IMAGERY_PERIOD, **IMAGERY_DOMAIN)
+    assert meteosat.wms_layers == {"ir": "msg_fes:ir108", "visible": "msg_fes:vis006"}
+    assert set(meteosat.palettes) == {"ir", "visible"} and meteosat.palettes["ir"] is not None
+    assert meteosat.subsatellite_lon == 0.0
+    # An explicit server layer still wins
+    meteosat = EUMETViewData("meteosat", native_resolution="3km", wms_layers={"ir": "mtg_fd:ir105_hrfi"}, verbose=False)
+    assert meteosat.wms_layers == {"ir": "mtg_fd:ir105_hrfi"}
+
+    clouds = GeostationaryImagery("clouds", native_resolution="coarsest", **IMAGERY_PERIOD, **COMPOSITE_DOMAIN)
+    assert [source.wms_layers["ir"] for source in clouds.sources] == ["msg_fes:ir108", "GOES-East_ABI_Band13_Clean_Infrared"]
+    with pytest.raises(ValueError, match="No ir layer at 3km"):
+        GeostationaryImagery("clouds", native_resolution="3km", **IMAGERY_PERIOD, **COMPOSITE_DOMAIN)

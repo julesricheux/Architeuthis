@@ -18,7 +18,7 @@ import numpy as np
 import matplotlib
 
 from PIL import Image
-from scipy.ndimage import uniform_filter
+from scipy.ndimage import distance_transform_edt, uniform_filter, zoom
 from scipy.spatial import cKDTree
 from typing import Optional, Sequence, Union
 
@@ -88,8 +88,11 @@ def invert_palette(
     Some palettes use the same colours twice, for distant values: give
     the entries of the less common part as `secondary`. A pixel whose
     colour both parts explain as well (within `tolerance`) takes the
-    reading nearest to the mean of its unambiguous neighbours, over
-    `window` pixels along the last two axes of the image.
+    reading nearest to the mean of its neighbours that only the main
+    part explains, over `window` pixels along the last two axes of the
+    image (4 times wider where none is in that window); so does a pixel
+    nearer a secondary colour, which resampling may give in the main
+    part.
 
     Args:
         rgba: RGBA pixels, uint8, of shape (..., height, width, 4).
@@ -118,18 +121,29 @@ def invert_palette(
         clearly_other = other_distance + tolerance < distance
         ambiguous = ~clearly_other & (other_distance < distance + tolerance)
 
-        # Context: the mean of the unambiguous neighbours of each pixel
-        known = opaque & ~ambiguous
-        reading = np.where(clearly_other, other, result)
-        size = (1,) * (rgba.ndim - 3) + (window, window)
-        total = uniform_filter(np.where(known, reading, 0.0), size=size, mode="nearest")
-        count = uniform_filter(known.astype(float), size=size, mode="nearest")
-        with np.errstate(invalid="ignore", divide="ignore"):
-            context = total / count
+        # Context: the mean of the neighbours that only the main part
+        # explains. Resampled colours may fall nearer a secondary entry
+        # than any main one: such pixels are weighed by their context
+        # too, so that a cold reading in a warm area does not stand.
+        # Where a whole window is ambiguous, a window 4 times wider.
+        known = opaque & ~ambiguous & ~clearly_other
+        found = np.zeros(known.shape, dtype=bool)
+        context = np.full(known.shape, np.nan)
+        for width in (window, 4 * window):
+            size = (1,) * (rgba.ndim - 3) + (width, width)
+            total = uniform_filter(np.where(known, result, 0.0), size=size, mode="nearest")
+            share = uniform_filter(known.astype(float), size=size, mode="nearest")
+            # At least one known pixel: rounding leaves 1e-16 for none
+            here = ~found & (share * width**2 > 0.5)
+            with np.errstate(invalid="ignore", divide="ignore"):
+                context = np.where(here, total / share, context)
+            found |= here
         closer = np.abs(other - context) < np.abs(result - context)
 
-        result = np.where(clearly_other | (ambiguous & (count > 0) & closer), other, result)
-        distance = np.where(clearly_other, other_distance, distance)
+        # Without context (inside a secondary area), the nearest colour
+        chosen = np.where(found, (clearly_other | ambiguous) & closer, clearly_other)
+        result = np.where(chosen, other, result)
+        distance = np.where(chosen, other_distance, distance)
 
     if max_distance is not None:
         result = np.where(distance <= max_distance, result, np.nan)
@@ -208,6 +222,48 @@ def values_to_rgba(
             alpha = alpha * np.clip((values - transparent_below + fade) / fade, 0.0, 1.0)
     rgba[..., 3] = np.nan_to_num(alpha)
     return np.round(rgba * 255).astype(np.uint8)
+
+
+def rescale(values: np.ndarray, scale: float, order: int = 1) -> np.ndarray:
+    """
+    An image of values resized by a factor, smoothly.
+
+    The values are interpolated, not their colours, so that a colour
+    scale drawn afterwards keeps its steps sharp. Pixels are taken as
+    areas, so the resized image covers the same box. NaN stays NaN
+    without spreading: it is filled from the nearest value for the
+    interpolation, then put back where most of a new pixel is NaN.
+
+    Args:
+        values: Image of shape (..., height, width).
+        scale: Factor on the width and the height: above 1 upscales,
+            below 1 downscales.
+        order: Order of the spline: 1 (bilinear: fast, smooth, no
+            overshoot), 3 (bicubic: smoother, may overshoot at sharp
+            edges) or 0 (nearest: the pixels as they are).
+
+    Returns:
+        The resized image, of shape (..., round(scale * height),
+        round(scale * width)).
+
+    Example:
+        fine = rescale(bt, 4)
+    """
+    values = np.asarray(values, dtype=np.float32)
+    if scale == 1:
+        return values
+    factors = (1,) * (values.ndim - 2) + (scale, scale)
+    missing = np.isnan(values)
+    if missing.any():
+        if missing.all():
+            shape = values.shape[:-2] + tuple(int(round(n * scale)) for n in values.shape[-2:])
+            return np.full(shape, np.nan, dtype=np.float32)
+        nearest = distance_transform_edt(missing, return_distances=False, return_indices=True)
+        filled = values[tuple(nearest)]
+        result = zoom(filled, factors, order=order, mode="nearest", grid_mode=True)
+        hole = zoom(missing.astype(np.float32), factors, order=1, mode="nearest", grid_mode=True) > 0.5
+        return np.where(hole, np.nan, result).astype(np.float32)
+    return zoom(values, factors, order=order, mode="nearest", grid_mode=True).astype(np.float32)
 
 
 def quantile_fit(

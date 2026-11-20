@@ -225,7 +225,7 @@ def run_script(script, folder):
     else:
         source = (EXAMPLES / script).read_text(encoding="utf-8").replace("members = list(range(1,51,1))", "members = [1, 2]")
         # Pixels of 1 deg rather than 0.05: the same script, 400 times fewer pixels
-        source = source.replace("resolution = 0.05", "resolution = 1.0")
+        source = source.replace("resolution = 0.05", "resolution = 1.0").replace("zoom_resolution = 0.01", "zoom_resolution = 1.0")
     run_file = folder / script
     run_file.write_text(source, encoding="utf-8")
 
@@ -380,6 +380,9 @@ def test_cloud_imagery_joins_both_satellites_into_one_layer(example):
     np.testing.assert_allclose(variables["daylight"].data["gain"].sel(channel="visible").isel(source=1), 1.25, rtol=1e-3)
     assert len(variables["daylight"].times()) > 1
     assert variables["frames"][0].shape == (25, 80, 4)
+    # The zoom: 8 x 5 pixels of 1 deg, and 4 x 4 times more smoothed
+    assert variables["image"].shape == (20, 32, 4)
+    assert variables["zoom_extent"] == [-60.0, -52.0, 44.0, 49.0]
     assert (run.folder / "cloud_imagery.gif").exists()
 
 

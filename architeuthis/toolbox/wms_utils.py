@@ -19,7 +19,12 @@ import requests
 
 from typing import Optional, Sequence
 
+from architeuthis.toolbox.image_utils import decode_png
+
 TIMEOUT = 120  # s
+# Largest width or height of one map request, in pixels: GIBS takes up
+# to 20000, EUMETView answered 8000 x 2500 in 5 s (2026-11)
+MAX_SIZE = 4096
 
 
 def capabilities(url: str, timeout: float = TIMEOUT) -> str:
@@ -194,6 +199,58 @@ def get_map(
     if not response.headers.get("content-type", "").startswith("image/"):
         raise RuntimeError(f"{layer} at {params.get('TIME')}: {response.text[:300]}")
     return response.content
+
+
+def get_map_array(
+    url: str,
+    layer: str,
+    bounds: Sequence[float],
+    size: Sequence[int],
+    time=None,
+    style: str = "",
+    max_size: int = MAX_SIZE,
+    timeout: float = TIMEOUT,
+) -> np.ndarray:
+    """
+    The pixels of a map of any size, requested in tiles if needed.
+
+    Tiles of at most `max_size` pixels a side are cut on the pixel grid
+    of the whole map, so that they join without a seam.
+
+    Args:
+        url: Endpoint of the server.
+        layer: Name of the layer.
+        bounds: `(min_lon, min_lat, max_lon, max_lat)`, in degrees.
+        size: `(width, height)`, in pixels.
+        time: Time of the map, None for the default of the layer.
+        style: Style of the layer, "" for its default.
+        max_size: Largest width or height of one request, in pixels.
+        timeout: Timeout of each request, in seconds.
+
+    Returns:
+        RGBA array of shape (height, width, 4), uint8, first row north.
+
+    Example:
+        rgba = get_map_array(url, layer, (-75, 35, 5, 60), (8000, 2500))
+    """
+    min_lon, min_lat, max_lon, max_lat = bounds
+    width, height = int(size[0]), int(size[1])
+    step_lon = (max_lon - min_lon) / width
+    step_lat = (max_lat - min_lat) / height
+    rgba = np.zeros((height, width, 4), dtype=np.uint8)
+    for top in range(0, height, max_size):
+        bottom = min(top + max_size, height)
+        for left in range(0, width, max_size):
+            right = min(left + max_size, width)
+            tile_bounds = (
+                min_lon + left * step_lon,
+                max_lat - bottom * step_lat,
+                min_lon + right * step_lon,
+                max_lat - top * step_lat,
+            )
+            content = get_map(url, layer, tile_bounds, (right - left, bottom - top), time, style, timeout=timeout)
+            rgba[top:bottom, left:right] = decode_png(content)
+    return rgba
 
 
 def parse_gibs_colormap(document: str) -> tuple[np.ndarray, np.ndarray]:
