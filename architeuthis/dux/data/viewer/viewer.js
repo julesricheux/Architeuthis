@@ -34,8 +34,12 @@
   // Valid time of a chart, in the window the timeline covers around it.
   const OVERLAY_MARGIN = 6 * HOUR;
 
-  // Map colours of each theme. Arrows and barbs take the colour of the field
-  // under them, made vivid with the lightness of the theme.
+  // Map colours of each theme. The weather is drawn the same in both: arrows
+  // and barbs take the colour of the field under them, made vivid with
+  // GLYPH_LIGHTNESS, and isobars are ISOBAR_COLOR.
+  const GLYPH_LIGHTNESS = 0.64;
+  const ISOBAR_COLOR = "#f2f4f6";
+  const COAST_OPACITY = 0.45;
   const THEMES = {
     dark: {
       sea: "#26292d",
@@ -43,8 +47,6 @@
       coast: "#000000",
       coastShade: 0.11,
       graticule: "rgba(255,255,255,0.10)",
-      isobar: "#f2f4f6",
-      glyphLightness: 0.64,
     },
     light: {
       sea: "#c9ced3",
@@ -52,18 +54,16 @@
       coast: "#000000",
       coastShade: 0.06,
       graticule: "rgba(0,0,0,0.13)",
-      isobar: "#1c2024",
-      glyphLightness: 0.36,
     },
   };
 
-  // The coastline: a sharp line, shaded on the sea side by lines of growing
+  // The coastline: a thin line, shaded on the sea side by lines of growing
   // width offset towards the sea, which overlap most along the coast. Each
   // entry is a layer id and its width at zoom 5, in pixels.
   const COAST_SHADES = 8;
   const COAST_SHADE_WIDTH = 10;
   const COAST_LAYERS = Array.from({ length: COAST_SHADES }, (_, i) => [`coast-shade-${i + 1}`, (COAST_SHADE_WIDTH * (i + 1)) / COAST_SHADES])
-    .concat([["coast", 1.2]]);
+    .concat([["coast", 0.6]]);
 
   const ICONS = {
     layers: "M12 2 2 7l10 5 10-5-10-5zm-7.8 9.1L2 12.2l10 5 10-5-2.2-1.1L12 15l-7.8-3.9zm0 5L2 17.2l10 5 10-5-2.2-1.1L12 20l-7.8-3.9z",
@@ -630,7 +630,7 @@
   const WAVE_KEY =
     '<div class="key" title="Each glyph points where the waves go: a solid head for 4 m, an open chevron for 1 m">' +
     '<span><svg viewBox="0 0 14 14"><path d="M7 2l6 9H1z" stroke="none"/></svg>4 m</span>' +
-    '<span><svg viewBox="0 0 14 14"><path d="M2 10 7 4l5 6" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>1 m</span>' +
+    '<span><svg viewBox="0 0 14 14"><path d="M2 10 7 3l5 7" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>1 m</span>' +
     "<span>towards where they go</span></div>";
 
   // --------------------------------------------------------------------
@@ -669,12 +669,13 @@
 
   // The colour of a value on the scale of a layer, made vivid for arrows and
   // barbs: the hue of the field under them, saturated, with the lightness of
-  // the theme, so that they stand out from the field in its own colours.
+  // GLYPH_LIGHTNESS, so that they stand out from the field in its own
+  // colours, whatever the theme.
   const glyphColors = {};
   function glyphColor(layer, value) {
     const table = lookupTable(layer);
     const index = colourIndex(layer)(value);
-    const key = `${state.theme}-${layer}-${index}`;
+    const key = `${layer}-${index}`;
     if (!(key in glyphColors)) {
       // A value without colour, such as no precipitation, gives a grey.
       const [h, s, l] = index < 0 ? [0, 0, 0.6] : hsl(table[3 * index], table[3 * index + 1], table[3 * index + 2]);
@@ -682,7 +683,7 @@
       // have, and stand out by their lightness instead.
       const grey = s < 0.08;
       const saturation = grey ? s : Math.max(s, 0.9);
-      const lightness = grey ? (l > 0.5 ? 0.2 : 0.88) : THEMES[state.theme].glyphLightness;
+      const lightness = grey ? (l > 0.5 ? 0.2 : 0.88) : GLYPH_LIGHTNESS;
       glyphColors[key] = { key: `${layer}${index}`, css: `hsl(${h.toFixed(0)}, ${Math.round(100 * saturation)}%, ${Math.round(100 * lightness)}%)` };
     }
     return glyphColors[key];
@@ -691,7 +692,7 @@
   // A wind barb pointing north, feathers on the right in the northern
   // hemisphere and on the left in the southern one, in one flat colour.
   function ensureBarb(knots, south, color) {
-    const id = `barb-${state.theme}-${south ? "s" : "n"}-${knots}-${color.key}`;
+    const id = `barb-${south ? "s" : "n"}-${knots}-${color.key}`;
     return ensureImage(id, 96, (context) => {
       const side = south ? -1 : 1;
       const x = 48;
@@ -739,9 +740,10 @@
   // colour; a dot under half a metre. Heads overlap like the tiers of a fir
   // tree, each tier a notch, so that the glyph stays short in high seas.
   function ensureWaveGlyph(metres, color) {
-    const id = `wave-${state.theme}-${metres}-${color.key}`;
+    const id = `wave-${metres}-${color.key}`;
     return ensureImage(id, 96, (context) => {
-      const x = 48, HALF = 12, HEAD = 15, HEAD_STEP = 9, GAP = 5, CHEVRON = 9, CHEVRON_STEP = 7;
+      // Chevrons are the outline of a head, of the same width and height.
+      const x = 48, HALF = 12, HEAD = 15, HEAD_STEP = 9, GAP = 5, CHEVRON = HEAD, CHEVRON_STEP = 8;
       context.fillStyle = color.css;
       context.strokeStyle = color.css;
       if (metres <= 0) {
@@ -768,9 +770,9 @@
       context.lineWidth = 3.5;
       for (let i = 0; i < chevrons; i++) {
         context.beginPath();
-        context.moveTo(x - HALF + 1.5, y + CHEVRON);
-        context.lineTo(x, y + 1);
-        context.lineTo(x + HALF - 1.5, y + CHEVRON);
+        context.moveTo(x - HALF + 1.5, y + CHEVRON - 1.5);
+        context.lineTo(x, y + 1.5);
+        context.lineTo(x + HALF - 1.5, y + CHEVRON - 1.5);
         context.stroke();
         y += CHEVRON_STEP;
       }
@@ -778,7 +780,7 @@
   }
 
   function ensureCurrentArrow(color) {
-    const id = `current-${state.theme}-${color.key}`;
+    const id = `current-${color.key}`;
     return ensureImage(id, 64, (context) => {
       context.strokeStyle = color.css;
       context.fillStyle = color.css;
@@ -2006,13 +2008,10 @@
       map.setPaintProperty("sea", "background-color", colors.sea);
       map.setPaintProperty("land", "fill-color", colors.land);
       map.setPaintProperty("graticule", "line-color", colors.graticule);
-      map.setPaintProperty("isobars", "line-color", colors.isobar);
       COAST_LAYERS.forEach(([id]) => {
         map.setPaintProperty(id, "line-color", colors.coast);
         if (id !== "coast") map.setPaintProperty(id, "line-opacity", colors.coastShade);
       });
-      // Glyphs take the lightness of the theme: they are drawn again.
-      if (state.ready) updateArrows();
     }
     persist();
   }
@@ -2185,7 +2184,7 @@
     COAST_LAYERS.forEach(([id, width]) => { if (id !== "coast") layers.push(line(id, width, theme.coastShade, width / 2)); });
     layers.push(
       { id: "land", type: "fill", source: "land", paint: { "fill-color": theme.land } },
-      line("coast", 1.2, 1, 0)
+      line("coast", 0.6, COAST_OPACITY, 0)
     );
     layers.push(
       { id: "graticule", type: "line", source: "graticule", paint: { "line-color": theme.graticule, "line-width": 0.6 } },
@@ -2195,7 +2194,7 @@
       layers.push({ id: `overlay-${overlay.id}`, type: "raster", source: `overlay-${overlay.id}`, layout: hidden, paint: { "raster-opacity": overlay.opacity, "raster-fade-duration": 0 } });
     });
     layers.push(
-      { id: "isobars", type: "line", source: "isobars", paint: { "line-color": theme.isobar, "line-width": 0.9, "line-opacity": 0.7 } },
+      { id: "isobars", type: "line", source: "isobars", paint: { "line-color": ISOBAR_COLOR, "line-width": 0.9, "line-opacity": 0.7 } },
       {
         id: "arrows",
         type: "symbol",

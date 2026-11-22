@@ -36,7 +36,6 @@
   --accent: #0b7fb8;
   --accent-hover: #0a6d9e;
   --accent-fg: #ffffff;
-  --isobar: #1c2024;
   --picker: #1d2125;
   --error: #b3261e;
   color-scheme: light;
@@ -405,6 +404,7 @@ button { cursor: pointer; }
   white-space: nowrap;
   pointer-events: none;
 }
+/* Weather is drawn the same in both themes: isobars as in the dark one. */
 .isobar-label { color: var(--isobar); font-weight: 500; font-size: 10px; }
 
 /* Weather picker: a dot to drag, with a line from it up the left side of
