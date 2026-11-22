@@ -143,7 +143,8 @@ ROUTE_COLORS = (
 # Entries of a report that are geometry, not tooltip variables.
 _GEOMETRY = {"tim", "lat", "lon", "pos", "ctim", "clat", "clon", "cpos"}
 
-# Quantities of the frames, in the order they are packed three by three.
+# Quantities of the built-in layers, in the order they are packed three by
+# three. The other fields follow, as quantities named after their layer.
 QUANTITIES = (
     "wind_u",
     "wind_v",
@@ -156,13 +157,150 @@ QUANTITIES = (
     "gust",
 )
 
-# Map layers and the quantities each one needs.
+# Built-in map layers and the quantities each one needs.
 LAYER_QUANTITIES = {
+    "wind": ("wind_u", "wind_v"),
+    "gust": ("gust",),
+    "waves": ("swh", "wave_x", "wave_y"),
+    "current": ("current_u", "current_v"),
+    "pressure": ("pressure",),
+}
+
+# Arrows drawn over a layer, and the quantities they need: a layer brings
+# those of its arrows into the file.
+ARROW_QUANTITIES = {
+    "wind": ("wind_u", "wind_v"),
+    "waves": ("swh", "wave_x", "wave_y"),
+    "current": ("current_u", "current_v"),
+}
+
+# Codes of precipitation types, WMO GRIB2 code table 4.201, as IFS gives
+# them in `ptype`: label and colour, None for no precipitation.
+PRECIPITATION_TYPES = {
+    0: ("None", None),
+    1: ("Rain", "#3a86ff"),
+    2: ("Thunderstorm", "#8338ec"),
+    3: ("Freezing rain", "#ff006e"),
+    4: ("Mixed, ice", "#fb5607"),
+    5: ("Snow", "#ffffff"),
+    6: ("Wet snow", "#a8dadc"),
+    7: ("Rain and snow", "#90be6d"),
+    8: ("Ice pellets", "#ffbe0b"),
+    9: ("Graupel", "#f4a261"),
+    10: ("Hail", "#e63946"),
+    11: ("Drizzle", "#8ecae6"),
+    12: ("Freezing drizzle", "#f72585"),
+}
+
+GRAVITY = 9.80665  # m/s2
+
+
+def _kelvin_to_celsius(values):
+    return values - 273.15
+
+
+def _rate_to_mm_per_hour(values):
+    return values * 3600.0  # kg m-2 s-1 > mm/h
+
+
+# Fields shown besides the built-in layers, by layer, found under the
+# first of `names` that a forecast has: label, unit, conversion to that
+# unit, colour scale (a matplotlib colormap and its range) or categories,
+# ticks, decimals, values under which nothing is drawn (`floor`), and
+# arrows drawn with it. `slope` is computed from the waves and their
+# period. Any other field of a forecast is shown in its own units, on a
+# scale of its values, and so are the `add_function` models of a
+# `Forecast` of time and position.
+FIELDS = {
+    "period": {
+        "names": ("mwp", "mp2", "pp1d", "perpw"),
+        "label": "Wave period",
+        "unit": "s",
+        "description": "Mean wave period",
+        "colormap": ("YlGnBu", 0.0, 20.0),
+        "ticks": [0, 4, 8, 12, 16],
+        "digits": 1,
+        "arrows": "waves",
+    },
+    "slope": {
+        "names": (),
+        "label": "Wave slope",
+        "unit": "%",
+        "description": "Wave steepness, 2 pi Hs / (g T2), from the height and period",
+        "colormap": ("magma", 0.0, 8.0),
+        "ticks": [0, 2, 4, 6, 8],
+        "digits": 1,
+        "arrows": "waves",
+    },
+    "temperature": {
+        "names": ("t2m",),
+        "label": "Temperature",
+        "unit": "°C",
+        "description": "Air temperature at 2 m",
+        "convert": _kelvin_to_celsius,
+        "colormap": ("RdYlBu_r", -30.0, 40.0),
+        "ticks": [-20, -10, 0, 10, 20, 30],
+        "digits": 0,
+        "arrows": "wind",
+    },
+    "cape": {
+        "names": ("mucape", "cape"),
+        "label": "CAPE",
+        "unit": "J/kg",
+        "description": "Convective available potential energy",
+        "colormap": ("inferno", 0.0, 3000.0),
+        "ticks": [0, 500, 1000, 2000, 3000],
+        "digits": 0,
+        "floor": 50.0,
+        "arrows": "wind",
+    },
+    "precipitation": {
+        "names": ("tprate", "prate"),
+        "label": "Precipitation",
+        "unit": "mm/h",
+        "description": "Precipitation rate",
+        "convert": _rate_to_mm_per_hour,
+        "colormap": ("YlGnBu", 0.0, 10.0),
+        "ticks": [0, 1, 2, 5, 10],
+        "digits": 1,
+        "floor": 0.1,
+        "arrows": "wind",
+    },
+    "ptype": {
+        "names": ("ptype",),
+        "label": "Precipitation type",
+        "unit": "",
+        "description": "Precipitation type",
+        "categories": PRECIPITATION_TYPES,
+        "digits": 0,
+        "arrows": "wind",
+    },
+}
+
+# Names of forecast variables that the built-in layers may read.
+_WIND_NAMES = (("u10", "v10"), ("si10", "wdir10"))
+_GUST_NAMES = ("gust", "i10fg", "fg10")
+_PRESSURE_NAMES = ("msl", "prmsl")
+_WAVE_DIRECTION_NAMES = ("mwd", "dirpw")
+# Wave components of `Forecast.add_wave_components`, not fields of their own.
+_WAVE_COMPONENTS = ("uw", "vw")
+
+# The quantities each built-in layer colours, which it needs to be shown.
+_LAYER_COLOURS = {
     "wind": ("wind_u", "wind_v"),
     "gust": ("gust",),
     "waves": ("swh",),
     "current": ("current_u", "current_v"),
     "pressure": ("pressure",),
+}
+
+# Label and arrows of the built-in layers; `_layers` gives the rest.
+_BUILT_IN_LAYERS = {
+    "wind": ("Wind", "wind"),
+    "gust": ("Gusts", "wind"),
+    "waves": ("Waves", "waves"),
+    "current": ("Current", "current"),
+    "pressure": ("Pressure", None),
 }
 
 
@@ -297,6 +435,7 @@ def build_scene(
     note: str = "",
     settings: Optional[Mapping] = None,
     member: Optional[int] = None,
+    fields: Optional[Sequence[str]] = None,
     resolution: float = DEFAULT_RESOLUTION,
     margin: float = DEFAULT_MARGIN,
     time_margin: float = DEFAULT_TIME_MARGIN,
@@ -309,9 +448,12 @@ def build_scene(
         forecasts: Forecast layers by label, such as
             `{"IFS": [atmosphere, wave]}`. Each value is a `Forecast`,
             an `xarray.Dataset` or a list of them, the others then
-            interpolated on the grid of the first. Recognized fields
-            are `u10` and `v10` (or `si10` and `wdir10`), `gust`, `msl`
-            (or `prmsl`), `swh` with `mwd` (or `dirpw`), `uo` and `vo`.
+            interpolated on the grid of the first. The built-in layers
+            read `u10` and `v10` (or `si10` and `wdir10`), `gust`,
+            `msl` (or `prmsl`), `swh` with `mwd` (or `dirpw`), `uo` and
+            `vo`; `FIELDS` gives other known fields, and any other
+            field, or `add_function` model of a `Forecast`, is a layer
+            of its own (`forecast_fields`).
         routes: Indices of the reports to include, all by default. A
             route keeps its index as identifier, `r<index>`, and its
             colour.
@@ -332,11 +474,14 @@ def build_scene(
             which the timeline goes when it is shown.
         title: Title of the page, by default with today's date.
         note: Message shown under the title, for the crew.
-        settings: Initial selection of `ui.py`: `routes`, `sources` and
-            `overlays` (identifiers shown) and `hover` (variables
-            shown), None, the default for each, showing everything;
-            `theme`, `"dark"` (default) or `"light"`.
+        settings: Initial selection of `ui.py`: `routes`, `sources`,
+            `overlays` and `fields` (identifiers shown) and `hover`
+            (variables shown), None, the default for each, showing
+            everything; `theme`, `"dark"` (default) or `"light"`.
         member: Ensemble member of the forecasts, the first by default.
+        fields: Layers of the forecasts to put in the file, such as
+            `["wind", "waves", "period"]`, all by default. A layer
+            brings the fields of its arrows: wave arrows with `period`.
         resolution: Grid spacing of the forecast frames, in deg.
         margin: Forecast kept around the routes, in deg.
         time_margin: Forecast kept before and after the routes, in s.
@@ -376,6 +521,7 @@ def build_scene(
     box = _route_box(included, margin)
     window = _route_window(included, time_margin)
     sources = []
+    extra_layers = {}
     for label, forecast in (forecasts or {}).items():
         source = _forecast_source(
             forecast,
@@ -384,9 +530,12 @@ def build_scene(
             window=window,
             member=member,
             resolution=resolution,
+            fields=fields,
         )
         if source is not None:
             source["id"] = _unique_id(_slug(label), [other["id"] for other in sources])
+            for layer, info in source.pop("fields").items():
+                extra_layers[layer] = _merge_ranges(extra_layers.get(layer), info)
             sources.append(source)
 
     if title is None:
@@ -402,12 +551,13 @@ def build_scene(
             "sources": None,
             "overlays": None,
             "hover": None,
+            "fields": None,
             **dict(settings or {}),
         },
         "variables": {name: variable_info(name) for name in variables},
         "routes": scene_routes,
         "sources": sources,
-        "layers": _layers(),
+        "layers": _layers(extra_layers),
         "zones": [_zone(zone, index) for index, zone in enumerate(zones)],
         "overlays": [_overlay(overlay, index) for index, overlay in enumerate(overlays)],
         "land": land(),
@@ -675,6 +825,32 @@ def _route_window(reports: Sequence[Mapping], time_margin: float) -> Optional[tu
 # --------------------------------------------------------------------------
 
 
+def forecast_fields(forecasts: Mapping, member: Optional[int] = None) -> dict:
+    """
+    The layers that some forecasts can show, and their labels.
+
+    Args:
+        forecasts: Forecasts by label, as for `build_scene`.
+        member: Ensemble member, the first by default.
+
+    Returns:
+        `{layer: label}`, the built-in layers first, then the others in
+        the order the forecasts give them, such as
+        `{"wind": "Wind", "waves": "Waves", "period": "Wave period"}`.
+    """
+    found = {}
+    for forecast in forecasts.values():
+        dataset = _dataset(forecast, member)
+        dataset = dataset.isel(valid_time=slice(0, 1), latitude=slice(0, 2), longitude=slice(0, 2))
+        dataset = dataset.assign(_model_fields(forecast, dataset))
+        quantities, extras = _fields(dataset)
+        for layer in _available_layers(quantities, extras):
+            label = _BUILT_IN_LAYERS[layer][0] if layer in _BUILT_IN_LAYERS else extras[layer]["label"]
+            found.setdefault(layer, label)
+    built_in = [layer for layer in _BUILT_IN_LAYERS if layer in found]
+    return {layer: found[layer] for layer in built_in + [layer for layer in found if layer not in built_in]}
+
+
 def _forecast_source(
     forecast,
     label: str,
@@ -682,9 +858,13 @@ def _forecast_source(
     window: Optional[tuple],
     member: Optional[int],
     resolution: float,
+    fields: Optional[Sequence[str]] = None,
 ) -> Optional[dict]:
     """
     The frames of a forecast around the routes, or None without fields.
+
+    The source holds `fields`, the description of its layers other than
+    the built-in ones, which `build_scene` takes out.
     """
     dataset = _dataset(forecast, member)
     times = _times(dataset)
@@ -693,11 +873,17 @@ def _forecast_source(
     times = times[keep]
     dataset = _crop(dataset, box)
     dataset = _thin(dataset, resolution)
+    dataset = dataset.assign(_model_fields(forecast, dataset))
 
-    quantities = _quantities(dataset)
-    if not quantities:
+    quantities, extras = _fields(dataset)
+    layers = _available_layers(quantities, extras)
+    if not layers:
         status(f"⚠️ Forecast {label}: no field to show among {sorted(dataset.data_vars)}.")
         return None
+    if fields is not None:
+        layers = [layer for layer in layers if layer in fields]
+        if not layers:
+            return None
 
     latitude = dataset["latitude"].to_numpy().astype(float)
     longitude = dataset["longitude"].to_numpy().astype(float)
@@ -705,13 +891,29 @@ def _forecast_source(
         status(f"⚠️ Forecast {label}: fewer than two points in a direction, left out.")
         return None
 
+    # The quantities of the layers and of their arrows, built-in ones first.
+    needed = []
+    for layer in layers:
+        arrows = _BUILT_IN_LAYERS[layer][1] if layer in _BUILT_IN_LAYERS else extras[layer]["arrows"]
+        for name in (*LAYER_QUANTITIES.get(layer, (layer,)), *ARROW_QUANTITIES.get(arrows, ())):
+            if name in quantities and name not in needed:
+                needed.append(name)
+    needed.sort(key=lambda name: QUANTITIES.index(name) if name in QUANTITIES else len(QUANTITIES))
+
     stored = {}
     arrays = {}
-    for name in QUANTITIES:
-        if name in quantities:
-            values = quantities[name].transpose("valid_time", "latitude", "longitude").to_numpy()
-            arrays[name], offset, scale = _quantize(values)
-            stored[name] = {"offset": round(offset, 6), "scale": round(scale, 8)}
+    for name in needed:
+        values = quantities[name].transpose("valid_time", "latitude", "longitude").to_numpy().astype(float)
+        categorical = "categories" in extras.get(name, {})
+        arrays[name], offset, scale = _quantize(values, exact=categorical)
+        stored[name] = {"offset": round(offset, 6), "scale": round(scale, 8)}
+        if categorical:
+            stored[name]["categorical"] = True
+        elif name in extras and extras[name].get("range") is None:
+            finite = values[np.isfinite(values)]
+            extras[name]["data_range"] = (
+                [float(np.percentile(finite, 2)), float(np.percentile(finite, 98))] if finite.size else [0.0, 1.0]
+            )
 
     names = list(arrays)
     packs = []
@@ -739,8 +941,57 @@ def _forecast_source(
         "times": [int(round(time)) for time in times],
         "quantities": stored,
         "packs": packs,
-        "layers": [layer for layer, needs in LAYER_QUANTITIES.items() if set(needs) <= set(stored)],
+        "layers": layers,
+        "fields": {layer: extras[layer] for layer in layers if layer in extras},
     }
+
+
+def _available_layers(quantities: Mapping, extras: Mapping) -> list:
+    """
+    The layers a forecast can show: built-in ones, then the others.
+
+    A built-in layer needs the quantities it colours: the wind its two
+    components and the waves their height.
+    """
+    built_in = [layer for layer, needs in _LAYER_COLOURS.items() if set(needs) <= set(quantities)]
+    return built_in + list(extras)
+
+
+def _model_fields(forecast, dataset: xr.Dataset) -> dict:
+    """
+    The `add_function` models of the forecasts, on the grid of a dataset.
+
+    Only the models of time and position that are not fields of the
+    dataset are evaluated; one that fails is left out with a warning.
+    """
+    from architeuthis.common import FORECAST_KEYS, FunctionModel
+
+    items = forecast if isinstance(forecast, (list, tuple)) else [forecast]
+    models = [
+        (item, key)
+        for item in items
+        for key, model in (getattr(item, "models", None) or {}).items()
+        if isinstance(model, FunctionModel)
+        and key not in dataset.data_vars
+        and set(model.input_names()) <= set(FORECAST_KEYS)
+    ]
+    if not models:
+        return {}
+    time, latitude, longitude = (dataset[name].to_numpy().astype(float) for name in FORECAST_KEYS)
+    grids = np.meshgrid(time, latitude, longitude, indexing="ij")
+    query = dict(zip(FORECAST_KEYS, (grid.ravel() for grid in grids)))
+    found = {}
+    for item, key in models:
+        if key in found:
+            continue
+        try:
+            values = np.asarray(item(key, query), dtype=float).reshape(grids[0].shape)
+        # A model may fail on the grid in any way: it is then only left out.
+        except Exception as error:  # noqa: BLE001
+            status(f"⚠️ {key} of {getattr(item, 'name', 'a forecast')} cannot be shown: {error}")
+            continue
+        found[key] = (("valid_time", "latitude", "longitude"), values)
+    return found
 
 
 def _dataset(forecast, member: Optional[int] = None) -> xr.Dataset:
@@ -793,41 +1044,138 @@ def _dataset(forecast, member: Optional[int] = None) -> xr.Dataset:
     return data.sortby(["valid_time", "latitude", "longitude"])
 
 
-def _quantities(dataset: xr.Dataset) -> dict:
+def _fields(dataset: xr.Dataset) -> tuple:
     """
-    The fields of the viewer found in a dataset, in its units.
+    The quantities of the viewer found in a dataset, and its other layers.
 
     Speeds are in kt, pressures in hPa and wave heights in m. Wave
     directions are unit vectors towards where the waves come from.
+    Every other field of time and position is a layer of its own, a
+    quantity of the same name: those of `FIELDS` in their units, the
+    others in theirs.
+
+    Returns:
+        The quantities, `{name: DataArray}`, and the description of the
+        other layers, `{layer: dict}`, in the order of the dataset.
     """
-    names = set(dataset.data_vars)
+    names = [name for name in dataset.data_vars if set(dataset[name].dims) == {"valid_time", "latitude", "longitude"}]
+    used = set(_WAVE_COMPONENTS)
     found = {}
-    if {"u10", "v10"} <= names:
-        found["wind_u"] = dataset["u10"] * KNOTS_PER_MS
-        found["wind_v"] = dataset["v10"] * KNOTS_PER_MS
-    elif {"si10", "wdir10"} <= names:
-        speed = dataset["si10"] * KNOTS_PER_MS
-        found["wind_u"] = -speed * np.sin(np.radians(dataset["wdir10"]))
-        found["wind_v"] = -speed * np.cos(np.radians(dataset["wdir10"]))
-    for name in ("gust", "i10fg", "fg10"):
-        if name in names:
-            found["gust"] = dataset[name] * KNOTS_PER_MS
+
+    def first(candidates):
+        return next((name for name in candidates if name in names), None)
+
+    for u_name, v_name in _WIND_NAMES:
+        if {u_name, v_name} <= set(names):
+            if u_name == "u10":
+                found["wind_u"] = dataset["u10"] * KNOTS_PER_MS
+                found["wind_v"] = dataset["v10"] * KNOTS_PER_MS
+            else:
+                speed = dataset["si10"] * KNOTS_PER_MS
+                found["wind_u"] = -speed * np.sin(np.radians(dataset["wdir10"]))
+                found["wind_v"] = -speed * np.cos(np.radians(dataset["wdir10"]))
+            used |= {u_name, v_name}
             break
-    for name in ("msl", "prmsl"):
-        if name in names:
-            found["pressure"] = dataset[name] / 100.0
-            break
+    name = first(_GUST_NAMES)
+    if name:
+        found["gust"] = dataset[name] * KNOTS_PER_MS
+        used.add(name)
+    name = first(_PRESSURE_NAMES)
+    if name:
+        found["pressure"] = dataset[name] / 100.0
+        used.add(name)
     if "swh" in names:
         found["swh"] = dataset["swh"]
-        for name in ("mwd", "dirpw"):
-            if name in names:
-                found["wave_x"] = np.sin(np.radians(dataset[name]))
-                found["wave_y"] = np.cos(np.radians(dataset[name]))
-                break
-    if {"uo", "vo"} <= names:
+        used.add("swh")
+        name = first(_WAVE_DIRECTION_NAMES)
+        if name:
+            found["wave_x"] = np.sin(np.radians(dataset[name]))
+            found["wave_y"] = np.cos(np.radians(dataset[name]))
+            used.add(name)
+    if {"uo", "vo"} <= set(names):
         found["current_u"] = dataset["uo"] * KNOTS_PER_MS
         found["current_v"] = dataset["vo"] * KNOTS_PER_MS
-    return found
+        used |= {"uo", "vo"}
+
+    # Known fields, then the others, each at the place of its first name.
+    order = {name: index for index, name in enumerate(names)}
+    extras = {}
+    position = {}
+    for layer, info in FIELDS.items():
+        name = first(info["names"])
+        if name is None:
+            continue
+        convert = info.get("convert")
+        found[layer] = convert(dataset[name]) if convert else dataset[name]
+        extras[layer] = _field_info(info)
+        position[layer] = order[name]
+        used.add(name)
+    period = first(FIELDS["period"]["names"])
+    if "swh" in names and period:
+        # The steepness of the waves: their height over their deep water length.
+        slope = 100.0 * 2.0 * np.pi * dataset["swh"] / (GRAVITY * dataset[period] ** 2)
+        found["slope"] = slope.where(np.isfinite(slope))
+        extras["slope"] = _field_info(FIELDS["slope"])
+        position["slope"] = order[period] + 0.5
+
+    taken = set(QUANTITIES) | set(LAYER_QUANTITIES) | set(found)
+    for name in names:
+        if name in used:
+            continue
+        layer = _unique_id(_slug(name).replace("-", "_"), taken)
+        taken.add(layer)
+        attrs = dataset[name].attrs
+        text = name.replace("_", " ").capitalize() if "_" in name else name
+        label = str(attrs.get("GRIB_name") or attrs.get("long_name") or text)
+        found[layer] = dataset[name]
+        extras[layer] = {
+            "label": label,
+            "unit": str(attrs.get("GRIB_units") or attrs.get("units") or ""),
+            "description": label,
+            "colormap": "viridis",
+            "range": None,
+            "ticks": None,
+            "digits": None,
+            "floor": None,
+            "arrows": None,
+        }
+        position[layer] = order[name]
+    return found, dict(sorted(extras.items(), key=lambda item: position[item[0]]))
+
+
+def _field_info(info: Mapping) -> dict:
+    """
+    The description of a layer of `FIELDS`, without its names.
+    """
+    described = {
+        "label": info["label"],
+        "unit": info["unit"],
+        "description": info.get("description", info["label"]),
+        "digits": info.get("digits"),
+        "floor": info.get("floor"),
+        "arrows": info.get("arrows"),
+    }
+    if "categories" in info:
+        described["categories"] = info["categories"]
+    else:
+        colormap, low, high = info["colormap"]
+        described.update(colormap=colormap, range=[low, high], ticks=info.get("ticks"))
+    return described
+
+
+def _merge_ranges(first: Optional[dict], second: dict) -> dict:
+    """
+    The description of a layer in two sources, over both their ranges.
+    """
+    if first is None:
+        return dict(second)
+    merged = dict(first)
+    if "data_range" in second:
+        low, high = second["data_range"]
+        if "data_range" in first:
+            low, high = min(low, first["data_range"][0]), max(high, first["data_range"][1])
+        merged["data_range"] = [low, high]
+    return merged
 
 
 def _times(dataset: xr.Dataset) -> np.ndarray:
@@ -893,20 +1241,26 @@ def _thin(dataset: xr.Dataset, resolution: float) -> xr.Dataset:
     return dataset.isel(latitude=slice(None, None, stride), longitude=slice(None, None, stride))
 
 
-def _quantize(values: np.ndarray) -> tuple:
+def _quantize(values: np.ndarray, exact: bool = False) -> tuple:
     """
     Values as bytes, with the offset and scale to read them back.
 
     The value of byte b is `offset + scale * b`; 255 marks NaN.
+    Integers spanning fewer than 255 values, such as categories, are
+    kept exactly, with a scale of 1; `exact` rounds values to integers
+    first.
     """
     values = np.asarray(values, dtype=float)
+    if exact:
+        values = np.round(values)
     finite = np.isfinite(values)
     if finite.any():
         low = float(values[finite].min())
         high = float(values[finite].max())
     else:
         low = high = 0.0
-    scale = (high - low) / (NO_DATA - 1) if high > low else 1.0
+    integers = bool(finite.any()) and bool(np.all(values[finite] == np.round(values[finite]))) and high - low < NO_DATA
+    scale = 1.0 if integers or not high > low else (high - low) / (NO_DATA - 1)
     data = np.full(values.shape, NO_DATA, dtype=np.uint8)
     data[finite] = np.clip(np.round((values[finite] - low) / scale), 0, NO_DATA - 1)
     return data, low, scale
@@ -921,61 +1275,128 @@ def _png(pixels: np.ndarray) -> str:
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
-def _layers() -> dict:
+def _hex_scale(colour, low: float, high: float, count: int = 96) -> list:
     """
-    Label, unit, colour scale and legend of each map layer.
+    A colour function sampled from low to high, as hexadecimal colours.
+    """
+    return [
+        "#{:02x}{:02x}{:02x}".format(*(int(round(255 * channel)) for channel in colour(value)[:3]))
+        for value in np.linspace(low, high, count)
+    ]
+
+
+def _layers(extras: Optional[Mapping] = None) -> dict:
+    """
+    Label, unit, colour scale, legend and arrows of each map layer.
+
+    A layer colours a `quantity`, or the norm of a `vector` of two, and
+    draws the arrows of `ARROW_QUANTITIES` it names, if any. The
+    built-in layers come first, then the others of the sources
+    (`extras`): on the scale of `FIELDS`, or on one over most values of
+    the sources, or in categories.
     """
     from matplotlib import colormaps
+    from matplotlib.ticker import MaxNLocator
 
     from architeuthis.toolbox.windy_colormaps import get_wave_cmap, get_wind_cmap
 
     wind, wind_norm = get_wind_cmap()
     wave, wave_norm = get_wave_cmap()
-
-    def scale(colour, low, high, count=96):
-        values = np.linspace(low, high, count)
-        return [
-            "#{:02x}{:02x}{:02x}".format(*(int(round(255 * channel)) for channel in colour(value)[:3]))
-            for value in values
-        ]
-
-    wind_colours = scale(lambda kt: wind(wind_norm(kt / KNOTS_PER_MS)), 0.0, 70.0)
-    return {
+    wind_colours = _hex_scale(lambda kt: wind(wind_norm(kt / KNOTS_PER_MS)), 0.0, 70.0)
+    layers = {
         "wind": {
-            "label": "Wind",
-            "unit": "kt",
             "colormap": {"min": 0.0, "max": 70.0, "colors": wind_colours},
             "ticks": [0, 10, 20, 30, 40, 50, 60],
+            "unit": "kt",
+            "digits": 0,
+            "description": "Wind at 10 m",
+            "vector": ["wind_u", "wind_v"],
         },
         "gust": {
-            "label": "Gusts",
-            "unit": "kt",
             "colormap": {"min": 0.0, "max": 70.0, "colors": wind_colours},
             "ticks": [0, 10, 20, 30, 40, 50, 60],
+            "unit": "kt",
+            "digits": 0,
+            "description": "Wind gusts at 10 m",
+            "quantity": "gust",
         },
         "waves": {
-            "label": "Waves",
-            "unit": "m",
-            "colormap": {"min": 0.0, "max": 12.0, "colors": scale(lambda m: wave(wave_norm(m)), 0.0, 12.0)},
+            "colormap": {"min": 0.0, "max": 12.0, "colors": _hex_scale(lambda m: wave(wave_norm(m)), 0.0, 12.0)},
             "ticks": [0, 1, 2, 3, 4, 6, 8, 10],
+            "unit": "m",
+            "digits": 1,
+            "description": "Significant wave height",
+            "quantity": "swh",
         },
         "current": {
-            "label": "Current",
-            "unit": "kt",
-            "colormap": {"min": 0.0, "max": 3.0, "colors": scale(lambda kt: colormaps["viridis"](kt / 3.0), 0.0, 3.0)},
+            "colormap": {
+                "min": 0.0,
+                "max": 3.0,
+                "colors": _hex_scale(lambda kt: colormaps["viridis"](kt / 3.0), 0.0, 3.0),
+            },
             "ticks": [0, 0.5, 1, 1.5, 2, 2.5],
+            "unit": "kt",
+            "digits": 1,
+            "description": "Surface current",
+            "vector": ["current_u", "current_v"],
         },
         "pressure": {
-            "label": "Pressure",
-            "unit": "hPa",
             "colormap": {
                 "min": 960.0,
                 "max": 1050.0,
-                "colors": scale(lambda hpa: colormaps["RdYlBu_r"]((hpa - 960.0) / 90.0), 960.0, 1050.0),
+                "colors": _hex_scale(lambda hpa: colormaps["RdYlBu_r"]((hpa - 960.0) / 90.0), 960.0, 1050.0),
             },
             "ticks": [960, 980, 1000, 1020, 1040],
+            "unit": "hPa",
+            "digits": 0,
+            "description": "Mean sea level pressure",
+            "quantity": "pressure",
         },
     }
+    for layer, (label, arrows) in _BUILT_IN_LAYERS.items():
+        layers[layer] = {"label": label, **layers[layer], "arrows": arrows}
+
+    for layer, info in (extras or {}).items():
+        entry = {
+            "label": info["label"],
+            "unit": info["unit"],
+            "description": info["description"],
+            "quantity": layer,
+            "arrows": info["arrows"],
+        }
+        if info.get("floor") is not None:
+            entry["floor"] = info["floor"]
+        if "categories" in info:
+            entry["digits"] = 0
+            entry["categories"] = [
+                {"value": int(value), "label": label, "color": color}
+                for value, (label, color) in info["categories"].items()
+            ]
+            layers[layer] = entry
+            continue
+        low, high = info.get("range") or info.get("data_range") or [0.0, 1.0]
+        if not high > low:
+            low, high = low - 0.5, low + 0.5
+        ticks = info.get("ticks")
+        if not ticks:
+            ticks = [float(tick) for tick in MaxNLocator(5).tick_values(low, high) if low <= tick <= high]
+            ticks = [int(tick) if tick == int(tick) else round(tick, 6) for tick in ticks]
+        digits = info.get("digits")
+        if digits is None:
+            span = high - low
+            digits = 0 if span >= 50 else 1 if span >= 5 else 2 if span >= 0.5 else 3
+        colour = colormaps[info["colormap"]]
+        entry.update(
+            colormap={
+                "min": round(float(low), 6),
+                "max": round(float(high), 6),
+                "colors": _hex_scale(lambda value: colour((value - low) / (high - low)), low, high),
+            },
+            ticks=ticks,
+            digits=int(digits),
+        )
+        layers[layer] = entry
+    return layers
 
 
 # --------------------------------------------------------------------------

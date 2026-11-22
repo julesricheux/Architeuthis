@@ -9,7 +9,7 @@ the `dux` extra: `pip install architeuthis[dux]`.
 
 The page shows the viewer of `share.py` with the forecasts and the
 routes of a report file, and, beside it, what to share: routes, tooltip
-variables, forecasts, title and a note to the crew. Each route takes a
+variables, forecasts and their fields, title and a note to the crew. Each route takes a
 name and a description, and clicking a point of a route in the viewer
 comments on it. Changes show at once in the viewer, and the download button writes
 the same page as one HTML file, which opens in any browser, offline.
@@ -82,6 +82,7 @@ from architeuthis.dux.share import (
     ROUTE_COLORS,
     build_scene,
     default_variables,
+    forecast_fields,
     maplibre_files,
     png_data_uri,
     route_labels,
@@ -209,16 +210,21 @@ domain = dict(
 
 if PRODUCT == "oper":
     ATMOS["ifs"] = DeterministicHerbieForecast(
-        "wind_ifs", model="ifs", product="oper", regex=r":10[u|v]:|:msl:", fxx=steps_00_12, **domain,
+        "wind_ifs", model="ifs", product="oper", regex=r":10[u|v]:|:msl:|:10fg:|:mucape:|:ptype:", fxx=steps_00_12, **domain,
     )
     ATMOS["gfs"] = DeterministicHerbieForecast(
-        "wind_gfs", model="gfs", product="pgrb2.0p25", regex=r"(?:U|V)GRD:10 m|PRMSL", fxx=steps_00_12, **domain,
+        "wind_gfs",
+        model="gfs",
+        product="pgrb2.0p25",
+        regex=r"(?:U|V)GRD:10 m above ground|PRMSL|GUST:surface|CAPE:255-0 mb above ground",
+        fxx=steps_00_12,
+        **domain,
     )
     WAVE["ifs"] = DeterministicHerbieForecast(
-        "wave_ifs", model="ifs", product="wave", regex=r":swh:|:mwd:", fxx=steps_00_12, **domain,
+        "wave_ifs", model="ifs", product="wave", regex=r":swh:|:mwd:|:mwp:", fxx=steps_00_12, **domain,
     )
     WAVE["gfs"] = DeterministicHerbieForecast(
-        "wave_gfs", model="gfs_wave", product="global.0p25", regex=r":HTSGW:|:DIRPW:", fxx=steps_00_12, **domain,
+        "wave_gfs", model="gfs_wave", product="global.0p25", regex=r":HTSGW:|:DIRPW:|:PERPW:", fxx=steps_00_12, **domain,
     )
 elif PRODUCT == "enfo":
     ATMOS["ifs"] = EnsembleHerbieForecast(
@@ -235,7 +241,8 @@ for model in MODELS:
     WAVE[model].load_data()
 
 # One dataset per model, the waves on the grid of the wind. share.py reads the GFS names
-# (prmsl, dirpw) as well as the IFS ones.
+# (prmsl, dirpw, perpw) as well as the IFS ones, and shows any other field: add it to a regex
+# above to share it. The wave slope comes from the height and period.
 DS = {}
 for model in MODELS:
     atmosphere = ATMOS[model].data
@@ -246,6 +253,9 @@ for model in MODELS:
     )
 
 FORECASTS = {model.upper(): DS[model] for model in MODELS}
+
+# Every layer of the forecasts, which the analyst ticks to share it: {layer: label}.
+FIELDS = forecast_fields(FORECASTS)
 
 
 #%% ROUTES AND ZONES
@@ -609,6 +619,13 @@ sidebar = dmc.Stack(
                 children=dmc.Group([dmc.Checkbox(label=model.upper(), value=model) for model in MODELS]),
                 value=list(MODELS),
             ),
+            dmc.CheckboxGroup(
+                id="fields-select",
+                label="Fields",
+                children=dmc.Group([dmc.Checkbox(label=label, value=layer) for layer, label in FIELDS.items()], gap="xs"),
+                value=list(FIELDS),
+                size="xs",
+            ),
             html.Div(
                 dmc.NumberInput(
                     id="member-select",
@@ -769,7 +786,7 @@ def quick_select(optimized, every, none, name):
 # of the analyst ("architeuthis:comments") and its theme ("architeuthis:theme").
 app.clientside_callback(
     """
-    function (routes, hover, sources, title, note, noaa, texts, comments, light, names, ids, nameIds) {
+    function (routes, hover, sources, title, note, noaa, texts, comments, light, names, fields, ids, nameIds) {
         const descriptions = {};
         (ids || []).forEach(function (id, i) { descriptions["r" + id.index] = (texts || [])[i] || ""; });
         const labels = {};
@@ -778,6 +795,7 @@ app.clientside_callback(
             routes: routes || [],
             hover: hover || [],
             sources: sources || [],
+            fields: fields || [],
             overlays: noaa ? ["o0"] : [],
             title: title || "",
             note: note || "",
@@ -820,6 +838,7 @@ app.clientside_callback(
     Input("route-comments", "data"),
     Input("theme-switch", "checked"),
     Input({"type": "route-name", "index": ALL}, "value"),
+    Input("fields-select", "value"),
     State({"type": "route-description", "index": ALL}, "id"),
     State({"type": "route-name", "index": ALL}, "id"),
 )
@@ -885,6 +904,7 @@ def route_names(collection, names=None, ids=None) -> list:
     State("theme-switch", "checked"),
     State({"type": "route-name", "index": ALL}, "value"),
     State({"type": "route-name", "index": ALL}, "id"),
+    State("fields-select", "value"),
     prevent_initial_call=True,
 )
 def download(
@@ -903,6 +923,7 @@ def download(
     light=False,
     names=None,
     name_ids=None,
+    fields=None,
 ):
     """
     The share file of the current choices.
@@ -923,6 +944,7 @@ def download(
         light: Whether the map opens in the light theme.
         names: Names of the routes, their label when empty.
         name_ids: Identifiers of their boxes.
+        fields: Layers of the forecasts to share, all when None.
     """
     if not clicks:
         return no_update, no_update
@@ -940,6 +962,7 @@ def download(
         note=note or "",
         comments=route_notes(descriptions, description_ids, comments),
         member=int(member if member is not None else DEFAULT_MEMBER),
+        fields=fields,
         settings={"theme": "light" if light else "dark"},
     )
     text = viewer_html(scene, library=LIBRARY)

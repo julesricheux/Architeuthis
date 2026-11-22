@@ -22,7 +22,9 @@
   const STORAGE_KEY = "architeuthis-viewer:" + (scene.title || "");
   const EMPTY = { type: "FeatureCollection", features: [] };
   const BEARINGS = new Set(["cog", "ctw", "twd", "mwd", "cd"]);
-  const ARROW_LAYERS = new Set(["wind", "waves", "current"]);
+  // Arrows drawn over a layer, and the quantities they need.
+  const ARROW_QUANTITIES = { wind: ["wind_u", "wind_v"], waves: ["swh", "wave_x", "wave_y"], current: ["current_u", "current_v"] };
+  const ARROW_LABELS = { wind: "Wind barbs", waves: "Waves", current: "Current" };
   const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const BEAUFORT = [1, 4, 7, 11, 17, 22, 28, 34, 41, 48, 56, 64];
@@ -89,7 +91,9 @@
     speed: 3,
     source: null,
     layer: null,
-    arrows: true,
+    // The arrows drawn: those of the layer when null, else "wind", "waves",
+    // "current" or "" for none.
+    arrowKind: null,
     isobars: true,
     isobarLabels: true,
     opacity: 0.75,
@@ -101,7 +105,7 @@
     overlays: {},
     panelOpen: window.innerWidth > 720,
     noteOpen: true,
-    settings: Object.assign({ routes: null, sources: null, overlays: null, hover: null }, scene.settings || {}),
+    settings: Object.assign({ routes: null, sources: null, overlays: null, hover: null, fields: null }, scene.settings || {}),
     theme: (scene.settings && scene.settings.theme) === "light" ? "light" : "dark",
     title: scene.title,
     note: scene.note || "",
@@ -121,7 +125,7 @@
   scene.zones.forEach((zone) => { state.zones[zone.id] = zone.visible; });
   scene.overlays.forEach((overlay) => { state.overlays[overlay.id] = overlay.visible; });
   if (stored) {
-    ["speed", "source", "layer", "arrows", "isobars", "isobarLabels", "opacity", "basemap", "seamarks", "graticule", "panelOpen", "noteOpen", "theme", "picker"]
+    ["speed", "source", "layer", "arrowKind", "isobars", "isobarLabels", "opacity", "basemap", "seamarks", "graticule", "panelOpen", "noteOpen", "theme", "picker"]
       .forEach((key) => { if (key in stored) state[key] = stored[key]; });
     ["hidden", "zones", "overlays"].forEach((key) => { Object.assign(state[key], stored[key] || {}); });
   }
@@ -142,7 +146,7 @@
       try {
         const view = map ? { center: map.getCenter().toArray(), zoom: map.getZoom(), bearing: map.getBearing() } : null;
         const keep = {
-          t: state.t, view, speed: state.speed, source: state.source, layer: state.layer, arrows: state.arrows,
+          t: state.t, view, speed: state.speed, source: state.source, layer: state.layer, arrowKind: state.arrowKind,
           isobars: state.isobars, isobarLabels: state.isobarLabels, opacity: state.opacity, basemap: state.basemap,
           seamarks: state.seamarks, graticule: state.graticule, hidden: state.hidden, zones: state.zones,
           overlays: state.overlays, panelOpen: state.panelOpen, noteOpen: state.noteOpen, theme: state.theme,
@@ -214,6 +218,14 @@
     return `${value.toFixed(meta.digits)}${meta.unit ? " " + meta.unit : ""}`;
   }
 
+  function formatLayerValue(info, value) {
+    if (info.categories) {
+      const category = info.categories.find((item) => item.value === Math.round(value));
+      return category ? category.label : String(Math.round(value));
+    }
+    return `${value.toFixed(info.digits)}${info.unit ? " " + info.unit : ""}`;
+  }
+
   function beaufort(knots) {
     let force = 0;
     while (force < BEAUFORT.length && knots >= BEAUFORT[force]) force += 1;
@@ -245,6 +257,27 @@
   function includedOverlays() {
     const ids = state.settings.overlays;
     return scene.overlays.filter((overlay) => !ids || ids.includes(overlay.id));
+  }
+
+  // The layers of a source that the file shows, in its order.
+  function includedLayers(source) {
+    const ids = state.settings.fields;
+    return source ? source.layers.filter((layer) => scene.layers[layer] && (!ids || ids.includes(layer))) : [];
+  }
+
+  // The arrows a source can draw: those of a layer it shows.
+  function availableArrows(source) {
+    const layers = includedLayers(source);
+    return Object.keys(ARROW_QUANTITIES).filter((kind) =>
+      ARROW_QUANTITIES[kind].every((name) => source.quantities[name]) && layers.some((layer) => scene.layers[layer].arrows === kind));
+  }
+
+  // The arrows drawn: the analyst's, else those of the layer shown.
+  function currentArrows(source) {
+    if (!source) return null;
+    const info = scene.layers[state.layer];
+    const wanted = state.arrowKind === null ? (info ? info.arrows : null) : state.arrowKind;
+    return availableArrows(source).includes(wanted) ? wanted : null;
   }
 
   function currentSource() {
@@ -284,9 +317,10 @@
   function ensureSelection() {
     const source = currentSource();
     state.source = source ? source.id : null;
-    if (source && state.layer && !source.layers.includes(state.layer)) state.layer = null;
+    const layers = includedLayers(source);
+    if (source && state.layer && !layers.includes(state.layer)) state.layer = null;
     if (source && state.layer === null) {
-      state.layer = source.layers.includes("wind") ? "wind" : (source.layers[0] || "");
+      state.layer = layers.includes("wind") ? "wind" : (layers[0] || "");
     }
   }
 
@@ -399,7 +433,8 @@
     if (!frame || !info || !source.data[name]) return (blendGrids[name] = null);
     const first = source.data[name][frame.i0], second = source.data[name][frame.i1];
     const out = new Float32Array(first.length);
-    const a = frame.a, offset = info.offset, scale = info.scale;
+    // Categories are not blended: the nearest frame gives them.
+    const a = info.categorical ? Math.round(frame.a) : frame.a, offset = info.offset, scale = info.scale;
     for (let k = 0; k < first.length; k++) {
       const b0 = first[k], b1 = second[k];
       out[k] = b0 === NO_DATA || b1 === NO_DATA ? NaN : offset + scale * (b0 + a * (b1 - b0));
@@ -421,23 +456,44 @@
     return weight >= 0.5 ? sum / weight : NaN;
   }
 
+  // The value of the nearest point of the grid, for categories.
+  function nearest(values, g, x, y) {
+    if (!(x >= -0.5 && y >= -0.5 && x <= g.nlon - 0.5 && y <= g.nlat - 0.5)) return NaN;
+    const i = Math.min(g.nlon - 1, Math.max(0, Math.round(x))), j = Math.min(g.nlat - 1, Math.max(0, Math.round(y)));
+    return values[j * g.nlon + i];
+  }
+
+  function interpolate(categorical, values, g, x, y) {
+    return categorical ? nearest(values, g, x, y) : bilinear(values, g, x, y);
+  }
+
   function sampleAt(source, name, t, lat, lon) {
     const values = grid(source, name, t);
     if (!values) return NaN;
     const g = source.grid;
-    return bilinear(values, g, (lon - g.lon0) / g.dlon, (lat - g.lat0) / g.dlat);
+    return interpolate(source.quantities[name].categorical, values, g, (lon - g.lon0) / g.dlon, (lat - g.lat0) / g.dlat);
   }
 
+  // The values a layer colours: a quantity, or the norm of a vector.
   function valueGrid(source, layer, t) {
-    if (layer === "wind" || layer === "current") {
-      const u = grid(source, layer === "wind" ? "wind_u" : "current_u", t);
-      const v = grid(source, layer === "wind" ? "wind_v" : "current_v", t);
+    const info = scene.layers[layer];
+    if (!info) return null;
+    if (info.vector) {
+      const u = grid(source, info.vector[0], t), v = grid(source, info.vector[1], t);
       if (!u || !v) return null;
       const out = new Float32Array(u.length);
       for (let k = 0; k < u.length; k++) out[k] = Math.hypot(u[k], v[k]);
       return out;
     }
-    return grid(source, { gust: "gust", waves: "swh", pressure: "pressure" }[layer], t);
+    return grid(source, info.quantity, t);
+  }
+
+  function layerValueAt(source, layer, t, lat, lon) {
+    const info = scene.layers[layer];
+    const values = valueGrid(source, layer, t);
+    if (!values) return NaN;
+    const g = source.grid;
+    return interpolate(!!info.categories, values, g, (lon - g.lon0) / g.dlon, (lat - g.lat0) / g.dlat);
   }
 
   // --------------------------------------------------------------------
@@ -487,7 +543,8 @@
 
   function lookupTable(layer) {
     if (lookupTables[layer]) return lookupTables[layer];
-    const colors = scene.layers[layer].colormap.colors;
+    const info = scene.layers[layer];
+    const colors = info.categories ? info.categories.map((category) => category.color || "#000000") : info.colormap.colors;
     const table = new Uint8Array(colors.length * 3);
     colors.forEach((hex, index) => {
       table[3 * index] = parseInt(hex.slice(1, 3), 16);
@@ -497,18 +554,32 @@
     return (lookupTables[layer] = table);
   }
 
+  // The entry of the colour table of a layer for a value, or -1 for none:
+  // a category without colour, or a value under the floor of the layer.
+  function colourIndex(layer) {
+    const info = scene.layers[layer];
+    if (info.categories) {
+      const byValue = {};
+      info.categories.forEach((category, index) => { if (category.color) byValue[category.value] = index; });
+      return (value) => { const index = byValue[Math.round(value)]; return index === undefined ? -1 : index; };
+    }
+    const steps = lookupTable(layer).length / 3 - 1;
+    const low = info.colormap.min, span = info.colormap.max - info.colormap.min;
+    const floor = typeof info.floor === "number" ? info.floor : -Infinity;
+    return (value) => (value < floor ? -1 : Math.max(0, Math.min(steps, Math.round(((value - low) / span) * steps))));
+  }
+
   function renderField() {
     const source = currentSource();
     const layer = state.layer;
     let drawn = false;
-    if (source && layer && source.layers.includes(layer)) {
+    if (source && layer && includedLayers(source).includes(layer)) {
       const values = valueGrid(source, layer, state.t);
       if (values) {
         const geometry = rasterGeometry(source);
         const table = lookupTable(layer);
-        const colormap = scene.layers[layer].colormap;
-        const steps = table.length / 3 - 1;
-        const span = colormap.max - colormap.min;
+        const indexOf = colourIndex(layer);
+        const categorical = !!scene.layers[layer].categories;
         if (rasterCanvas.width !== geometry.width) rasterCanvas.width = geometry.width;
         if (rasterCanvas.height !== geometry.height) rasterCanvas.height = geometry.height;
         const image = rasterContext.createImageData(geometry.width, geometry.height);
@@ -517,9 +588,11 @@
         for (let r = 0; r < geometry.height; r++) {
           const y = geometry.rows[r];
           for (let c = 0; c < geometry.width; c++, p += 4) {
-            const value = bilinear(values, source.grid, geometry.columns[c], y);
+            const value = interpolate(categorical, values, source.grid, geometry.columns[c], y);
             if (value !== value) continue;
-            const index = 3 * Math.max(0, Math.min(steps, Math.round(((value - colormap.min) / span) * steps)));
+            const entry = indexOf(value);
+            if (entry < 0) continue;
+            const index = 3 * entry;
             pixels[p] = table[index];
             pixels[p + 1] = table[index + 1];
             pixels[p + 2] = table[index + 2];
@@ -539,18 +612,24 @@
     const legend = $("legend");
     if (!layer) { legend.hidden = true; return; }
     const info = scene.layers[layer];
-    const colormap = info.colormap;
-    const stops = colormap.colors.map((color, index) => `${color} ${((100 * index) / (colormap.colors.length - 1)).toFixed(1)}%`);
-    const ticks = info.ticks.map((tick) => {
-      const left = (100 * (tick - colormap.min)) / (colormap.max - colormap.min);
-      return `<span style="left:${left.toFixed(1)}%">${tick}</span>`;
-    });
     const source = currentSource();
+    const unit = [info.unit, source ? source.label : ""].filter(Boolean).join(" · ");
+    let scale;
+    if (info.categories) {
+      scale = '<div class="categories">' + info.categories.filter((category) => category.color).map((category) =>
+        `<span><i class="swatch" style="background:${category.color}"></i>${escapeHtml(category.label)}</span>`).join("") + "</div>";
+    } else {
+      const colormap = info.colormap;
+      const stops = colormap.colors.map((color, index) => `${color} ${((100 * index) / (colormap.colors.length - 1)).toFixed(1)}%`);
+      const ticks = info.ticks.map((tick) => {
+        const left = (100 * (tick - colormap.min)) / (colormap.max - colormap.min);
+        return `<span style="left:${left.toFixed(1)}%">${tick}</span>`;
+      });
+      scale = `<div class="bar" style="background:linear-gradient(to right, ${stops.join(", ")})"></div><div class="ticks">${ticks.join("")}</div>`;
+    }
     legend.innerHTML =
-      `<div class="legend-title"><b>${escapeHtml(info.label)}</b><span>${escapeHtml(info.unit)} · ${escapeHtml(source ? source.label : "")}</span></div>` +
-      `<div class="bar" style="background:linear-gradient(to right, ${stops.join(", ")})"></div>` +
-      `<div class="ticks">${ticks.join("")}</div>` +
-      (layer === "waves" && state.arrows ? WAVE_KEY : "");
+      `<div class="legend-title"><b>${escapeHtml(info.label)}</b><span>${escapeHtml(unit)}</span></div>` +
+      scale + (currentArrows(source) === "waves" ? WAVE_KEY : "");
     legend.hidden = false;
   }
 
@@ -600,13 +679,12 @@
   // the theme, so that they stand out from the field in its own colours.
   const glyphColors = {};
   function glyphColor(layer, value) {
-    const colormap = scene.layers[layer].colormap;
     const table = lookupTable(layer);
-    const steps = table.length / 3 - 1;
-    const index = Math.max(0, Math.min(steps, Math.round(((value - colormap.min) / (colormap.max - colormap.min)) * steps)));
+    const index = colourIndex(layer)(value);
     const key = `${state.theme}-${layer}-${index}`;
     if (!(key in glyphColors)) {
-      const [h, s, l] = hsl(table[3 * index], table[3 * index + 1], table[3 * index + 2]);
+      // A value without colour, such as no precipitation, gives a grey.
+      const [h, s, l] = index < 0 ? [0, 0, 0.6] : hsl(table[3 * index], table[3 * index + 1], table[3 * index + 2]);
       // Greys stay grey, as saturating them would give them a hue they do not
       // have, and stand out by their lightness instead.
       const grey = s < 0.08;
@@ -801,25 +879,29 @@
     }
   }
 
-  function arrowFields(source, layer) {
+  function arrowFields(source, kind) {
     const t = state.t;
-    if (layer === "waves") {
+    if (kind === "waves") {
       const h = grid(source, "swh", t), x = grid(source, "wave_x", t), y = grid(source, "wave_y", t);
       return h && x && y ? { h, x, y } : null;
     }
-    const u = grid(source, layer === "wind" ? "wind_u" : "current_u", t);
-    const v = grid(source, layer === "wind" ? "wind_v" : "current_v", t);
+    const u = grid(source, kind === "wind" ? "wind_u" : "current_u", t);
+    const v = grid(source, kind === "wind" ? "wind_v" : "current_v", t);
     return u && v ? { u, v } : null;
   }
 
   function updateArrows() {
     const source = currentSource();
-    const layer = state.layer;
+    const kind = currentArrows(source);
     const features = [];
-    const fields = state.arrows && source && ARROW_LAYERS.has(layer) && frameAt(source, state.t) ? arrowFields(source, layer) : null;
+    const fields = kind && frameAt(source, state.t) ? arrowFields(source, kind) : null;
     if (fields) {
       const g = source.grid;
-      const spacing = latticeSpacing(g, layer);
+      const spacing = latticeSpacing(g, kind);
+      // Arrows take the colour of the layer shown under them, else their own.
+      const shown = state.layer && includedLayers(source).includes(state.layer) ? state.layer : null;
+      const colours = shown ? valueGrid(source, shown, state.t) : null;
+      const categorical = shown && !!scene.layers[shown].categories;
       let south = g.lat0, north = g.lat0 + g.dlat * (g.nlat - 1);
       let west = g.lon0, east = g.lon0 + g.dlon * (g.nlon - 1);
       const middle = Math.cos(((south + north) * Math.PI) / 360);
@@ -838,7 +920,10 @@
         const y = (lat - g.lat0) / g.dlat;
         for (let i = Math.ceil(west / step); i * step <= east && features.length < MAX_ARROWS; i++) {
           const lon = i * step;
-          const feature = arrowFeature(fields, layer, (values) => bilinear(values, g, (lon - g.lon0) / g.dlon, y), lat, lon);
+          const x = (lon - g.lon0) / g.dlon;
+          const under = colours ? interpolate(categorical, colours, g, x, y) : NaN;
+          const colour = (own, value) => (under === under ? glyphColor(shown, under) : glyphColor(own, value));
+          const feature = arrowFeature(fields, kind, (values) => bilinear(values, g, x, y), lat, lon, colour);
           if (feature) features.push(feature);
         }
       }
@@ -846,28 +931,29 @@
     map.getSource("arrows").setData({ type: "FeatureCollection", features });
   }
 
-  // The arrow of a position, from `at`, which interpolates a grid there.
-  function arrowFeature(fields, layer, at, lat, lon) {
+  // The arrow of a position, from `at`, which interpolates a grid there,
+  // and `colour`, which gives its colour from its own layer and value.
+  function arrowFeature(fields, kind, at, lat, lon, colour) {
     const geometry = { type: "Point", coordinates: [lon, lat] };
-    if (layer === "wind") {
+    if (kind === "wind") {
       const u = at(fields.u), v = at(fields.v);
       if (!(u === u && v === v)) return null;
       const speed = Math.hypot(u, v);
       const knots = Math.min(150, Math.round(speed / 5) * 5);
       const from = (Math.atan2(-u, -v) * 180) / Math.PI;
-      return { type: "Feature", geometry, properties: { icon: ensureBarb(knots, lat < 0, glyphColor("wind", speed)), rotate: from, size: 1 } };
+      return { type: "Feature", geometry, properties: { icon: ensureBarb(knots, lat < 0, colour("wind", speed)), rotate: from, size: 1 } };
     }
-    if (layer === "waves") {
+    if (kind === "waves") {
       const height = at(fields.h), x = at(fields.x), y = at(fields.y);
       if (!(height === height && x === x && y === y)) return null;
       const towards = (Math.atan2(x, y) * 180) / Math.PI + 180;
-      return { type: "Feature", geometry, properties: { icon: ensureWaveGlyph(Math.round(height), glyphColor("waves", height)), rotate: towards, size: 1 } };
+      return { type: "Feature", geometry, properties: { icon: ensureWaveGlyph(Math.round(height), colour("waves", height)), rotate: towards, size: 1 } };
     }
     const u = at(fields.u), v = at(fields.v);
     const speed = Math.hypot(u, v);
     if (!(speed === speed) || speed < 0.05) return null;
     const towards = (Math.atan2(u, v) * 180) / Math.PI;
-    return { type: "Feature", geometry, properties: { icon: ensureCurrentArrow(glyphColor("current", speed)), rotate: towards, size: 0.45 + (0.65 * Math.min(speed, 3)) / 3 } };
+    return { type: "Feature", geometry, properties: { icon: ensureCurrentArrow(colour("current", speed)), rotate: towards, size: 0.45 + (0.65 * Math.min(speed, 3)) / 3 } };
   }
 
   // Segments of the contour of a level, by marching squares.
@@ -913,7 +999,7 @@
     const source = currentSource();
     const features = [];
     const labels = [];
-    const values = state.isobars && source && source.quantities.pressure ? grid(source, "pressure", state.t) : null;
+    const values = state.isobars && source && source.quantities.pressure && includedLayers(source).includes("pressure") ? grid(source, "pressure", state.t) : null;
     if (values) {
       let low = Infinity, high = -Infinity;
       for (let k = 0; k < values.length; k++) {
@@ -1254,29 +1340,26 @@
     if (!frameAt(source, t)) return { message: `No ${source.label} forecast at this time`, source };
     const q = source.quantities;
     const rows = [];
-    if (q.wind_u) {
-      const u = sampleAt(source, "wind_u", t, lat, lon), v = sampleAt(source, "wind_v", t, lat, lon);
-      const speed = Math.hypot(u, v);
-      if (speed === speed) rows.push({ label: "Wind", value: `${speed.toFixed(0)} kt`, detail: `F${beaufort(speed)} · from ${formatBearing((Math.atan2(-u, -v) * 180) / Math.PI)}` });
-    }
-    if (q.gust) {
-      const gust = sampleAt(source, "gust", t, lat, lon);
-      if (gust === gust) rows.push({ label: "Gusts", value: `${gust.toFixed(0)} kt`, detail: "" });
-    }
-    if (q.swh) {
-      const height = sampleAt(source, "swh", t, lat, lon);
-      const x = q.wave_x ? sampleAt(source, "wave_x", t, lat, lon) : NaN, y = q.wave_y ? sampleAt(source, "wave_y", t, lat, lon) : NaN;
-      if (height === height) rows.push({ label: "Waves", value: `${height.toFixed(1)} m`, detail: x === x && y === y ? `from ${formatBearing((Math.atan2(x, y) * 180) / Math.PI)}` : "" });
-    }
-    if (q.current_u) {
-      const u = sampleAt(source, "current_u", t, lat, lon), v = sampleAt(source, "current_v", t, lat, lon);
-      const speed = Math.hypot(u, v);
-      if (speed === speed) rows.push({ label: "Current", value: `${speed.toFixed(1)} kt`, detail: `to ${formatBearing((Math.atan2(u, v) * 180) / Math.PI)}` });
-    }
-    if (q.pressure) {
-      const pressure = sampleAt(source, "pressure", t, lat, lon);
-      if (pressure === pressure) rows.push({ label: "Pressure", value: `${pressure.toFixed(0)} hPa`, detail: "" });
-    }
+    // One row per layer of the file, with the direction of wind, waves and current.
+    includedLayers(source).forEach((layer) => {
+      const info = scene.layers[layer];
+      if (layer === "wind") {
+        const u = sampleAt(source, "wind_u", t, lat, lon), v = sampleAt(source, "wind_v", t, lat, lon);
+        const speed = Math.hypot(u, v);
+        if (speed === speed) rows.push({ label: "Wind", value: `${speed.toFixed(0)} kt`, detail: `F${beaufort(speed)} · from ${formatBearing((Math.atan2(-u, -v) * 180) / Math.PI)}` });
+      } else if (layer === "waves") {
+        const height = sampleAt(source, "swh", t, lat, lon);
+        const x = q.wave_x ? sampleAt(source, "wave_x", t, lat, lon) : NaN, y = q.wave_y ? sampleAt(source, "wave_y", t, lat, lon) : NaN;
+        if (height === height) rows.push({ label: "Waves", value: `${height.toFixed(1)} m`, detail: x === x && y === y ? `from ${formatBearing((Math.atan2(x, y) * 180) / Math.PI)}` : "" });
+      } else if (layer === "current") {
+        const u = sampleAt(source, "current_u", t, lat, lon), v = sampleAt(source, "current_v", t, lat, lon);
+        const speed = Math.hypot(u, v);
+        if (speed === speed) rows.push({ label: "Current", value: `${speed.toFixed(1)} kt`, detail: `to ${formatBearing((Math.atan2(u, v) * 180) / Math.PI)}` });
+      } else {
+        const value = layerValueAt(source, layer, t, lat, lon);
+        if (value === value) rows.push({ label: info.label, value: formatLayerValue(info, value), detail: "" });
+      }
+    });
     if (!rows.length) return { message: `Outside the ${source.label} forecast`, source };
     return { rows, source };
   }
@@ -1430,12 +1513,15 @@
           onFieldsChanged();
         }));
       }
-      const layers = source.layers.map((layer) => [layer, scene.layers[layer].label]).concat([["", "Off"]]);
-      weather.append(segmented(layers, state.layer || "", (layer) => { state.layer = layer; onFieldsChanged(); }));
-      if (ARROW_LAYERS.has(state.layer)) {
-        weather.append(checkbox(state.layer === "wind" ? "Wind barbs" : "Direction arrows", state.arrows, (on) => { state.arrows = on; onFieldsChanged(); }));
+      const layers = includedLayers(source).map((layer) => [layer, scene.layers[layer].label]).concat([["", "Off"]]);
+      weather.append(segmented(layers, state.layer || "", (layer) => { state.layer = layer; state.arrowKind = null; onFieldsChanged(); }));
+      const kinds = availableArrows(source);
+      if (kinds.length) {
+        weather.append(element("div", "seg-label", "Arrows"));
+        const arrows = kinds.map((kind) => [kind, ARROW_LABELS[kind]]).concat([["", "Off"]]);
+        weather.append(segmented(arrows, currentArrows(source) || "", (kind) => { state.arrowKind = kind; onFieldsChanged(); }));
       }
-      if (source.quantities.pressure) {
+      if (source.quantities.pressure && includedLayers(source).includes("pressure")) {
         weather.append(checkbox("Isobars, every 4 hPa", state.isobars, (on) => { state.isobars = on; onFieldsChanged(); }));
         const labels = checkbox("Pressure labels", state.isobarLabels, (on) => { state.isobarLabels = on; onFieldsChanged(); }, { disabled: !state.isobars });
         labels.classList.add("sub");
@@ -1897,7 +1983,7 @@
   // and comments, which the preview lets them edit.
   function applySettings(settings) {
     const before = includedOverlays();
-    ["routes", "sources", "overlays", "hover"].forEach((key) => { if (key in settings) state.settings[key] = settings[key]; });
+    ["routes", "sources", "overlays", "hover", "fields"].forEach((key) => { if (key in settings) state.settings[key] = settings[key]; });
     if ("title" in settings) state.title = settings.title || scene.title;
     if ("note" in settings) state.note = settings.note || "";
     if ("editable" in settings) state.editable = !!settings.editable;

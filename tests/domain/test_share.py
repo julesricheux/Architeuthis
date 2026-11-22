@@ -223,7 +223,7 @@ def test_missing_values_become_null_so_the_scene_is_strict_json(reports):
 
 
 def test_settings_default_to_showing_everything(scene):
-    assert scene["settings"] == {"routes": None, "sources": None, "overlays": None, "hover": None}
+    assert scene["settings"] == {"routes": None, "sources": None, "overlays": None, "hover": None, "fields": None}
 
 
 def test_settings_of_the_analyst_are_kept(reports):
@@ -353,13 +353,101 @@ def test_datetimes_and_lat_lon_names_are_accepted(reports):
     assert source["times"][0] == pytest.approx(TIME[0])
 
 
-def test_a_forecast_without_known_fields_is_left_out(reports, messages):
-    data = forecast_dataset().rename({"u10": "a", "v10": "b", "msl": "c", "swh": "d", "mwd": "e"})
+def test_a_forecast_without_fields_of_time_and_position_is_left_out(reports, messages):
+    data = xr.Dataset(
+        {"lsm": (("latitude", "longitude"), np.zeros((LATITUDE.size, LONGITUDE.size))), "step": (("valid_time",), TIME)},
+        coords={"valid_time": TIME, "latitude": LATITUDE, "longitude": LONGITUDE},
+    )
 
     scene = share.build_scene(reports, forecasts={"X": data})
 
     assert scene["sources"] == []
     assert any("⚠️" in message and "X" in message for message in messages)
+
+
+def test_other_fields_are_layers_on_a_scale_of_their_values(reports):
+    data = forecast_dataset().rename({"u10": "visibility_m"})
+    data["visibility_m"].attrs.update(GRIB_name="Visibility", GRIB_units="m")
+
+    scene = share.build_scene(reports, forecasts={"X": data})
+    (source,) = scene["sources"]
+    layer = scene["layers"]["visibility_m"]
+
+    assert source["layers"] == ["waves", "pressure", "visibility_m", "v10"]
+    assert (layer["label"], layer["unit"], layer["quantity"], layer["arrows"]) == ("Visibility", "m", "visibility_m", None)
+    assert scene["layers"]["v10"]["label"] == "v10"
+    values = frame_values(source, "visibility_m", 0)
+    assert layer["colormap"]["min"] >= np.nanmin(values) - 0.1
+    assert layer["colormap"]["max"] <= np.nanmax(frame_values(source, "visibility_m", len(source["times"]) - 1)) + 0.1
+    assert layer["colormap"]["min"] <= min(layer["ticks"]) <= max(layer["ticks"]) <= layer["colormap"]["max"]
+
+
+def wave_period_dataset():
+    period = np.full((TIME.size, LATITUDE.size, LONGITUDE.size), 8.0)
+    ptype = np.zeros_like(period)
+    ptype[:, LATITUDE < 40.0, :] = 1.0
+    ptype[:, LATITUDE < 30.0, :] = 5.0
+    return forecast_dataset(mwp=period, t2m=period + 280.0, ptype=ptype)
+
+
+def test_known_fields_have_their_units_scale_and_arrows(reports):
+    scene = share.build_scene(reports, forecasts={"IFS": wave_period_dataset()})
+    (source,) = scene["sources"]
+
+    assert source["layers"] == ["wind", "waves", "pressure", "period", "slope", "temperature", "ptype"]
+    assert (scene["layers"]["period"]["unit"], scene["layers"]["period"]["arrows"]) == ("s", "waves")
+    assert scene["layers"]["slope"]["arrows"] == "waves"
+    assert np.nanmax(frame_values(source, "temperature", 0)) == pytest.approx(14.85, abs=0.01)
+    # Wave steepness: 2 pi Hs / (g T2), in %.
+    height = frame_values(source, "swh", 0)
+    assert frame_values(source, "slope", 0) == pytest.approx(200 * np.pi * height / (share.GRAVITY * 64.0), abs=0.02, nan_ok=True)
+
+
+def test_categories_are_kept_exactly_and_drawn_in_their_colours(reports):
+    scene = share.build_scene(reports, forecasts={"IFS": wave_period_dataset()})
+    (source,) = scene["sources"]
+    layer = scene["layers"]["ptype"]
+
+    assert source["quantities"]["ptype"] == {"offset": 0.0, "scale": 1.0, "categorical": True}
+    assert set(np.unique(frame_values(source, "ptype", 0))) <= {0.0, 1.0, 5.0}
+    assert {"value": 1, "label": "Rain", "color": "#3a86ff"} in layer["categories"]
+    assert {"value": 0, "label": "None", "color": None} in layer["categories"]
+
+
+def test_only_the_chosen_fields_are_stored_with_their_arrows(reports):
+    scene = share.build_scene(reports, forecasts={"IFS": wave_period_dataset()}, fields=["period", "pressure"])
+    (source,) = scene["sources"]
+
+    assert source["layers"] == ["pressure", "period"]
+    assert set(source["quantities"]) == {"pressure", "swh", "wave_x", "wave_y", "period"}
+    assert set(scene["layers"]) == set(share.LAYER_QUANTITIES) | {"period"}
+
+
+def test_a_source_without_any_chosen_field_is_left_out(reports, dataset):
+    assert share.build_scene(reports, forecasts={"IFS": dataset}, fields=["period"])["sources"] == []
+
+
+def test_functions_of_a_forecast_are_layers(reports, dataset):
+    from architeuthis.forecast import Forecast
+
+    forecast = Forecast("waves", date=0.0, fxx=None, verbose=False)
+    forecast.data = dataset
+    forecast.add_function("double_swh", lambda x: 2.0 + 0.0 * x["latitude"], inputs=["valid_time", "latitude", "longitude"])
+    forecast.add_function("broken", lambda x: x["missing"], inputs=["latitude"])
+
+    scene = share.build_scene(reports, forecasts={"IFS": forecast})
+    (source,) = scene["sources"]
+
+    assert "double_swh" in source["layers"]
+    assert scene["layers"]["double_swh"]["label"] == "Double swh"
+    assert np.nanmax(frame_values(source, "double_swh", 0)) == pytest.approx(2.0)
+    assert "broken" not in source["layers"]
+
+
+def test_forecast_fields_lists_the_layers_of_every_forecast(dataset):
+    fields = share.forecast_fields({"IFS": dataset, "WAVES": wave_period_dataset()[["swh", "mwd", "mwp"]]})
+
+    assert fields == {"wind": "Wind", "waves": "Waves", "pressure": "Pressure", "period": "Wave period", "slope": "Wave slope"}
 
 
 def test_forecasts_outside_the_routes_are_kept_whole(reports):

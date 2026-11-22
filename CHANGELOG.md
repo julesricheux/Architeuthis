@@ -236,6 +236,7 @@ and this project follows Semantic Versioning https://semver.org
 - `architeuthis/dux/data/land.json`, a light world land map for the offline page.
 - `architeuthis.dux` (display and user experience) holds the graphical reporting and sharing tools: `share`, `ui`, the viewer page and the former Leaflet wrappers. Its Dash dependencies are the `dux` extra, `pip install "architeuthis[dux]"`, so that `pip install architeuthis` gives the routing, the data sources, the reports and the figures without Dash or Flask. Importing a page without them raises `dux.MissingExtraError` (an `ImportError`) with that command.
 - The analyst names and describes each route and comments on points of it, which the crew reads on the globe and the timeline: `build_scene(labels=..., comments=...)`, and in `ui.py` a name and a description box per route and a click on the preview.
+- Any field of a forecast can be shared and shown, besides wind, gusts, waves, current and pressure (#10): `share.FIELDS` gives the wave period and the wave slope computed from it, shown with wave arrows, the temperature, the CAPE and the precipitation rate and type (in categories), any other field is shown in its units on a scale of its values, and so are the `add_function` models of a `Forecast`. `build_scene(fields=...)` and the ticks of `ui.py` choose them, `forecast_fields` lists them, and the page chooses the arrows drawn over a field, which take its colour. `ui.py` downloads the gusts, the CAPE, the IFS precipitation type and the wave period.
 - A weather picker to drag on the globe (`P`), a light and a dark theme (`T`, `settings={"theme": ...}`), isobars without their pressure labels, and charts at their valid time: an overlay with a `time` brings the page to it when shown, and has its mark on the timeline.
 
 ### Changed
@@ -250,6 +251,7 @@ and this project follows Semantic Versioning https://semver.org
 - The Leaflet map of `ui.py`, its forecast raster, arrow and contour routes, its EUMETSAT animation, and the tracked `assets/noaa_overlay.png` that it overwrote at each start. `leaflet_wrapper` and `json_wrapper` stay, in `architeuthis.dux`, with the `assets/` folder; a stray copy of `dashExtensions_default.js` in `toolbox/assets/` is gone.
 
 ### Fixed
+- The GFS wind of `ui.py` also matched the 10 mb level (`(?:U|V)GRD:10 m`): it reads `10 m above ground` only.
 - `examples/simple_routing.py` stopped at its fuel distribution figure since its polars became `eff1` and `eff90`: its figures still selected `eff45` and `eff60`, now they take the vessels that were routed. `plot_fuel_distribution` names an empty group (`ValueError`) instead of failing inside matplotlib.
 
 ---

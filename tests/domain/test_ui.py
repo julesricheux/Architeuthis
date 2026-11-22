@@ -40,11 +40,13 @@ LATITUDE = np.arange(30.0, 61.0, 2.0)
 LONGITUDE = np.arange(-70.0, 6.0, 2.0)
 
 VARIABLES = {
-    ("ifs", "oper"): {"u10": 5.0, "v10": 2.0, "msl": 101000.0},
-    ("gfs", "pgrb2.0p25"): {"u10": 4.0, "v10": 3.0, "prmsl": 101500.0},
-    ("ifs", "wave"): {"swh": 2.0, "mwd": 250.0},
-    ("gfs_wave", "global.0p25"): {"swh": 3.0, "dirpw": 240.0},
+    ("ifs", "oper"): {"u10": 5.0, "v10": 2.0, "msl": 101000.0, "fg10": 9.0, "mucape": 300.0, "ptype": 1.0},
+    ("gfs", "pgrb2.0p25"): {"u10": 4.0, "v10": 3.0, "prmsl": 101500.0, "gust": 8.0, "cape": 250.0},
+    ("ifs", "wave"): {"swh": 2.0, "mwd": 250.0, "mwp": 8.0},
+    ("gfs_wave", "global.0p25"): {"swh": 3.0, "dirpw": 240.0, "perpw": 9.0},
 }
+IFS_LAYERS = ["wind", "gust", "waves", "pressure", "cape", "ptype", "period", "slope"]
+GFS_LAYERS = ["wind", "gust", "waves", "pressure", "cape", "period", "slope"]
 
 
 def load_forecast(self):
@@ -339,9 +341,17 @@ def test_the_preview_shows_every_route_with_the_defaults_chosen(scene, tagged_re
 
 def test_the_preview_holds_both_models(scene):
     assert [source["id"] for source in scene["sources"]] == ["ifs", "gfs"]
+    assert [source["layers"] for source in scene["sources"]] == [IFS_LAYERS, GFS_LAYERS]
     for source in scene["sources"]:
-        assert source["layers"] == ["wind", "waves", "pressure"]
         assert len(source["times"]) == len(TIME)
+
+
+def test_every_field_of_the_forecasts_is_offered_and_ticked(layout):
+    offered = [component["props"] for component in walk(layout["fields-select"]["children"]) if component["type"] == "Checkbox"]
+
+    assert [box["value"] for box in offered] == ["wind", "gust", "waves", "pressure", "cape", "ptype", "period", "slope"]
+    assert [box["label"] for box in offered][-2:] == ["Wave period", "Wave slope"]
+    assert layout["fields-select"]["value"] == [box["value"] for box in offered]
 
 
 def test_iceberg_limit_and_library_zones_are_on_the_globe(scene, user_zone):
@@ -448,7 +458,7 @@ def test_the_download_holds_the_choices(ui, tagged_reports):
     assert [overlay["label"] for overlay in scene["overlays"]] == ["NOAA surface analysis"]
     assert {zone["label"] for zone in scene["zones"]} == {"Iceberg limit", "Safety margin"}
     assert (scene["title"], scene["note"]) == ("Crossing 12", "Keep north")
-    assert scene["settings"] == {"routes": None, "sources": None, "overlays": None, "hover": None, "theme": "dark"}
+    assert scene["settings"] == {"routes": None, "sources": None, "overlays": None, "hover": None, "fields": None, "theme": "dark"}
     assert "fake maplibregl" in data["content"]
     assert info.startswith("Crossing_12.html: 1 routes, ")
 
@@ -474,6 +484,18 @@ def test_the_download_holds_the_descriptions_comments_and_theme(ui):
     assert (first["description"], first["comments"]) == ("South of the low", [])
     assert (second["description"], second["comments"]) == ("", [{"k": 2, "text": "Gybe here"}])
     assert scene_of(data["content"])["settings"]["theme"] == "light"
+
+
+def test_the_download_holds_the_chosen_fields(ui):
+    args = (1, "a_latest.json", ["r0"], [], ["ifs", "gfs"], "Crossing", "", 1, False, None, None, None, False, None, None)
+    data, _ = ui["download"](*args, ["period", "ptype"])
+    ifs, gfs = scene_of(data["content"])["sources"]
+
+    assert ifs["layers"] == ["ptype", "period"]
+    assert gfs["layers"] == ["period"]
+    # The wave arrows come with the period.
+    assert set(gfs["quantities"]) == {"swh", "wave_x", "wave_y", "period"}
+    assert [source["layers"] for source in scene_of(ui["download"](*args)[0]["content"])["sources"]] == [IFS_LAYERS, GFS_LAYERS]
 
 
 def test_the_download_holds_the_names_of_the_routes(ui, tagged_reports):
