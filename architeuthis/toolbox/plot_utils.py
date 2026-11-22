@@ -887,7 +887,13 @@ def plot_fuel_distribution(groups, horizontal=False, figsize=(8, 3), save_as=Non
 
     Returns:
         The figure.
+
+    Raises:
+        ValueError: A group holds no report.
     """
+    empty = [label for label, group in groups.items() if len(group) == 0]
+    if empty:
+        raise ValueError(f"No report to plot in {', '.join(map(str, empty))}.")
     data = [[report["fuel"] for report in group] for group in groups.values()]
 
     with plot_style():

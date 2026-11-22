@@ -567,6 +567,14 @@ def test_fuel_distribution_labels_each_group():
     assert ax.get_ylabel() == "Fuel / tons"
 
 
+def test_fuel_distribution_names_an_empty_group():
+    # A selection of a vessel that did not run, which matplotlib reports as a bare reduction error.
+    groups = {"eff45": [{"fuel": 90.0}], "eff60": []}
+
+    with pytest.raises(ValueError, match="eff60"):
+        plot_fuel_distribution(groups, show=False)
+
+
 # ------------------------------------------------------------------------------
 # User guide
 # ------------------------------------------------------------------------------

@@ -249,6 +249,9 @@ and this project follows Semantic Versioning https://semver.org
 - The `app` extra, replaced by `dux`: `pip install "architeuthis[dux]"`.
 - The Leaflet map of `ui.py`, its forecast raster, arrow and contour routes, its EUMETSAT animation, and the tracked `assets/noaa_overlay.png` that it overwrote at each start. `leaflet_wrapper` and `json_wrapper` stay, in `architeuthis.dux`, with the `assets/` folder; a stray copy of `dashExtensions_default.js` in `toolbox/assets/` is gone.
 
+### Fixed
+- `examples/simple_routing.py` stopped at its fuel distribution figure since its polars became `eff1` and `eff90`: its figures still selected `eff45` and `eff60`, now they take the vessels that were routed. `plot_fuel_distribution` names an empty group (`ValueError`) instead of failing inside matplotlib.
+
 ---
 
 ## v0.4.0 - Planned
