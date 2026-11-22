@@ -959,7 +959,7 @@ def _available_layers(quantities: Mapping, extras: Mapping) -> list:
 
 def _model_fields(forecast, dataset: xr.Dataset) -> dict:
     """
-    The `add_function` models of the forecasts, on the grid of a dataset.
+    The `add_function` models of the forecasts, on a dataset's grid.
 
     Only the models of time and position that are not fields of the
     dataset are evaluated; one that fails is left out with a warning.
@@ -1046,7 +1046,7 @@ def _dataset(forecast, member: Optional[int] = None) -> xr.Dataset:
 
 def _fields(dataset: xr.Dataset) -> tuple:
     """
-    The quantities of the viewer found in a dataset, and its other layers.
+    The quantities of the viewer in a dataset, and its other layers.
 
     Speeds are in kt, pressures in hPa and wave heights in m. Wave
     directions are unit vectors towards where the waves come from.
@@ -1165,7 +1165,7 @@ def _field_info(info: Mapping) -> dict:
 
 def _merge_ranges(first: Optional[dict], second: dict) -> dict:
     """
-    The description of a layer in two sources, over both their ranges.
+    A layer described by two sources, over both their ranges.
     """
     if first is None:
         return dict(second)

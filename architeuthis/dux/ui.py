@@ -9,10 +9,11 @@ the `dux` extra: `pip install architeuthis[dux]`.
 
 The page shows the viewer of `share.py` with the forecasts and the
 routes of a report file, and, beside it, what to share: routes, tooltip
-variables, forecasts and their fields, title and a note to the crew. Each route takes a
-name and a description, and clicking a point of a route in the viewer
-comments on it. Changes show at once in the viewer, and the download button writes
-the same page as one HTML file, which opens in any browser, offline.
+variables, forecasts and their fields, title and a note to the crew.
+Each route takes a name and a description, and clicking a point of a
+route in the viewer comments on it. Changes show at once in the viewer,
+and the download button writes the same page as one HTML file, which
+opens in any browser, offline.
 
 Created on Sun Jan 25 21:18:08 2026
 
