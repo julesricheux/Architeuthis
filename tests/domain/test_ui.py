@@ -370,6 +370,22 @@ def test_only_the_iceberg_limit_is_shown_at_first(ui, scene, user_zone):
     assert user_zone.visible is True
 
 
+def test_the_downloaded_fields_are_options_translated_for_each_model(ui):
+    regex = ui["grib_regex"]
+
+    assert ui["ATMOS"]["ifs"].regex == regex("ifs", ui["ATMOSPHERE_FIELDS"])
+    assert ui["WAVE"]["gfs"].regex == regex("gfs_wave", ui["WAVE_FIELDS"])
+    assert regex("ifs", ["wind", "gust"]) == ":10[uv]:|:10fg:"
+    assert re.search(regex("gfs", ["wind"]), ":UGRD:10 m above ground:6 hour fcst")
+    assert not re.search(regex("gfs", ["wind"]), ":UGRD:10 mb:6 hour fcst")
+
+    # GFS has no precipitation type: it is left out with a warning.
+    printed = []
+    with patch.dict(ui["grib_regex"].__globals__, status=printed.append):
+        assert regex("gfs", ["wind", "precipitation_type"]) == regex("gfs", ["wind"])
+    assert printed[0].startswith("⚠️ gfs has no precipitation_type")
+
+
 def test_the_noaa_chart_can_be_drawn_over_the_globe(scene, layout):
     (overlay,) = scene["overlays"]
 

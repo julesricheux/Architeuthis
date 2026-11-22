@@ -116,6 +116,55 @@ maximum_latitude = 60.
 
 steps_00_12 = list(range(0, 145, 3)) + list(range(150, 361, 6))
 
+# Fields downloaded from the atmospheric and wave models, by the names of
+# GRIB_SEARCH: comment a line out to leave a field out. The routes need the
+# wind and the wave height and direction; a field a model lacks is left out.
+ATMOSPHERE_FIELDS = [
+    "wind",
+    "pressure",
+    "gust",
+    "cape",
+    "precipitation_type",
+    # "precipitation",
+    # "temperature",
+]
+WAVE_FIELDS = [
+    "wave_height",
+    "wave_direction",
+    "wave_period",
+]
+
+# The search string of each field in the GRIB index of each Herbie model:
+# IFS names hold for oper and enfo, wave and waef. Add a field here to
+# download and share it.
+GRIB_SEARCH = {
+    "ifs": {
+        "wind": ":10[uv]:",
+        "pressure": ":msl:",
+        "gust": ":10fg:",
+        "cape": ":mucape:",
+        "precipitation_type": ":ptype:",
+        "precipitation": ":tprate:",
+        "temperature": ":2t:",
+        "wave_height": ":swh:",
+        "wave_direction": ":mwd:",
+        "wave_period": ":mwp:",
+    },
+    "gfs": {
+        "wind": ":(?:U|V)GRD:10 m above ground",
+        "pressure": ":PRMSL:",
+        "gust": ":GUST:surface",
+        "cape": ":CAPE:255-0 mb above ground",
+        "precipitation": ":PRATE:surface:[0-9]+ hour fcst",  # not the average
+        "temperature": ":TMP:2 m above ground",
+    },
+    "gfs_wave": {
+        "wave_height": ":HTSGW:",
+        "wave_direction": ":DIRPW:",
+        "wave_period": ":PERPW:",
+    },
+}
+
 # NOAA's analysis of the North Atlantic surface, drawn between these corners.
 SFC_URL = "https://ocean.weather.gov/shtml/A_full_00hrsfc.gif"
 SFC_BOUNDS = [[65.15, -100.0], [14.4, 10.0]]
@@ -196,6 +245,28 @@ def noaa_chart():
 NOAA_CHART, NOAA_TIME = noaa_chart()
 
 
+def grib_regex(
+    model: str,
+    fields: list,
+) -> str:
+    """
+    The Herbie search of fields in the GRIB index of a model.
+
+    Args:
+        model: The Herbie model, a key of `GRIB_SEARCH`.
+        fields: Names of fields in `GRIB_SEARCH[model]`. Those the
+            model lacks are left out, with a warning.
+
+    Returns:
+        The regular expression of the fields.
+    """
+    searches = GRIB_SEARCH[model]
+    missing = [field for field in fields if field not in searches]
+    if missing:
+        status(f"⚠️ {model} has no {', '.join(missing)}: left out")
+    return "|".join(searches[field] for field in fields if field in searches)
+
+
 #%% FORECASTS
 
 recent = pd.Timestamp("now").floor("1d8h").floor("1d")
@@ -211,28 +282,28 @@ domain = dict(
 
 if PRODUCT == "oper":
     ATMOS["ifs"] = DeterministicHerbieForecast(
-        "wind_ifs", model="ifs", product="oper", regex=r":10[u|v]:|:msl:|:10fg:|:mucape:|:ptype:", fxx=steps_00_12, **domain,
+        "wind_ifs", model="ifs", product="oper", regex=grib_regex("ifs", ATMOSPHERE_FIELDS), fxx=steps_00_12, **domain,
     )
     ATMOS["gfs"] = DeterministicHerbieForecast(
         "wind_gfs",
         model="gfs",
         product="pgrb2.0p25",
-        regex=r"(?:U|V)GRD:10 m above ground|PRMSL|GUST:surface|CAPE:255-0 mb above ground",
+        regex=grib_regex("gfs", ATMOSPHERE_FIELDS),
         fxx=steps_00_12,
         **domain,
     )
     WAVE["ifs"] = DeterministicHerbieForecast(
-        "wave_ifs", model="ifs", product="wave", regex=r":swh:|:mwd:|:mwp:", fxx=steps_00_12, **domain,
+        "wave_ifs", model="ifs", product="wave", regex=grib_regex("ifs", WAVE_FIELDS), fxx=steps_00_12, **domain,
     )
     WAVE["gfs"] = DeterministicHerbieForecast(
-        "wave_gfs", model="gfs_wave", product="global.0p25", regex=r":HTSGW:|:DIRPW:|:PERPW:", fxx=steps_00_12, **domain,
+        "wave_gfs", model="gfs_wave", product="global.0p25", regex=grib_regex("gfs_wave", WAVE_FIELDS), fxx=steps_00_12, **domain,
     )
 elif PRODUCT == "enfo":
     ATMOS["ifs"] = EnsembleHerbieForecast(
-        "wind_ens", model="ifs", product="enfo", regex=r":10[u|v]:|:msl:", fxx=steps_00_12, **domain,
+        "wind_ens", model="ifs", product="enfo", regex=grib_regex("ifs", ATMOSPHERE_FIELDS), fxx=steps_00_12, **domain,
     )
     WAVE["ifs"] = EnsembleHerbieForecast(
-        "wave_ens", model="ifs", product="waef", regex=r":swh:|:mwd:", fxx=steps_00_12, **domain,
+        "wave_ens", model="ifs", product="waef", regex=grib_regex("ifs", WAVE_FIELDS), fxx=steps_00_12, **domain,
     )
 else:
     raise ValueError("PRODUCT should be in ['enfo', 'oper']")
@@ -242,8 +313,8 @@ for model in MODELS:
     WAVE[model].load_data()
 
 # One dataset per model, the waves on the grid of the wind. share.py reads the GFS names
-# (prmsl, dirpw, perpw) as well as the IFS ones, and shows any other field: add it to a regex
-# above to share it. The wave slope comes from the height and period.
+# (prmsl, dirpw, perpw) as well as the IFS ones, and shows any other field: add it to
+# ATMOSPHERE_FIELDS or WAVE_FIELDS to share it. The wave slope comes from the height and period.
 DS = {}
 for model in MODELS:
     atmosphere = ATMOS[model].data
