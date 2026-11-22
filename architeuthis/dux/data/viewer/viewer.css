@@ -14,6 +14,7 @@
   --accent-hover: #7fdcf6;
   --accent-fg: #04121c;
   --isobar: #f2f4f6;
+  --picker: #ffffff;
   --error: #ffb4b4;
   --radius: 10px;
   --gap: 12px;
@@ -36,6 +37,7 @@
   --accent-hover: #0a6d9e;
   --accent-fg: #ffffff;
   --isobar: #1c2024;
+  --picker: #1d2125;
   --error: #b3261e;
   color-scheme: light;
 }
@@ -238,8 +240,8 @@ button { cursor: pointer; }
   bottom: calc(var(--tl-height) + 2 * var(--gap));
   display: flex;
   flex-wrap: wrap;
-  gap: 2px 14px;
-  padding: 6px 12px;
+  gap: 1px 12px;
+  padding: 3px 8px;
   max-width: calc(100% - 2 * var(--gap) - 220px);
   font-variant-numeric: tabular-nums;
   pointer-events: none;
@@ -254,7 +256,7 @@ button { cursor: pointer; }
   right: var(--gap);
   bottom: calc(var(--tl-height) + 2 * var(--gap));
   width: 220px;
-  padding: 8px 10px 6px;
+  padding: 5px 8px 3px;
   z-index: 2;
 }
 #legend .legend-title { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
@@ -365,19 +367,19 @@ button { cursor: pointer; }
 .maplibregl-popup-content {
   background: var(--panel-strong);
   color: var(--fg);
-  border-radius: var(--radius);
-  padding: 8px 12px;
+  border-radius: 8px;
+  padding: 4px 8px;
   box-shadow: none;
 }
 .maplibregl-popup-tip { display: none; }
-.popup-title { display: flex; align-items: center; gap: 6px; font-weight: 650; margin-bottom: 2px; }
-.popup-time { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
-.popup-text { white-space: pre-wrap; margin-bottom: 6px; max-width: 280px; }
-.popup-text.comment { padding-left: 8px; border-left: 3px solid var(--accent); }
-.popup-hint { color: var(--muted); font-size: 11px; margin-top: 4px; }
+.popup-title { display: flex; align-items: center; gap: 6px; font-weight: 650; }
+.popup-time { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
+.popup-text { white-space: pre-wrap; margin-bottom: 2px; max-width: 280px; }
+.popup-text.comment { padding-left: 6px; border-left: 3px solid var(--accent); }
+.popup-hint { color: var(--muted); font-size: 11px; margin-top: 2px; }
 .popup-table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
-.popup-table td { padding: 1px 0; }
-.popup-table td:first-child { color: var(--muted); padding-right: 14px; }
+.popup-table td { padding: 0; }
+.popup-table td:first-child { color: var(--muted); padding-right: 10px; }
 .popup-table td:last-child { text-align: right; }
 
 .editor textarea {
@@ -391,7 +393,7 @@ button { cursor: pointer; }
   background: var(--hover);
 }
 .editor textarea:focus { outline: 2px solid var(--accent); }
-.editor-buttons { display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px; }
+.editor-buttons { display: flex; gap: 6px; justify-content: flex-end; margin-top: 4px; }
 .editor-buttons button { border: 0; border-radius: 6px; padding: 3px 10px; background: var(--hover); font-size: 12px; }
 .editor-buttons button:hover { background: var(--faint); }
 .editor-buttons button.primary { background: var(--accent); color: var(--accent-fg); }
@@ -405,31 +407,36 @@ button { cursor: pointer; }
 }
 .isobar-label { color: var(--isobar); font-weight: 500; font-size: 10px; }
 
-/* Weather picker: a pin to drag, with the weather beside it. */
-.picker { width: 18px; height: 18px; cursor: grab; }
+/* Weather picker: a dot to drag, with a line from it up the left side of
+   the card that tells the weather there. The marker is 16 px wide, the dot
+   at its centre; the card's left border is the line, which goes on 48 px
+   down to the centre of the dot. */
+.picker { width: 16px; height: 16px; cursor: grab; }
 .picker:active { cursor: grabbing; }
-.picker-dot { width: 18px; height: 18px; border-radius: 50%; border: 4px solid var(--accent); }
+.picker-dot { position: absolute; left: 4px; top: 4px; width: 8px; height: 8px; border-radius: 50%; background: var(--picker); }
 .picker-card {
   position: absolute;
-  left: 22px;
-  bottom: 12px;
-  padding: 6px 10px 6px;
-  border-radius: 8px;
+  left: 7px;
+  bottom: 56px;
+  padding: 3px 7px 3px 6px;
+  border-left: 2px solid var(--picker);
+  border-radius: 0 6px 6px 0;
   background: var(--panel-strong);
   color: var(--fg);
   font-size: 12px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
-.picker-head { display: flex; align-items: center; gap: 8px; font-weight: 650; margin-bottom: 2px; }
+.picker-card::before { content: ""; position: absolute; left: -2px; top: 100%; width: 2px; height: 48px; background: var(--picker); }
+.picker-head { display: flex; align-items: center; gap: 8px; font-weight: 650; }
 .picker-close { margin-left: auto; border: 0; background: none; padding: 0; width: 18px; height: 18px; display: inline-flex; color: var(--muted); }
 .picker-close:hover { color: var(--fg); }
 .picker-close svg { width: 16px; height: 16px; fill: currentColor; }
 .picker-card table { border-collapse: collapse; }
-.picker-card td { padding: 0 10px 0 0; }
+.picker-card td { padding: 0 8px 0 0; }
 .picker-card td:first-child { color: var(--muted); }
 .picker-card td:last-child { color: var(--muted); padding-right: 0; }
-.picker-foot { color: var(--muted); font-size: 11px; margin-top: 2px; }
+.picker-foot { color: var(--muted); font-size: 11px; }
 
 /* Narrow screens: phones and small tablets */
 

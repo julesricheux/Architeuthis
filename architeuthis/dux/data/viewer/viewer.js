@@ -27,7 +27,6 @@
   const ARROW_LABELS = { wind: "Wind barbs", waves: "Waves", current: "Current" };
   const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const BEAUFORT = [1, 4, 7, 11, 17, 22, 28, 34, 41, 48, 56, 64];
   // Arrows and barbs are about this far apart on screen, in CSS pixels:
   // wave glyphs, longer in high seas, a little further.
   const ARROW_SPACING = { wind: 38, waves: 48, current: 40 };
@@ -224,12 +223,6 @@
       return category ? category.label : String(Math.round(value));
     }
     return `${value.toFixed(info.digits)}${info.unit ? " " + info.unit : ""}`;
-  }
-
-  function beaufort(knots) {
-    let force = 0;
-    while (force < BEAUFORT.length && knots >= BEAUFORT[force]) force += 1;
-    return force;
   }
 
   function icon(name) {
@@ -1215,7 +1208,7 @@
       lngLat = [route.clon[target.k], route.clat[target.k]];
       html = popupContent(route, target.k, route.ctim[target.k], "segment");
     }
-    if (!popup) popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 14, maxWidth: "300px" });
+    if (!popup) popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 10, maxWidth: "300px" });
     popup.setLngLat(lngLat).setHTML(html);
     if (!popup.isOpen()) popup.addTo(map);
   }
@@ -1290,7 +1283,7 @@
       if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { saveComment(route, target.k, area.value); closeEditor(); }
     });
     node.append(area, buttons);
-    editor = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 14, maxWidth: "320px" })
+    editor = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 10, maxWidth: "320px" })
       .setLngLat([route.clon[target.k], route.clat[target.k]])
       .setDOMContent(node)
       .addTo(map);
@@ -1346,7 +1339,7 @@
       if (layer === "wind") {
         const u = sampleAt(source, "wind_u", t, lat, lon), v = sampleAt(source, "wind_v", t, lat, lon);
         const speed = Math.hypot(u, v);
-        if (speed === speed) rows.push({ label: "Wind", value: `${speed.toFixed(0)} kt`, detail: `F${beaufort(speed)} · from ${formatBearing((Math.atan2(-u, -v) * 180) / Math.PI)}` });
+        if (speed === speed) rows.push({ label: "Wind", value: `${speed.toFixed(0)} kt`, detail: `from ${formatBearing((Math.atan2(-u, -v) * 180) / Math.PI)}` });
       } else if (layer === "waves") {
         const height = sampleAt(source, "swh", t, lat, lon);
         const x = q.wave_x ? sampleAt(source, "wave_x", t, lat, lon) : NaN, y = q.wave_y ? sampleAt(source, "wave_y", t, lat, lon) : NaN;
@@ -1384,8 +1377,9 @@
   let pickerMarker = null;
   let pickerShown = false;
 
-  // The picker: a pin to drag anywhere, telling the weather there as the
-  // time changes. Clicking the map moves it there.
+  // The picker: a dot to drag anywhere, with a line up to the left side of
+  // a card telling the weather there as the time changes. Clicking the map
+  // moves it there.
   function setPicker(position) {
     state.picker = position ? { lat: Math.max(-85, Math.min(85, position.lat)), lon: wrapLongitude(position.lon) } : null;
     const button = document.querySelector(".picker-control");
