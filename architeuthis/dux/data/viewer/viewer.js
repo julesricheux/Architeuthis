@@ -105,8 +105,10 @@
     theme: (scene.settings && scene.settings.theme) === "light" ? "light" : "dark",
     title: scene.title,
     note: scene.note || "",
-    // The analyst's descriptions and comments, which replace those of the scene
-    // once ui.py sends them: {route id: text} and {route id: {segment: text}}.
+    // The analyst's names, descriptions and comments, which replace those of
+    // the scene once ui.py sends them: {route id: text} for the first two and
+    // {route id: {segment: text}}.
+    labels: {},
     descriptions: {},
     comments: {},
     editable: false,
@@ -254,6 +256,10 @@
     const names = Object.keys(scene.variables);
     const chosen = state.settings.hover;
     return chosen ? chosen.filter((name) => names.includes(name)) : names;
+  }
+
+  function routeLabel(route) {
+    return (state.labels[route.id] || "").trim() || route.label;
   }
 
   function routeDescription(route) {
@@ -1100,7 +1106,7 @@
     const comment = phase === "segment" ? commentAt(route, k) : "";
     const description = phase === "segment" ? "" : routeDescription(route);
     return (
-      `<div class="popup-title"><span class="swatch" style="background:${route.color}"></span>${escapeHtml(route.label)}</div>` +
+      `<div class="popup-title"><span class="swatch" style="background:${route.color}"></span>${escapeHtml(routeLabel(route))}</div>` +
       `<div class="popup-time">${escapeHtml(when)}</div>` +
       (comment ? `<div class="popup-text comment">${escapeHtml(comment)}</div>` : "") +
       (description ? `<div class="popup-text">${escapeHtml(description)}</div>` : "") +
@@ -1177,7 +1183,7 @@
     updateReadout();
     const node = element("div", "editor");
     node.innerHTML =
-      `<div class="popup-title"><span class="swatch" style="background:${route.color}"></span>${escapeHtml(route.label)}</div>` +
+      `<div class="popup-title"><span class="swatch" style="background:${route.color}"></span>${escapeHtml(routeLabel(route))}</div>` +
       `<div class="popup-time">${escapeHtml(formatTime(route.ctim[target.k]))}<br>${escapeHtml(formatPosition(route.clat[target.k], route.clon[target.k]))}</div>`;
     const area = element("textarea");
     area.rows = 4;
@@ -1476,7 +1482,7 @@
       const badges = [];
       if (route.summary.status === 2) badges.push('<span class="badge" title="The solver did not converge">not converged</span>');
       if (route.summary.max_z !== null && route.summary.max_z > 0) badges.push('<span class="badge" title="The route touches land or an exclusion zone">land or zone</span>');
-      name.innerHTML = `<i class="swatch line" style="background:${route.color}"></i><span>${escapeHtml(route.label)}</span>${badges.join("")}`;
+      name.innerHTML = `<i class="swatch line" style="background:${route.color}"></i><span>${escapeHtml(routeLabel(route))}</span>${badges.join("")}`;
       name.addEventListener("click", () => zoomTo(route));
       const figures = [];
       if (route.summary.fuel !== null) figures.push(`${route.summary.fuel.toFixed(1)} t`);
@@ -1611,8 +1617,8 @@
     });
     groups.forEach((group) => {
       const shown = group.routes.filter((route) => !state.hidden[route.id]);
-      const label = group.routes.length === 1 ? group.routes[0].label : `${group.routes.length} routes`;
-      const names = group.routes.map((route) => route.label).join(", ");
+      const label = group.routes.length === 1 ? routeLabel(group.routes[0]) : `${group.routes.length} routes`;
+      const names = group.routes.map(routeLabel).join(", ");
       const row = addRow(label, `${names}: ${formatShort(group.start)} → ${formatShort(group.end)}`, shown.length ? "" : "off");
       const colors = (shown.length ? shown : group.routes).map((route) => route.color);
       const stripes = colors.map((color, i) => `${color} ${(100 * i) / colors.length}% ${(100 * (i + 1)) / colors.length}%`);
@@ -1887,14 +1893,15 @@
   }
 
   // Selection sent by ui.py, the analyst's preview of this page: what the
-  // file will hold, the theme, and the analyst's descriptions and comments,
-  // which the preview lets them edit.
+  // file will hold, the theme, and the analyst's route names, descriptions
+  // and comments, which the preview lets them edit.
   function applySettings(settings) {
     const before = includedOverlays();
     ["routes", "sources", "overlays", "hover"].forEach((key) => { if (key in settings) state.settings[key] = settings[key]; });
     if ("title" in settings) state.title = settings.title || scene.title;
     if ("note" in settings) state.note = settings.note || "";
     if ("editable" in settings) state.editable = !!settings.editable;
+    if (settings.labels) state.labels = Object.assign({}, settings.labels);
     if (settings.descriptions) state.descriptions = Object.assign({}, settings.descriptions);
     if (settings.comments) state.comments = JSON.parse(JSON.stringify(settings.comments));
     if (settings.theme === "light" || settings.theme === "dark") applyTheme(settings.theme);

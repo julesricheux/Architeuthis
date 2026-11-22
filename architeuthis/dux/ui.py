@@ -10,8 +10,8 @@ the `dux` extra: `pip install architeuthis[dux]`.
 The page shows the viewer of `share.py` with the forecasts and the
 routes of a report file, and, beside it, what to share: routes, tooltip
 variables, forecasts, title and a note to the crew. Each route takes a
-description, and clicking a point of a route in the viewer comments on
-it. Changes show at once in the viewer, and the download button writes
+name and a description, and clicking a point of a route in the viewer
+comments on it. Changes show at once in the viewer, and the download button writes
 the same page as one HTML file, which opens in any browser, offline.
 
 Created on Sun Jan 25 21:18:08 2026
@@ -452,7 +452,8 @@ def route_options(collection) -> list:
     """
     One checkbox per route, with its colour, fuel and distance.
 
-    Under each, a box takes the description of the route for the crew.
+    Under each, boxes take the name of the route, its label by default,
+    and its description for the crew.
     """
     options = []
     for index, (report, label) in enumerate(zip(collection, route_labels(collection))):
@@ -484,6 +485,13 @@ def route_options(collection) -> list:
                             wrap="nowrap",
                         ),
                         description=" · ".join(details),
+                    ),
+                    dmc.TextInput(
+                        id={"type": "route-name", "index": index},
+                        placeholder=label,
+                        value=label,
+                        size="xs",
+                        ml=32,
                     ),
                     dmc.Textarea(
                         id={"type": "route-description", "index": index},
@@ -760,9 +768,11 @@ def quick_select(optimized, every, none, name):
 # of the analyst ("architeuthis:comments") and its theme ("architeuthis:theme").
 app.clientside_callback(
     """
-    function (routes, hover, sources, title, note, noaa, texts, comments, light, ids) {
+    function (routes, hover, sources, title, note, noaa, texts, comments, light, names, ids, nameIds) {
         const descriptions = {};
         (ids || []).forEach(function (id, i) { descriptions["r" + id.index] = (texts || [])[i] || ""; });
+        const labels = {};
+        (nameIds || []).forEach(function (id, i) { labels["r" + id.index] = (names || [])[i] || ""; });
         const settings = {
             routes: routes || [],
             hover: hover || [],
@@ -772,6 +782,7 @@ app.clientside_callback(
             note: note || "",
             theme: light ? "light" : "dark",
             editable: true,
+            labels: labels,
             descriptions: descriptions,
             comments: comments || {},
         };
@@ -807,7 +818,9 @@ app.clientside_callback(
     Input({"type": "route-description", "index": ALL}, "value"),
     Input("route-comments", "data"),
     Input("theme-switch", "checked"),
+    Input({"type": "route-name", "index": ALL}, "value"),
     State({"type": "route-description", "index": ALL}, "id"),
+    State({"type": "route-name", "index": ALL}, "id"),
 )
 
 
@@ -833,6 +846,26 @@ def route_notes(descriptions=None, ids=None, comments=None) -> dict:
     return notes
 
 
+def route_names(collection, names=None, ids=None) -> list:
+    """
+    The name of each route: the analyst's, else its label.
+
+    Args:
+        collection: The reports.
+        names: Texts of the name boxes; an empty one keeps the label.
+        ids: Identifiers of these boxes, `{"index": <report index>}`.
+
+    Returns:
+        One name per report, the `labels` of `share.build_scene`.
+    """
+    labels = route_labels(collection)
+    for identifier, text in zip(ids or [], names or []):
+        index = int(identifier["index"])
+        if 0 <= index < len(labels) and (text or "").strip():
+            labels[index] = text.strip()
+    return labels
+
+
 @app.callback(
     Output("download", "data"),
     Output("download-info", "children"),
@@ -849,6 +882,8 @@ def route_notes(descriptions=None, ids=None, comments=None) -> dict:
     State({"type": "route-description", "index": ALL}, "id"),
     State("route-comments", "data"),
     State("theme-switch", "checked"),
+    State({"type": "route-name", "index": ALL}, "value"),
+    State({"type": "route-name", "index": ALL}, "id"),
     prevent_initial_call=True,
 )
 def download(
@@ -865,6 +900,8 @@ def download(
     description_ids=None,
     comments=None,
     light=False,
+    names=None,
+    name_ids=None,
 ):
     """
     The share file of the current choices.
@@ -883,6 +920,8 @@ def download(
         description_ids: Identifiers of their boxes.
         comments: Comments on points of the routes.
         light: Whether the map opens in the light theme.
+        names: Names of the routes, their label when empty.
+        name_ids: Identifiers of their boxes.
     """
     if not clicks:
         return no_update, no_update
@@ -895,6 +934,7 @@ def download(
         variables=hover or [],
         zones=exclusion_zones,
         overlays=overlays() if noaa else [],
+        labels=route_names(collection, names, name_ids),
         title=title,
         note=note or "",
         comments=route_notes(descriptions, description_ids, comments),

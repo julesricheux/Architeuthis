@@ -256,6 +256,13 @@ def test_each_route_takes_a_description(layout):
     assert [box["value"] for box in boxes] == ["", ""]
 
 
+def test_each_route_takes_a_name_its_label_at_first(layout, tagged_reports):
+    boxes = [component["props"] for component in walk(layout["routes-options"]["children"]) if component["type"] == "TextInput"]
+
+    assert [box["id"] for box in boxes] == [{"type": "route-name", "index": index} for index in (0, 1)]
+    assert [box["value"] for box in boxes] == share.route_labels(tagged_reports)
+
+
 def test_the_map_opens_dark_with_no_comment(layout):
     assert layout["theme-switch"]["checked"] is False
     assert layout["provider"]["forceColorScheme"] == "dark"
@@ -412,7 +419,9 @@ def test_the_viewer_answers_the_bridge():
 
     assert '"architeuthis:ready"' in script
     assert '"architeuthis:settings"' in script
-    # And sends back the comments and the theme, which the bridge receives.
+    # And takes the names of the routes, and sends back the comments and the theme, which the
+    # bridge receives.
+    assert "settings.labels" in script
     assert '"architeuthis:comments"' in script
     assert '"architeuthis:theme"' in script
 
@@ -465,6 +474,22 @@ def test_the_download_holds_the_descriptions_comments_and_theme(ui):
     assert (first["description"], first["comments"]) == ("South of the low", [])
     assert (second["description"], second["comments"]) == ("", [{"k": 2, "text": "Gybe here"}])
     assert scene_of(data["content"])["settings"]["theme"] == "light"
+
+
+def test_the_download_holds_the_names_of_the_routes(ui, tagged_reports):
+    ids = [{"type": "route-name", "index": index} for index in (0, 1)]
+    data, _ = ui["download"](1, "a_latest.json", ["r0", "r1"], [], [], "Crossing", "", 1, False, None, None, None, False, ["  ", "North option"], ids)
+    first, second = scene_of(data["content"])["routes"]
+
+    assert first["label"] == share.route_labels(tagged_reports)[0]
+    assert second["label"] == "North option"
+
+
+def test_route_names_keep_the_label_of_unnamed_routes(ui, tagged_reports):
+    labels = share.route_labels(tagged_reports)
+
+    assert ui["route_names"](tagged_reports) == labels
+    assert ui["route_names"](tagged_reports, ["South", "", "Lost"], [{"index": 1}, {"index": 0}, {"index": 9}]) == [labels[0], "South"]
 
 
 def test_route_notes_gather_descriptions_and_comments_by_report(ui):
