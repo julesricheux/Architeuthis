@@ -31,6 +31,13 @@
   // wave glyphs, longer in high seas, a little further.
   const ARROW_SPACING = { wind: 38, waves: 48, current: 40 };
   const MAX_ARROWS = 2500;
+  // OpenStreetMap as a basemap, offered again when this is true.
+  const OSM_ENABLED = false;
+  // OpenSeaMap draws its sea marks from zoom 9: further out, its tiles of
+  // zoom 9 are shown smaller, by these map zooms and tile sizes, so that
+  // traffic separation schemes and restricted areas show from further away.
+  const SEAMARK_ZOOM = 9;
+  const SEAMARK_LEVELS = [[SEAMARK_ZOOM, 256], [SEAMARK_ZOOM - 1, 128], [SEAMARK_ZOOM - 2, 64]];
   // Valid time of a chart, in the window the timeline covers around it.
   const OVERLAY_MARGIN = 6 * HOUR;
 
@@ -128,6 +135,7 @@
       .forEach((key) => { if (key in stored) state[key] = stored[key]; });
     ["hidden", "zones", "overlays"].forEach((key) => { Object.assign(state[key], stored[key] || {}); });
   }
+  if (!OSM_ENABLED) state.basemap = "offline";
 
   function restore() {
     try {
@@ -1128,7 +1136,7 @@
     setVisible("osm", state.basemap === "osm");
     setVisible("land", state.basemap !== "osm");
     COAST_LAYERS.forEach(([id]) => setVisible(id, state.basemap !== "osm"));
-    setVisible("seamarks", state.seamarks);
+    SEAMARK_LEVELS.forEach(([zoom]) => setVisible(`seamarks-${zoom}`, state.seamarks));
     setVisible("graticule", state.graticule);
     const included = includedOverlays();
     scene.overlays.forEach((overlay) => setVisible(`overlay-${overlay.id}`, included.includes(overlay) && !!state.overlays[overlay.id]));
@@ -1601,7 +1609,7 @@
     }
 
     const base = section("Map");
-    base.append(segmented([["offline", "Offline map"], ["osm", "OpenStreetMap"]], state.basemap, (value) => {
+    if (OSM_ENABLED) base.append(segmented([["offline", "Offline map"], ["osm", "OpenStreetMap"]], state.basemap, (value) => {
       state.basemap = value;
       updateBasemap();
       buildPanel();
@@ -2154,13 +2162,7 @@
         maxzoom: 19,
         attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       },
-      seamarks: {
-        type: "raster",
-        tiles: ["https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png"],
-        tileSize: 256,
-        maxzoom: 18,
-        attribution: '© <a href="https://www.openseamap.org">OpenSeaMap</a> contributors',
-      },
+
       field: { type: "image", url: blank, coordinates: [[-1, 1], [1, 1], [1, -1], [-1, -1]] },
       isobars: geojson(),
       arrows: geojson(),
@@ -2170,6 +2172,16 @@
       comments: geojson(),
       boats: geojson(),
     };
+    SEAMARK_LEVELS.forEach(([zoom, size]) => {
+      sources[`seamarks-${zoom}`] = {
+        type: "raster",
+        tiles: ["https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png"],
+        tileSize: size,
+        minzoom: SEAMARK_ZOOM,
+        maxzoom: 18,
+        attribution: '© <a href="https://www.openseamap.org">OpenSeaMap</a> contributors',
+      };
+    });
     scene.overlays.forEach((overlay) => {
       sources[`overlay-${overlay.id}`] = {
         type: "image",
@@ -2198,10 +2210,12 @@
       { id: "land", type: "fill", source: "land", paint: { "fill-color": theme.land } },
       line("coast", 0.6, COAST_OPACITY, 0)
     );
-    layers.push(
-      { id: "graticule", type: "line", source: "graticule", paint: { "line-color": theme.graticule, "line-width": 0.6 } },
-      { id: "seamarks", type: "raster", source: "seamarks", layout: hidden }
-    );
+    layers.push({ id: "graticule", type: "line", source: "graticule", paint: { "line-color": theme.graticule, "line-width": 0.6 } });
+    SEAMARK_LEVELS.forEach(([zoom], index) => {
+      const layer = { id: `seamarks-${zoom}`, type: "raster", source: `seamarks-${zoom}`, layout: hidden, minzoom: zoom, paint: { "raster-fade-duration": 0 } };
+      if (index > 0) layer.maxzoom = zoom + 1;
+      layers.push(layer);
+    });
     scene.overlays.forEach((overlay) => {
       layers.push({ id: `overlay-${overlay.id}`, type: "raster", source: `overlay-${overlay.id}`, layout: hidden, paint: { "raster-opacity": overlay.opacity, "raster-fade-duration": 0 } });
     });
