@@ -585,7 +585,7 @@ reports.share(
 | --- | --- | --- |
 | `forecasts` | `None` | Layers by label. Each value is a `Forecast`, an `xarray.Dataset` or a list of them, the others interpolated on the grid of the first. Read: `u10` and `v10` (or `si10` and `wdir10`), `gust` (or `i10fg`), `msl` (or `prmsl`), `swh` with `mwd` (or `dirpw`), `uo` and `vo`. |
 | `routes` | all | Indices of the reports to share. A route keeps the colour of its index. |
-| `variables` | `share.DEFAULT_VARIABLES` that the reports have | Per-segment entries shown when hovering a route. `share.VARIABLES` gives their label, unit and description. |
+| `variables` | `share.DEFAULT_VARIABLES` that the reports have | Entries shown when hovering a route: any array of the report along the route (`segment_variables`), per segment, per node or sampled between nodes, as the topography `z`, shown by its largest value on each segment (`segment_values`). `share.variable_info` gives their label, unit and description, from `share.VARIABLES` or the name. |
 | `labels` | `route_label` | One name per report, by default from its tags: `IFS eff60`, `GFS eff45 m3 (baseline)`. |
 | `zones` | `()` | `ExclusionZone` objects or `[lat, lon]` lists. An empty one, such as the iceberg limit without a bulletin, is listed as unavailable. |
 | `overlays` | `()` | Images drawn over the globe: dicts with `label`, `url` (an address or `share.png_data_uri(content)`), `bounds` (`[[lat, lon], [lat, lon]]`), `visible`, `opacity` and `time`, the valid time of a chart (epoch seconds or a date, naive dates in UTC). Showing a chart with a time brings the page to that time. |

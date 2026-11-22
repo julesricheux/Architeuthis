@@ -155,11 +155,38 @@ def test_routes_hold_their_positions_and_schedule(scene, reports):
     assert route["summary"]["solve"] == 1
 
 
-def test_segment_variables_are_the_per_segment_arrays(baseline_report):
+def test_segment_variables_are_every_array_along_the_route(baseline_report):
     names = share.segment_variables(baseline_report)
 
-    assert {"sog", "cog", "tws", "twa", "swh", "bhp", "max_bhp", "sails_contribution"} <= set(names)
-    assert not {"tim", "lat", "lon", "ctim", "clat", "clon", "pos", "cpos", "z", "fuel", "model"} & set(names)
+    assert {"sog", "cog", "tws", "twa", "swh", "bhp", "max_bhp", "sails_contribution", "z"} <= set(names)
+    assert not {"tim", "lat", "lon", "ctim", "clat", "clon", "pos", "cpos", "fuel", "model"} & set(names)
+
+
+def test_the_topography_shows_its_worst_point_of_each_segment(baseline_report):
+    # z is sampled at the interior nodes and 3 points between each two of them.
+    count = np.ravel(baseline_report["ctim"]).size
+    z = np.ravel(baseline_report["z"])
+    values = share.segment_values(baseline_report, "z")
+
+    assert z.size == 4 * (count - 2) + 1
+    assert values.shape == (count,)
+    assert values[0] == z[0] and values[-1] == z[-1]
+    assert values[1] == z[0:5].max()
+    assert values[count - 2] == z[-5:].max()
+
+
+def test_node_and_resampled_entries_are_averaged_on_segments():
+    report = {"ctim": [0.0, 1.0, 2.0], "nodes": [0.0, 2.0, 4.0, 10.0], "fine": np.arange(7.0), "odd": [1.0, 2.0]}
+
+    assert share.segment_values(report, "nodes").tolist() == [1.0, 3.0, 7.0]
+    assert share.segment_values(report, "fine").tolist() == [1.0, 3.0, 5.0]
+    assert share.segment_values(report, "odd") is None
+    assert share.segment_variables(report) == ["nodes", "fine"]
+
+
+def test_unknown_variables_are_written_out():
+    assert share.variable_info("air_temperature")["label"] == "Air temperature"
+    assert share.variable_info("tws100") == {"label": "tws100", "unit": "", "digits": 2, "description": "tws100"}
 
 
 def test_tooltips_show_the_default_variables_the_reports_have(scene, reports):

@@ -102,7 +102,16 @@ VARIABLES = {
     "sfoc": ("SFOC", "g/kWh", 0, "Specific fuel oil consumption"),
     "hourly_consumption": ("Consumption", "kg/h", 0, "Fuel consumption"),
     "sails_contribution": ("Sails", "%", 0, "Contribution of the sails"),
+    "z": ("Land", "nm", 1, "Distance to land or an exclusion zone, negative at sea: the largest on the segment"),
 }
+
+# Entries sampled more finely than the segments, shown by their largest
+# value on a segment rather than their mean: the worst point.
+SEGMENT_MAXIMA = {"z"}
+
+# Entries sampled between the interior nodes only, as the topography of
+# `RoutingAnalysis`, rather than between all of them.
+INTERIOR_SAMPLED = {"z"}
 
 # Shown in the tooltips by default, when the reports have them.
 DEFAULT_VARIABLES = (
@@ -132,7 +141,7 @@ ROUTE_COLORS = (
 )
 
 # Entries of a report that are geometry, not tooltip variables.
-_GEOMETRY = {"tim", "lat", "lon", "pos", "ctim", "clat", "clon", "cpos", "z"}
+_GEOMETRY = {"tim", "lat", "lon", "pos", "ctim", "clat", "clon", "cpos"}
 
 # Quantities of the frames, in the order they are packed three by three.
 QUANTITIES = (
@@ -159,10 +168,12 @@ LAYER_QUANTITIES = {
 
 def segment_variables(report: Mapping) -> list:
     """
-    The per-segment entries of a report, which tooltips can show.
+    The entries of a report that tooltips can show, by segment.
 
-    These are its numeric arrays with one value per segment, other than
-    the positions and times of the segments.
+    These are its numeric arrays with one value per segment, per node,
+    or sampled evenly between nodes, as the topography `z`, other than
+    the positions and times of the route. `segment_values` gives their
+    value on each segment.
 
     Args:
         report: A routing report.
@@ -170,18 +181,56 @@ def segment_variables(report: Mapping) -> list:
     Returns:
         Their names, in the order of the report.
     """
+    return [key for key in report if key not in _GEOMETRY and segment_values(report, key) is not None]
+
+
+def segment_values(report: Mapping, name: str) -> Optional[np.ndarray]:
+    """
+    The value of a report entry on each segment of the route.
+
+    An entry per segment is kept. An entry per node, or sampled evenly
+    between the nodes (the interior ones only for the entries of
+    `INTERIOR_SAMPLED`, such as the topography `z`), takes the samples
+    of each segment, ends included: their mean, or their largest value
+    for the entries of `SEGMENT_MAXIMA`, such as `z`.
+
+    Args:
+        report: A routing report.
+        name: Name of the entry.
+
+    Returns:
+        One value per segment, or None for an entry of another shape.
+    """
+    value = report.get(name)
+    if value is None or isinstance(value, (str, bytes)) or np.isscalar(value):
+        return None
+    try:
+        array = np.asarray(value, dtype=float)
+    except (TypeError, ValueError):
+        return None
     count = np.ravel(report["ctim"]).size
-    names = []
-    for key, value in report.items():
-        if key in _GEOMETRY or isinstance(value, (str, bytes)) or np.isscalar(value):
-            continue
-        try:
-            array = np.asarray(value, dtype=float)
-        except (TypeError, ValueError):
-            continue
-        if array.ndim == 1 and array.size == count:
-            names.append(key)
-    return names
+    if array.ndim != 1 or count == 0:
+        return None
+    if array.size == count:
+        return array
+
+    # Position of each sample in node intervals: the nodes are 0 to count.
+    size = array.size
+    if name in INTERIOR_SAMPLED:
+        if count <= 2 or size < 2 or (size - 1) % (count - 2):
+            return None
+        positions = 1.0 + np.arange(size) * (count - 2) / (size - 1)
+    elif size > 1 and (size - 1) % count == 0:
+        positions = np.arange(size) * count / (size - 1)
+    else:
+        return None
+    reduce = np.nanmax if name in SEGMENT_MAXIMA else np.nanmean
+    values = np.full(count, np.nan)
+    for k in range(count):
+        inside = array[(positions >= k - 1e-9) & (positions <= k + 1 + 1e-9)]
+        if np.isfinite(inside).any():
+            values[k] = reduce(inside)
+    return values
 
 
 def route_label(report: Mapping) -> str:
@@ -355,7 +404,7 @@ def build_scene(
             "hover": None,
             **dict(settings or {}),
         },
-        "variables": {name: _variable(name) for name in variables},
+        "variables": {name: variable_info(name) for name in variables},
         "routes": scene_routes,
         "sources": sources,
         "layers": _layers(),
@@ -501,11 +550,11 @@ def _route(
     One route of the scene, with its tooltip variables and comments.
     """
     comments = comments or {"description": "", "points": []}
-    values = {
-        name: _numbers(report[name], _variable(name)["digits"] + 1)
-        for name in variables
-        if name in report
-    }
+    values = {}
+    for name in variables:
+        segments = segment_values(report, name)
+        if segments is not None:
+            values[name] = _numbers(segments, variable_info(name)["digits"] + 1)
     z = report.get("z")
     summary = {
         "model": _plain(report.get("model")),
@@ -564,11 +613,21 @@ def _comments(report: Mapping, given) -> dict:
     return {"description": str(description).strip(), "points": sorted(points)}
 
 
-def _variable(name: str) -> dict:
+def variable_info(name: str) -> dict:
     """
-    The label, unit, decimals and description of a variable.
+    The label, unit, decimals and description of a tooltip variable.
+
+    A name of several words, such as `air_temperature`, is written out
+    when it has no entry in `VARIABLES`.
+
+    Args:
+        name: Name of the report entry.
+
+    Returns:
+        A dict with `label`, `unit`, `digits` and `description`.
     """
-    label, unit, digits, description = VARIABLES.get(name, (name, "", 2, name))
+    text = name.replace("_", " ").capitalize() if "_" in name else name
+    label, unit, digits, description = VARIABLES.get(name, (text, "", 2, text))
     return {"label": label, "unit": unit, "digits": digits, "description": description}
 
 

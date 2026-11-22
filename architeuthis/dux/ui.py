@@ -80,13 +80,13 @@ from architeuthis.forecast import (
 from architeuthis.report import ReportCollection, latest_report_file
 from architeuthis.dux.share import (
     ROUTE_COLORS,
-    VARIABLES,
     build_scene,
     default_variables,
     maplibre_files,
     png_data_uri,
     route_labels,
     segment_variables,
+    variable_info,
     viewer_html,
 )
 
@@ -516,8 +516,9 @@ def variable_options(collection) -> list:
     """
     options = []
     for name in all_variables(collection):
-        label, unit, _, description = VARIABLES.get(name, (name, "", 2, name))
-        options.append({"value": name, "label": f"{label} · {description}" + (f" ({unit})" if unit else "")})
+        info = variable_info(name)
+        unit = f" ({info['unit']})" if info["unit"] else ""
+        options.append({"value": name, "label": f"{info['label']} · {info['description']}{unit}"})
     return options
 
 
