@@ -348,9 +348,15 @@ def all_variables(collection) -> list:
     return defaults + [name for name in found if name not in defaults]
 
 
-def overlays() -> list:
+def overlays(visible: bool = False) -> list:
     """
     The images that can be drawn over the map: the NOAA analysis.
+
+    It is always shared, when available, and the crew can show or hide
+    it in the layers.
+
+    Args:
+        visible: Whether it is shown when the file opens.
     """
     if NOAA_CHART is None:
         return []
@@ -359,7 +365,7 @@ def overlays() -> list:
             "label": "NOAA surface analysis",
             "url": png_data_uri(NOAA_CHART),
             "bounds": SFC_BOUNDS,
-            "visible": True,
+            "visible": bool(visible),
             "time": NOAA_TIME,
         }
     ]
@@ -402,7 +408,6 @@ def preview_scene(name: str, member: int) -> dict:
             settings={
                 "routes": default_routes(collection),
                 "hover": default_variables(collection),
-                "overlays": [],
             },
         )
     return _preview[key]
@@ -641,7 +646,10 @@ sidebar = dmc.Stack(
             dmc.Checkbox(
                 id="noaa-check",
                 label=noaa_label(),
-                description="Valid time estimated from the date of the file" if NOAA_TIME is not None else None,
+                description=(
+                    "Always shared, shown at opening when ticked"
+                    + (": valid time estimated from the date of the file" if NOAA_TIME is not None else "")
+                ),
                 checked=False,
                 disabled=NOAA_CHART is None,
             ),
@@ -783,7 +791,8 @@ def quick_select(optimized, every, none, name):
 
 # The viewer answers "architeuthis:ready" once loaded: the bridge then sends it the current
 # choices, which may have changed while it was loading. The viewer sends back the comments
-# of the analyst ("architeuthis:comments") and its theme ("architeuthis:theme").
+# of the analyst ("architeuthis:comments"), its theme ("architeuthis:theme") and the charts
+# it shows ("architeuthis:overlays"), so that the NOAA box follows each toggle there.
 app.clientside_callback(
     """
     function (routes, hover, sources, title, note, noaa, texts, comments, light, names, fields, ids, nameIds) {
@@ -796,7 +805,8 @@ app.clientside_callback(
             hover: hover || [],
             sources: sources || [],
             fields: fields || [],
-            overlays: noaa ? ["o0"] : [],
+            overlays: null,
+            overlaysShown: {o0: !!noaa},
             title: title || "",
             note: note || "",
             theme: light ? "light" : "dark",
@@ -815,6 +825,8 @@ app.clientside_callback(
                     event.source.postMessage({type: "architeuthis:settings", settings: window.architeuthisSettings}, "*");
                 } else if (data.type === "architeuthis:comments") {
                     window.dash_clientside.set_props("route-comments", {data: data.comments || {}});
+                } else if (data.type === "architeuthis:overlays") {
+                    window.dash_clientside.set_props("noaa-check", {checked: !!(data.overlays || {}).o0});
                 } else if (data.type === "architeuthis:theme") {
                     window.dash_clientside.set_props("theme-switch", {checked: data.theme === "light"});
                 }
@@ -937,7 +949,8 @@ def download(
         title: Title of the page.
         note: Note to the crew.
         member: Ensemble member of the forecasts.
-        noaa: Whether to share the NOAA surface analysis.
+        noaa: Whether the NOAA surface analysis, always shared, is
+            shown when the file opens.
         descriptions: Descriptions of the routes.
         description_ids: Identifiers of their boxes.
         comments: Comments on points of the routes.
@@ -956,7 +969,7 @@ def download(
         forecasts={model.upper(): DS[model] for model in MODELS if model in (sources or [])},
         variables=hover or [],
         zones=exclusion_zones,
-        overlays=overlays() if noaa else [],
+        overlays=overlays(visible=bool(noaa)),
         labels=route_names(collection, names, name_ids),
         title=title,
         note=note or "",

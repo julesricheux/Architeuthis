@@ -335,7 +335,7 @@ def test_the_preview_shows_every_route_with_the_defaults_chosen(scene, tagged_re
     assert [route["id"] for route in scene["routes"]] == ["r0", "r1"]
     assert scene["settings"]["routes"] == ["r1"]
     assert scene["settings"]["hover"] == share.default_variables(tagged_reports)
-    assert scene["settings"]["overlays"] == []
+    assert scene["settings"]["overlays"] is None
     assert scene["title"].startswith("Routes departing ")
 
 
@@ -370,9 +370,11 @@ def test_only_the_iceberg_limit_is_shown_at_first(ui, scene, user_zone):
     assert user_zone.visible is True
 
 
-def test_the_noaa_chart_can_be_drawn_over_the_globe(scene):
+def test_the_noaa_chart_can_be_drawn_over_the_globe(scene, layout):
     (overlay,) = scene["overlays"]
 
+    assert overlay["visible"] is False
+    assert layout["noaa-check"]["checked"] is False
     assert overlay["label"] == "NOAA surface analysis"
     assert overlay["url"].startswith("data:image/png;base64,")
     assert (overlay["north"], overlay["west"], overlay["south"], overlay["east"]) == (65.15, -100.0, 14.4, 10.0)
@@ -434,6 +436,7 @@ def test_the_viewer_answers_the_bridge():
     assert "settings.labels" in script
     assert '"architeuthis:comments"' in script
     assert '"architeuthis:theme"' in script
+    assert '"architeuthis:overlays"' in script
 
 
 # ----------------------------------------------------------------------
@@ -455,7 +458,7 @@ def test_the_download_holds_the_choices(ui, tagged_reports):
     assert scene["routes"][0]["label"] == share.route_labels(tagged_reports)[0]
     assert list(scene["variables"]) == ["twa", "sog"]
     assert [source["label"] for source in scene["sources"]] == ["GFS"]
-    assert [overlay["label"] for overlay in scene["overlays"]] == ["NOAA surface analysis"]
+    assert [(overlay["label"], overlay["visible"]) for overlay in scene["overlays"]] == [("NOAA surface analysis", True)]
     assert {zone["label"] for zone in scene["zones"]} == {"Iceberg limit", "Safety margin"}
     assert (scene["title"], scene["note"]) == ("Crossing 12", "Keep north")
     assert scene["settings"] == {"routes": None, "sources": None, "overlays": None, "hover": None, "fields": None, "theme": "dark"}
@@ -529,7 +532,9 @@ def test_a_download_without_title_is_named_after_the_departure(ui):
     data, _ = ui["download"](1, "a_latest.json", [], [], [], None, None, None, False)
     scene = scene_of(data["content"])
 
-    assert scene["routes"] == [] and scene["sources"] == [] and scene["overlays"] == []
+    assert scene["routes"] == [] and scene["sources"] == []
+    # The chart is always shared, hidden when the box is not ticked.
+    assert [(overlay["label"], overlay["visible"]) for overlay in scene["overlays"]] == [("NOAA surface analysis", False)]
     assert scene["title"].startswith("Routes departing ")
     assert data["filename"].startswith("Routes_departing_")
 

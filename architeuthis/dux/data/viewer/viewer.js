@@ -1307,6 +1307,15 @@
     sendComments();
   }
 
+  // The charts shown, sent to ui.py at each toggle, so that its choice of the
+  // charts shown at opening follows the preview.
+  function sendOverlays() {
+    if (window.parent === window) return;
+    const overlays = {};
+    scene.overlays.forEach((overlay) => { overlays[overlay.id] = !!state.overlays[overlay.id]; });
+    try { window.parent.postMessage({ type: "architeuthis:overlays", overlays }, "*"); } catch (error) { /* not embedded */ }
+  }
+
   // Every comment, sent to ui.py so that the file it writes holds them.
   function sendComments() {
     if (window.parent === window) return;
@@ -1607,6 +1616,7 @@
         updateBasemap();
         buildTimeline();
         if (on) showChartTime(overlay);
+        sendOverlays();
         persist();
       }));
     });
@@ -1822,6 +1832,7 @@
           buildPanel();
           buildTimeline();
           showChartTime(overlay);
+          sendOverlays();
           return;
         }
       }
@@ -1978,8 +1989,9 @@
   // file will hold, the theme, and the analyst's route names, descriptions
   // and comments, which the preview lets them edit.
   function applySettings(settings) {
-    const before = includedOverlays();
+    const before = includedOverlays().filter((overlay) => state.overlays[overlay.id]);
     ["routes", "sources", "overlays", "hover", "fields"].forEach((key) => { if (key in settings) state.settings[key] = settings[key]; });
+    if (settings.overlaysShown) Object.assign(state.overlays, settings.overlaysShown);
     if ("title" in settings) state.title = settings.title || scene.title;
     if ("note" in settings) state.note = settings.note || "";
     if ("editable" in settings) state.editable = !!settings.editable;
@@ -1988,7 +2000,7 @@
     if (settings.comments) state.comments = JSON.parse(JSON.stringify(settings.comments));
     if (settings.theme === "light" || settings.theme === "dark") applyTheme(settings.theme);
     refresh();
-    // A chart the analyst has just added is shown at its time.
+    // A chart the analyst has just shown is shown at its time.
     const added = includedOverlays().find((overlay) => !before.includes(overlay) && state.overlays[overlay.id] && typeof overlay.time === "number");
     if (added) showChartTime(added);
   }
