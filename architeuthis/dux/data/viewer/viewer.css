@@ -15,6 +15,7 @@
   --accent-fg: #04121c;
   --isobar: #f2f4f6;
   --picker: #ffffff;
+  --tooltip: rgba(28, 30, 33, 0.76);
   --error: #ffb4b4;
   --radius: 10px;
   --gap: 12px;
@@ -37,6 +38,7 @@
   --accent-hover: #0a6d9e;
   --accent-fg: #ffffff;
   --picker: #1d2125;
+  --tooltip: rgba(250, 250, 249, 0.8);
   --error: #b3261e;
   color-scheme: light;
 }
@@ -242,6 +244,7 @@ button { cursor: pointer; }
   gap: 1px 12px;
   padding: 3px 8px;
   max-width: calc(100% - 2 * var(--gap) - 220px);
+  background: var(--tooltip);
   font-variant-numeric: tabular-nums;
   pointer-events: none;
   z-index: 2;
@@ -364,7 +367,9 @@ button { cursor: pointer; }
 :root:not([data-theme="light"]) .maplibregl-ctrl-attrib-button { filter: invert(1); }
 
 .maplibregl-popup-content {
-  background: var(--panel-strong);
+  background: var(--tooltip);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
   color: var(--fg);
   border-radius: 8px;
   padding: 4px 8px;

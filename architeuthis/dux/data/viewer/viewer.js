@@ -44,22 +44,23 @@
   // Map colours of each theme. The weather is drawn the same in both: arrows
   // and barbs take the colour of the field under them, made vivid with
   // GLYPH_LIGHTNESS, and isobars are ISOBAR_COLOR.
-  const GLYPH_LIGHTNESS = 0.64;
+  const GLYPH_SATURATION = 1;
+  const GLYPH_LIGHTNESS = 0.7;
   const ISOBAR_COLOR = "#f2f4f6";
-  const COAST_OPACITY = 0.45;
+  const COAST_OPACITY = 0.22;
   const THEMES = {
     dark: {
       sea: "#26292d",
       land: "#3c4045",
       coast: "#000000",
-      coastShade: 0.11,
+      coastShade: 0.08,
       graticule: "rgba(255,255,255,0.10)",
     },
     light: {
       sea: "#c9ced3",
       land: "#f7f7f5",
       coast: "#000000",
-      coastShade: 0.06,
+      coastShade: 0.045,
       graticule: "rgba(0,0,0,0.13)",
     },
   };
@@ -70,7 +71,7 @@
   const COAST_SHADES = 8;
   const COAST_SHADE_WIDTH = 10;
   const COAST_LAYERS = Array.from({ length: COAST_SHADES }, (_, i) => [`coast-shade-${i + 1}`, (COAST_SHADE_WIDTH * (i + 1)) / COAST_SHADES])
-    .concat([["coast", 0.6]]);
+    .concat([["coast", 0.5]]);
 
   const ICONS = {
     layers: "M12 2 2 7l10 5 10-5-10-5zm-7.8 9.1L2 12.2l10 5 10-5-2.2-1.1L12 15l-7.8-3.9zm0 5L2 17.2l10 5 10-5-2.2-1.1L12 20l-7.8-3.9z",
@@ -102,7 +103,7 @@
     arrowKind: null,
     isobars: true,
     isobarLabels: true,
-    opacity: 0.75,
+    opacity: 1,
     basemap: "offline",
     seamarks: false,
     graticule: true,
@@ -638,7 +639,7 @@
   const WAVE_KEY =
     '<div class="key" title="Each glyph points where the waves go: a solid head for 4 m, an open chevron for 1 m">' +
     '<span><svg viewBox="0 0 14 14"><path d="M7 2l6 9H1z" stroke="none"/></svg>4 m</span>' +
-    '<span><svg viewBox="0 0 14 14"><path d="M2 10 7 3l5 7" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>1 m</span>' +
+    '<span><svg viewBox="0 0 14 14"><path d="M3 9.5 7 4.5l4 5" fill="none" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>1 m</span>' +
     "<span>towards where they go</span></div>";
 
   // --------------------------------------------------------------------
@@ -690,7 +691,7 @@
       // Greys stay grey, as saturating them would give them a hue they do not
       // have, and stand out by their lightness instead.
       const grey = s < 0.08;
-      const saturation = grey ? s : Math.max(s, 0.9);
+      const saturation = grey ? s : Math.max(s, GLYPH_SATURATION);
       const lightness = grey ? (l > 0.5 ? 0.2 : 0.88) : GLYPH_LIGHTNESS;
       glyphColors[key] = { key: `${layer}${index}`, css: `hsl(${h.toFixed(0)}, ${Math.round(100 * saturation)}%, ${Math.round(100 * lightness)}%)` };
     }
@@ -750,8 +751,11 @@
   function ensureWaveGlyph(metres, color) {
     const id = `wave-${metres}-${color.key}`;
     return ensureImage(id, 96, (context) => {
-      // Chevrons are the outline of a head, of the same width and height.
-      const x = 48, HALF = 12, HEAD = 15, HEAD_STEP = 9, GAP = 5, CHEVRON = HEAD, CHEVRON_STEP = 8;
+      // A thin stroke looks bigger than a solid shape of the same size, so
+      // chevrons are drawn inside the outline of a head, and the first one
+      // touches the base of the last head.
+      const x = 48, HALF = 12, HEAD = 15, HEAD_STEP = 9;
+      const LINE = 2.6, CHEVRON_HALF = 9, CHEVRON = 10, CHEVRON_STEP = 6.5;
       context.fillStyle = color.css;
       context.strokeStyle = color.css;
       if (metres <= 0) {
@@ -763,8 +767,7 @@
       const { heads, chevrons } = waveParts(metres);
       let length = 0;
       if (heads) length += HEAD + (heads - 1) * HEAD_STEP;
-      if (heads && chevrons) length += GAP;
-      if (chevrons) length += CHEVRON + (chevrons - 1) * CHEVRON_STEP;
+      if (chevrons) length += LINE + CHEVRON + (chevrons - 1) * CHEVRON_STEP;
       let y = 48 - length / 2;
       for (let i = 0; i < heads; i++) {
         context.beginPath();
@@ -773,14 +776,16 @@
         context.lineTo(x - HALF, y + HEAD);
         context.closePath();
         context.fill();
-        y += i < heads - 1 ? HEAD_STEP : HEAD + GAP;
+        y += i < heads - 1 ? HEAD_STEP : HEAD;
       }
-      context.lineWidth = 3.5;
+      // The tip of a chevron, half a line below y, so that its stroke starts at y.
+      y += LINE / 2;
+      context.lineWidth = LINE;
       for (let i = 0; i < chevrons; i++) {
         context.beginPath();
-        context.moveTo(x - HALF + 1.5, y + CHEVRON - 1.5);
-        context.lineTo(x, y + 1.5);
-        context.lineTo(x + HALF - 1.5, y + CHEVRON - 1.5);
+        context.moveTo(x - CHEVRON_HALF, y + CHEVRON);
+        context.lineTo(x, y);
+        context.lineTo(x + CHEVRON_HALF, y + CHEVRON);
         context.stroke();
         y += CHEVRON_STEP;
       }
@@ -2208,7 +2213,7 @@
     COAST_LAYERS.forEach(([id, width]) => { if (id !== "coast") layers.push(line(id, width, theme.coastShade, width / 2)); });
     layers.push(
       { id: "land", type: "fill", source: "land", paint: { "fill-color": theme.land } },
-      line("coast", 0.6, COAST_OPACITY, 0)
+      line("coast", 0.5, COAST_OPACITY, 0)
     );
     layers.push({ id: "graticule", type: "line", source: "graticule", paint: { "line-color": theme.graticule, "line-width": 0.6 } });
     SEAMARK_LEVELS.forEach(([zoom], index) => {
