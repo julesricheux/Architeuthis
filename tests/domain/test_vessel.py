@@ -1,7 +1,10 @@
 import numpy as np
 import pytest
 
-from architeuthis.vessel import FUEL_DENSITY, POLAR_KEYS, Vessel
+from architeuthis.fuels import FUELS, Fuel
+from architeuthis.vessel import DEFAULT_FUEL, POLAR_KEYS, Vessel
+
+FUEL_DENSITY = FUELS[DEFAULT_FUEL].density
 
 POLAR_DIMS = ("stw", "tws", "twa", "hs", "wa")
 POLAR_POWER_COEFFICIENT = 1.2  # as built by the `polar` fixture
@@ -137,11 +140,39 @@ def test_a_constant_model_takes_no_input():
 
 
 def test_consumptions_are_volumes_of_the_fuel_density():
-    vessel = Vessel("ship", hotel_load=100.0, sfoc=200.0, density=0.99, max_power=None, verbose=False)
+    vessel = Vessel("ship", hotel_load=100.0, sfoc=200.0, fuel_density=0.99, max_power=None, verbose=False)
     vessel.add_constant("bhp", 900.0)
 
-    assert Vessel("default", max_power=None, verbose=False).density == FUEL_DENSITY == 0.83
     assert float(vessel.consumption({})["hourly_consumption"]) == pytest.approx(1000.0 * 200.0 / 1e3 / 0.99)
+
+
+def test_the_fuel_is_marine_diesel_oil_at_0_83_by_default():
+    vessel = Vessel("default", max_power=None, verbose=False)
+
+    assert vessel.fuel_type == "mdo"
+    assert vessel.fuel_density == 0.83
+    assert vessel.fuel is FUELS["mdo"]
+
+
+def test_the_fuel_type_gives_the_density_unless_it_is_given():
+    hfo = Vessel("hfo", fuel_type="HFO", max_power=None, verbose=False)
+    measured = Vessel("measured", fuel_type="hfo", fuel_density=0.991, max_power=None, verbose=False)
+    alias = Vessel("petrol", fuel_type="petrol", max_power=None, verbose=False)
+
+    assert (hfo.fuel_type, hfo.fuel_density) == ("hfo", FUELS["hfo"].density)
+    assert (measured.fuel_type, measured.fuel_density) == ("hfo", 0.991)
+    assert alias.fuel_type == "unleaded"
+
+
+def test_a_fuel_of_its_own_and_a_wrong_fuel():
+    own = Fuel("Blend", density=0.9, lcv=41.5, cf_co2=3.15)
+    vessel = Vessel("own", fuel_type=own, max_power=None, verbose=False)
+
+    assert (vessel.fuel_type, vessel.fuel_density) == ("Blend", 0.9)
+    with pytest.raises(KeyError, match="Unknown fuel type"):
+        Vessel("ship", fuel_type="kerosene", max_power=None, verbose=False)
+    with pytest.raises(ValueError, match="positive"):
+        Vessel("ship", fuel_density=0.0, max_power=None, verbose=False)
 
 
 def test_a_vessel_without_consumption_model_is_reported():

@@ -356,7 +356,13 @@ def _numeric(value):
     return array.ravel()
 
 
-def _describe(obj, attributes=("model", "product", "dataset", "f00", "path", "label", "consumption_model", "max_power", "members")):
+def _describe(
+    obj,
+    attributes=(
+        "model", "product", "dataset", "f00", "path", "label", "consumption_model", "max_power",
+        "fuel_type", "fuel_density", "members",
+    ),
+):
     """
     A JSON-friendly description of a data object.
 
@@ -402,7 +408,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
     without any. The topography is required.
 
     The objective is the fuel, in tonnes, from the consumption of the
-    vessel in L/h times its fuel `density`: its `hourly_consumption`
+    vessel in L/h times its `fuel_density`: its `hourly_consumption`
     model, or its `total_power` or its `bhp` plus hotel load, burnt at
     its `sfoc` (see `Vessel`). These quantities are in the report,
     under the keys of the vessel models (`bhp` for the brake power,
@@ -791,7 +797,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             for key, value in self.vessel.consumption(vessel_query).items()
         }
         vessel_query |= consumption
-        fuel = np.sum(consumption["hourly_consumption"] * dt) * self.vessel.density / 1e3
+        fuel = np.sum(consumption["hourly_consumption"] * dt) * self.vessel.fuel_density / 1e3
 
         passage = {
             "fuel": fuel,

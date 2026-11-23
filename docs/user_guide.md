@@ -127,13 +127,13 @@ Each vessel model is evaluated separately, so a function that computes all compo
 
 ### Consumption
 
-The objective is the fuel, in tonnes: the integral over the passage of the consumption in L/h, at the middle of each segment, times the fuel density, `Vessel(density=...)` in kg/L (`vessel.FUEL_DENSITY`, 0.83, marine gas oil, by default). Consumptions are volumes, in L/h, in the report, the tooltips and the figures; only the fuel of the voyage, `fuel`, is a mass, in tonnes. The routing takes it from the first of these vessel models; the others, such as `max_bhp` or `sails_contribution`, are computed only when `variables` lists them.
+The objective is the fuel, in tonnes: the integral over the passage of the consumption in L/h, at the middle of each segment, times the fuel density in kg/L. Consumptions are volumes, in L/h, in `ctx`, the report, the tooltips and the figures; only the fuel of the voyage, `fuel`, is a mass, in tonnes. An `hourly_consumption` table or function gives litres per hour. The routing takes it from the first of these vessel models; the others, such as `max_bhp` or `sails_contribution`, are computed only when `variables` lists them.
 
 | Model | Consumption, L/h | Report entries |
 | --- | --- | --- |
 | `hourly_consumption`, L/h | the model itself, a table or function in litres per hour | `hourly_consumption` |
-| `total_power`, kW: propulsion and hotel | `total_power * sfoc / 1e3 / density` | `total_power`, `sfoc`, `hourly_consumption` |
-| `bhp`, kW: propulsion | `(bhp + hotel_load) * sfoc / 1e3 / density` | `bhp`, `hotel_load`, `total_power`, `sfoc`, `hourly_consumption` |
+| `total_power`, kW: propulsion and hotel | `total_power * sfoc / 1e3 / fuel_density` | `total_power`, `sfoc`, `hourly_consumption` |
+| `bhp`, kW: propulsion | `(bhp + hotel_load) * sfoc / 1e3 / fuel_density` | `bhp`, `hotel_load`, `total_power`, `sfoc`, `hourly_consumption` |
 
 Each model is a table, a function or a constant: `vessel.add_constant("bhp", 1500.)` registers a model without input. `hotel_load` (kW) and `sfoc` (g/kWh) are given to `Vessel` as numbers or as functions of the power, the brake power for `hotel_load` and the total power for `sfoc`. A model of the same key takes precedence, and may name `bhp`, `hotel_load` or `total_power` among its inputs, so an sfoc curve of the engine load is a table or a function of `total_power`:
 
@@ -142,6 +142,39 @@ vessel = Vessel("vessel", hotel_load=180., max_power=4100.)
 vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa")
 vessel.add_function("sfoc", lambda x: 175. + 2e-6 * (x["total_power"] - 3000.)**2, ["total_power"])
 ```
+
+The fuel density, in kg/L, is `Vessel(fuel_density=...)`, from the bunker delivery note for example, else that of `fuel_type`, a key of `fuels.FUELS`, an alias of `fuels.FUEL_ALIASES` or a `fuels.Fuel` of your own: marine diesel oil at 0.83 kg/L by default. The passage plan metadata records both.
+
+```python
+vessel = Vessel("vessel", fuel_type="hfo", sfoc=180., hotel_load=180., max_power=4100.)  # 0.985 kg/L
+vessel = Vessel("vessel", fuel_type="hfo", fuel_density=0.991, ...)                     # measured
+vessel.fuel.co2(report["fuel"])            # t of CO2, tank to wake
+vessel.fuel.ghg(report["fuel"])            # t of CO2 equivalent, well to wake (FuelEU Maritime)
+```
+
+| Key | Fuel | Density, kg/L | LCV, MJ/kg | CO2, g/g | Well to wake, gCO2e/MJ |
+| --- | --- | --- | --- | --- | --- |
+| `mdo` | Marine diesel oil (ISO 8217 DMB) | 0.83 | 42.7 | 3.206 | 90.8 |
+| `mgo` | Marine gas oil (ISO 8217 DMA) | 0.85 | 42.7 | 3.206 | 90.8 |
+| `lfo` | Light fuel oil (ISO 8217 RMA-RMD) | 0.93 | 41 | 3.151 | 91.4 |
+| `hfo` | Heavy fuel oil (ISO 8217 RME-RMK) | 0.985 | 40.5 | 3.114 | 91.7 |
+| `vlsfo` | Very low sulphur fuel oil, 0.5 % S (residual) | 0.94 | 40.5 | 3.114 | 91.7 |
+| `lng` | LNG, Otto dual fuel medium speed engine | 0.45 | 49.1 | 2.75 | 89.2 |
+| `lng_otto_slow` | LNG, Otto dual fuel slow speed engine | 0.45 | 49.1 | 2.75 | 82.9 |
+| `lng_diesel` | LNG, diesel dual fuel slow speed engine | 0.45 | 49.1 | 2.75 | 76.1 |
+| `lng_lbsi` | LNG, lean burn spark ignited engine | 0.45 | 49.1 | 2.75 | 86.9 |
+| `lpg_propane` | LPG, propane | 0.51 | 46 | 3 | 73.0 |
+| `lpg_butane` | LPG, butane | 0.58 | 46 | 3.03 | 73.7 |
+| `methanol` | Methanol from natural gas | 0.792 | 19.9 | 1.375 | 100.4 |
+| `ethanol` | Ethanol | 0.789 | 26.8 | 1.913 | – |
+| `ammonia` | Ammonia from natural gas, liquid at -33 deg C | 0.682 | 18.6 | 0 | 121.0 |
+| `hydrogen` | Hydrogen from natural gas, liquid at -253 deg C | 0.071 | 120 | 0 | 132.0 |
+| `fame` | Biodiesel, FAME (EN 14214) | 0.88 | 37.2 | 2.834 | – |
+| `hvo` | Hydrotreated vegetable oil (EN 15940) | 0.78 | 44 | 3.115 | – |
+| `diesel` | Road diesel (EN 590) | 0.835 | 43 | 3.186 | – |
+| `unleaded` | Unleaded petrol (EN 228) | 0.745 | 44.3 | 3.07 | – |
+
+Factors of marine fuels are the default values of FuelEU Maritime (Regulation (EU) 2023/1805, Annex II, with GWP 25 for CH4 and 298 for N2O), and of road fuels those of the IPCC 2006 guidelines. A `Fuel` also has `cf_ch4`, `cf_n2o` and `methane_slip` (LNG by engine type), `wtt`, `ttw_intensity` and `wtw_intensity`, `energy_density` (MJ/L) and `biogenic`: FuelEU counts the combustion CO2 of sustainable biofuels as zero, and the well to tank of biofuels and road fuels, which depends on their production, is left as None. Densities are typical at 15 deg C (liquid for the gases); that of a delivery is on its bunker note. Check the factors against the regulation in force before any regulatory use.
 
 `examples/vessel_definitions.py` compares five definitions of one vessel on a short-sea leg, without polar file or credentials: the brake power as a function or as a table, an sfoc curve of the total power, the total power, and the hourly consumption.
 

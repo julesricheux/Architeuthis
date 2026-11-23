@@ -10,7 +10,10 @@ import architeuthis.numpy as anp
 from architeuthis.common import GUST_DEFAULT_RATIO
 from architeuthis.core import Leg, RoutingAnalysis, Schedule, Voyage
 from architeuthis.toolbox.geo_utils import distances, poly_deviated_route
-from architeuthis.vessel import FUEL_DENSITY
+from architeuthis.fuels import FUELS
+from architeuthis.vessel import DEFAULT_FUEL
+
+FUEL_DENSITY = FUELS[DEFAULT_FUEL].density
 
 HOUR = 3600.0
 DEPARTURE = np.array([48.0, -35.0])
