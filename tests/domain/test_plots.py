@@ -175,7 +175,7 @@ class TestPlotReport:
 
     @pytest.mark.parametrize(
         "key, label",
-        [("total_power", "Total power / kW"), ("hourly_consumption", "Consumption / kg/h")],
+        [("total_power", "Total power / kW"), ("hourly_consumption", "Consumption / L/h")],
     )
     def test_power_panel_falls_back_on_the_consumption(self, baseline_report, key, label):
         report = {k: v for k, v in baseline_report.items() if k not in ("bhp", "total_power")}

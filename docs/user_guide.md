@@ -127,13 +127,13 @@ Each vessel model is evaluated separately, so a function that computes all compo
 
 ### Consumption
 
-The objective is the fuel, in tonnes: the integral over the passage of the consumption in kg/h, at the middle of each segment. The routing takes it from the first of these vessel models; the others, such as `max_bhp` or `sails_contribution`, are computed only when `variables` lists them.
+The objective is the fuel, in tonnes: the integral over the passage of the consumption in L/h, at the middle of each segment, times the fuel density, `Vessel(density=...)` in kg/L (`vessel.FUEL_DENSITY`, 0.83, marine gas oil, by default). Consumptions are volumes, in L/h, in the report, the tooltips and the figures; only the fuel of the voyage, `fuel`, is a mass, in tonnes. The routing takes it from the first of these vessel models; the others, such as `max_bhp` or `sails_contribution`, are computed only when `variables` lists them.
 
-| Model | Consumption, kg/h | Report entries |
+| Model | Consumption, L/h | Report entries |
 | --- | --- | --- |
-| `hourly_consumption`, kg/h | the model itself | `hourly_consumption` |
-| `total_power`, kW: propulsion and hotel | `total_power * sfoc / 1e3` | `total_power`, `sfoc`, `hourly_consumption` |
-| `bhp`, kW: propulsion | `(bhp + hotel_load) * sfoc / 1e3` | `bhp`, `hotel_load`, `total_power`, `sfoc`, `hourly_consumption` |
+| `hourly_consumption`, L/h | the model itself, a table or function in litres per hour | `hourly_consumption` |
+| `total_power`, kW: propulsion and hotel | `total_power * sfoc / 1e3 / density` | `total_power`, `sfoc`, `hourly_consumption` |
+| `bhp`, kW: propulsion | `(bhp + hotel_load) * sfoc / 1e3 / density` | `bhp`, `hotel_load`, `total_power`, `sfoc`, `hourly_consumption` |
 
 Each model is a table, a function or a constant: `vessel.add_constant("bhp", 1500.)` registers a model without input. `hotel_load` (kW) and `sfoc` (g/kWh) are given to `Vessel` as numbers or as functions of the power, the brake power for `hotel_load` and the total power for `sfoc`. A model of the same key takes precedence, and may name `bhp`, `hotel_load` or `total_power` among its inputs, so an sfoc curve of the engine load is a table or a function of `total_power`:
 
@@ -395,7 +395,7 @@ Six stacked panels share a time axis in UTC, which runs from the first to the la
 | --- | --- | --- | --- | --- |
 | 1 | `sog` | `sog` | Speed over ground, kt | Automatic |
 | 2 | `sails` | `sails_contribution` | Sails contribution, %. Without it, the panel says so | 0 to 100 |
-| 3 | `bhp` | `bhp`, `max_bhp` | Average BHP, kW. With `max_bhp`, load fluctuations are dashed lines and a band at average ± (max − average). Without `bhp`, `total_power` (kW), else `hourly_consumption` (kg/h) | From 0 |
+| 3 | `bhp` | `bhp`, `max_bhp` | Average BHP, kW. With `max_bhp`, load fluctuations are dashed lines and a band at average ± (max − average). Without `bhp`, `total_power` (kW), else `hourly_consumption` (L/h) | From 0 |
 | 4 | `swh` | `swh` | Significant wave height, m | From 0 |
 | 5 | `tws` | `tws`, `tws_gust` | True wind, kt: average, and gust as a dashed line with a band | From 0 |
 | 6 | `aws` | `aws`, `aws_gust` | Apparent wind, kt: average, and gust as a dashed line with a band | From 0 |

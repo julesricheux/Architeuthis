@@ -100,7 +100,7 @@ VARIABLES = {
     "total_power": ("Power", "kW", 0, "Total power"),
     "hotel_load": ("Hotel load", "kW", 0, "Hotel load"),
     "sfoc": ("SFOC", "g/kWh", 0, "Specific fuel oil consumption"),
-    "hourly_consumption": ("Consumption", "kg/h", 0, "Fuel consumption"),
+    "hourly_consumption": ("Consumption", "L/h", 0, "Fuel consumption"),
     "sails_contribution": ("Sails", "%", 0, "Contribution of the sails"),
     "z": ("Land", "nm", 1, "Distance to land or an exclusion zone, negative at sea: the largest on the segment"),
 }

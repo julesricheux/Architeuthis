@@ -144,9 +144,11 @@ The objective is the fuel, so the vessel needs one model of its consumption, the
 
 | Model | Unit | Burnt at |
 | --- | --- | --- |
-| `hourly_consumption` | kg/h | (it is the consumption) |
+| `hourly_consumption` | L/h | (it is the consumption) |
 | `total_power`, propulsion and hotel | kW | `sfoc`, g/kWh |
 | `bhp`, propulsion | kW | `sfoc`, after adding `hotel_load`, kW |
+
+Consumptions are volumes, in L/h: a polar table or function of `hourly_consumption` gives litres per hour, and the mass burnt at `sfoc` is divided by the fuel density, `Vessel(density=0.83)` kg/L by default. Only the fuel of the whole voyage is a mass, in tonnes.
 
 Each can be a table, a function or a constant (`vessel.add_constant("bhp", 1500.)`). `hotel_load` and `sfoc` are numbers or functions of the power given to `Vessel(...)`, or models of their own, which can take `bhp` or `total_power` as an input: an sfoc curve of the engine load, for example. Any other model of the vessel, such as `max_bhp` or `sails_contribution`, is computed only when you list it: `RoutingAnalysis(..., variables=["max_bhp"])`. Until 0.4.0, `max_bhp` and `sails_contribution` are still computed when the vessel has them, with a deprecation warning that asks to list them.
 
@@ -368,7 +370,7 @@ Architeuthis downloads with it the ASCAT winds of the OSI SAF (`EO:EUM:DAT:METOP
 
 ## 🗺️ The Routing Problem
 
-- **Objective:** total fuel, `sum(hourly_consumption * dt) / 1e3`, in tonnes, where the consumption is `(bhp + hotel_load) * sfoc / 1e3` kg/h, `total_power * sfoc / 1e3` or your own `hourly_consumption`.
+- **Objective:** total fuel, `sum(hourly_consumption * dt) * density / 1e3`, in tonnes, where the consumption is `(bhp + hotel_load) * sfoc / 1e3 / density` L/h, `total_power * sfoc / 1e3 / density` or your own `hourly_consumption` in L/h, and `density` the fuel density of the vessel, 0.83 kg/L by default.
 - **Fixed:** departure, arrival, ETD and ETA. The schedule is a requirement, the speed an outcome.
 - **Environment:** the wind, waves and current you give; any of them left out is zero, so `RoutingAnalysis("analysis", vessel, voyage, atmosphere, topography=topography)` routes in the wind alone.
 - **Variables:** the positions along the route, and optionally a factor blending the reference route towards two alternatives.

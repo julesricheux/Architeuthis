@@ -10,6 +10,7 @@ import architeuthis.numpy as anp
 from architeuthis.common import GUST_DEFAULT_RATIO
 from architeuthis.core import Leg, RoutingAnalysis, Schedule, Voyage
 from architeuthis.toolbox.geo_utils import distances, poly_deviated_route
+from architeuthis.vessel import FUEL_DENSITY
 
 HOUR = 3600.0
 DEPARTURE = np.array([48.0, -35.0])
@@ -849,7 +850,7 @@ def consumption_vessel(formulation, **kwargs):
     else:
         vessel.add_function(
             "hourly_consumption",
-            lambda x: (cubic_bhp(x) + HOTEL_LOAD) * SFC / 1e3,
+            lambda x: (cubic_bhp(x) + HOTEL_LOAD) * SFC / 1e3 / FUEL_DENSITY,
             ["stw"],
         )
     return vessel
@@ -885,7 +886,8 @@ class TestConsumption:
     def test_fuel_integrates_the_hourly_consumption(self, reference):
         duration_h = np.diff(np.ravel(reference["tim"])) / HOUR
 
-        assert reference["fuel"] == pytest.approx(np.sum(np.ravel(reference["hourly_consumption"]) * duration_h) / 1e3)
+        # Litres per hour over each segment, times kg/L, in tonnes.
+        assert reference["fuel"] == pytest.approx(np.sum(np.ravel(reference["hourly_consumption"]) * duration_h) * FUEL_DENSITY / 1e3)
 
     def test_reports_hold_the_quantities_of_their_formulation(self, baseline, reference):
         total = baseline(consumption_vessel("total_power", sfoc=SFC))

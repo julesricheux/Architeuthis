@@ -484,7 +484,7 @@ def plot_report(report, save_as=None, show=True, figsize=A4_PORTRAIT, dpi=300, y
             panels["bhp"].set_ylabel("Total power / kW")
         else:
             panels["bhp"].step(ctim, onp.asarray(report["hourly_consumption"], dtype=float), color=C0, **step_kw)
-            panels["bhp"].set_ylabel("Consumption / kg/h")
+            panels["bhp"].set_ylabel("Consumption / L/h")
         panels["bhp"].set_ylim(0., None)
 
         # 4. SWH

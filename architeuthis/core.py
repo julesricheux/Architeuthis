@@ -402,10 +402,11 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
     without any. The topography is required.
 
     The objective is the fuel, in tonnes, from the consumption of the
-    vessel in kg/h: its `hourly_consumption` model, or its
-    `total_power` or its `bhp` plus hotel load, burnt at its `sfoc`
-    (see `Vessel`). These quantities are in the report, under the
-    keys of the vessel models (`bhp` for the brake power). Other
+    vessel in L/h times its fuel `density`: its `hourly_consumption`
+    model, or its `total_power` or its `bhp` plus hotel load, burnt at
+    its `sfoc` (see `Vessel`). These quantities are in the report,
+    under the keys of the vessel models (`bhp` for the brake power,
+    `hourly_consumption` in L/h). Other
     vessel models, such as `max_bhp` or `sails_contribution`, are
     computed only when listed in `variables`. Until 0.4.0, `max_bhp`
     and `sails_contribution` are still computed when the vessel has
@@ -784,13 +785,13 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             else:
                 vessel_query[key] = self._forecast_variable(key, forecast_queries)
 
-        # The objective: kg/h over each segment, in tonnes
+        # The objective: L/h over each segment, times kg/L, in tonnes
         consumption = {
             key: _column(value, dt)
             for key, value in self.vessel.consumption(vessel_query).items()
         }
         vessel_query |= consumption
-        fuel = np.sum(consumption["hourly_consumption"] * dt) / 1e3
+        fuel = np.sum(consumption["hourly_consumption"] * dt) * self.vessel.density / 1e3
 
         passage = {
             "fuel": fuel,

@@ -32,6 +32,10 @@ CONSUMPTION_QUANTITIES = ("bhp", "hotel_load", "total_power", "sfoc", "hourly_co
 POLAR_KEYS = ("bhp", "max_bhp", "sails_contribution")
 POLAR_DIMS = ("stw", "tws", "twa", "hs", "wa")
 
+# Density of the fuel in kg/L, marine gas oil by default: consumptions are
+# volumes, in L/h, and the fuel of a voyage a mass, in tonnes.
+FUEL_DENSITY = 0.83 # kg/L
+
 # Power limit when `max_power` is not given, until 0.4.0, where it becomes None.
 _DEFAULT_MAX_POWER = 1e12 # kW
 _UNSET = object()
@@ -73,11 +77,15 @@ class Vessel(ArchiteuthisData):
     Routing only needs the fuel consumption, its objective, given by
     the first of these models that the vessel has:
 
-    - `hourly_consumption`: the fuel consumption itself, in kg/h.
+    - `hourly_consumption`: the fuel consumption itself, in L/h.
     - `total_power`: the power of all consumers, propulsion and
       hotel, in kW, burnt at `sfoc`.
     - `bhp`: the brake power of the propulsion, in kW, plus
       `hotel_load`, burnt at `sfoc`.
+
+    Consumptions are volumes, in L/h: the mass burnt at `sfoc` is
+    divided by `density`, and the fuel of a voyage is the volume
+    times `density`, in tonnes.
 
     `hotel_load` and `sfoc` are numbers, functions of the power (the
     brake power for `hotel_load`, the total power for `sfoc`), or
@@ -107,6 +115,8 @@ class Vessel(ArchiteuthisData):
             which makes the fuel zero: an error from 0.4.0.
         verbose: Whether to report progress.
         label: Short identifier of the vessel in reports.
+        density: Density of the fuel in kg/L, `FUEL_DENSITY` (0.83,
+            marine gas oil) by default.
         sfc: Former name of `sfoc`, deprecated: removed in 0.4.0.
 
     Example:
@@ -123,6 +133,7 @@ class Vessel(ArchiteuthisData):
         sfoc: Union[Callable, float, int, None] = None, # g/kWh
         verbose: bool = True,
         label: Optional[str] = None,
+        density: float = FUEL_DENSITY, # kg/L
         sfc: Union[Callable, float, int, None] = None,
     ):
         super().__init__(name, verbose)
@@ -138,6 +149,7 @@ class Vessel(ArchiteuthisData):
                 raise TypeError("Give sfoc only: sfc is its former name.")
             sfoc = sfc
 
+        self.density = density
         self.hotel_load = ensure_callable(hotel_load)
         self.sfoc = ensure_callable(sfoc)
         if max_power is _UNSET:
@@ -182,7 +194,7 @@ class Vessel(ArchiteuthisData):
             raise KeyError(
                 f"{self.name} has no consumption model. Add one of 'bhp' (with "
                 "hotel_load and sfoc), 'total_power' (with sfoc) or "
-                "'hourly_consumption' (kg/h), with add_interpolator, "
+                "'hourly_consumption' (L/h), with add_interpolator, "
                 "add_function or add_constant."
             )
         return formulation
@@ -243,8 +255,9 @@ class Vessel(ArchiteuthisData):
 
         With a `bhp` model, the total power is `bhp + hotel_load`. The
         total power, from it or from a `total_power` model, is burnt
-        at `sfoc`. An `hourly_consumption` model gives the consumption
-        directly. Each model takes the inputs it names in `query`, and
+        at `sfoc`, and the mass divided by `density`. An
+        `hourly_consumption` model gives the consumption directly, in
+        L/h. Each model takes the inputs it names in `query`, and
         those computed before it: `bhp`, `hotel_load`, `total_power`.
 
         Args:
@@ -254,7 +267,7 @@ class Vessel(ArchiteuthisData):
         Returns:
             A dict of the quantities of `consumption_quantities`, in
             order: `bhp` and `hotel_load` (kW), `total_power` (kW),
-            `sfoc` (g/kWh) and `hourly_consumption` (kg/h). A constant
+            `sfoc` (g/kWh) and `hourly_consumption` (L/h). A constant
             may stay a scalar.
 
         Example:
@@ -279,7 +292,8 @@ class Vessel(ArchiteuthisData):
         query["total_power"] = total_power
 
         sfoc = self._load("sfoc", query, total_power)
-        hourly_consumption = np.abs(total_power) * sfoc / 1e3 # kW * g/kWh = g/h, in kg/h
+        # kW * g/kWh = g/h, in kg/h, then in L/h
+        hourly_consumption = np.abs(total_power) * sfoc / 1e3 / self.density
 
         return quantities | {
             "total_power": total_power,

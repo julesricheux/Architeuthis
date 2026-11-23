@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from architeuthis.vessel import POLAR_KEYS, Vessel
+from architeuthis.vessel import FUEL_DENSITY, POLAR_KEYS, Vessel
 
 POLAR_DIMS = ("stw", "tws", "twa", "hs", "wa")
 POLAR_POWER_COEFFICIENT = 1.2  # as built by the `polar` fixture
@@ -74,7 +74,8 @@ def test_consumption_of_a_brake_power():
     assert list(consumption) == vessel.consumption_quantities()
     assert list(consumption) == ["bhp", "hotel_load", "total_power", "sfoc", "hourly_consumption"]
     assert consumption["total_power"] == pytest.approx(BHP + 200.0)
-    assert consumption["hourly_consumption"] == pytest.approx((BHP + 200.0) * 180.0 / 1e3)
+    # Burnt at the sfoc, in kg/h, then in L/h.
+    assert consumption["hourly_consumption"] == pytest.approx((BHP + 200.0) * 180.0 / 1e3 / FUEL_DENSITY)
 
 
 def test_consumption_of_a_total_power():
@@ -86,7 +87,7 @@ def test_consumption_of_a_total_power():
     # The hotel load is part of the total power
     assert list(consumption) == ["total_power", "sfoc", "hourly_consumption"]
     assert consumption["sfoc"] == pytest.approx(150.0 + BHP / 100.0)
-    assert consumption["hourly_consumption"] == pytest.approx(BHP * (150.0 + BHP / 100.0) / 1e3)
+    assert consumption["hourly_consumption"] == pytest.approx(BHP * (150.0 + BHP / 100.0) / 1e3 / FUEL_DENSITY)
 
 
 def test_an_hourly_consumption_needs_no_sfoc():
@@ -132,7 +133,15 @@ def test_a_constant_model_takes_no_input():
 
     assert vessel.input_names("bhp") == []
     assert float(vessel("bhp", {"stw": 12.0})) == 900.0
-    assert float(vessel.consumption({})["hourly_consumption"]) == pytest.approx(1000.0 * 200.0 / 1e3)
+    assert float(vessel.consumption({})["hourly_consumption"]) == pytest.approx(1000.0 * 200.0 / 1e3 / FUEL_DENSITY)
+
+
+def test_consumptions_are_volumes_of_the_fuel_density():
+    vessel = Vessel("ship", hotel_load=100.0, sfoc=200.0, density=0.99, max_power=None, verbose=False)
+    vessel.add_constant("bhp", 900.0)
+
+    assert Vessel("default", max_power=None, verbose=False).density == FUEL_DENSITY == 0.83
+    assert float(vessel.consumption({})["hourly_consumption"]) == pytest.approx(1000.0 * 200.0 / 1e3 / 0.99)
 
 
 def test_a_vessel_without_consumption_model_is_reported():
@@ -172,7 +181,7 @@ def test_consumption_is_differentiable():
     rate = vessel.consumption({"stw": stw})["hourly_consumption"]
     gradient = ca.Function("gradient", [stw], [ca.jacobian(rate, stw)])
 
-    assert float(gradient(10.0)) == pytest.approx(3.0 * POLAR_POWER_COEFFICIENT * 100.0 * 180.0 / 1e3)
+    assert float(gradient(10.0)) == pytest.approx(3.0 * POLAR_POWER_COEFFICIENT * 100.0 * 180.0 / 1e3 / FUEL_DENSITY)
 
 
 def test_missing_polar_file_is_reported():
