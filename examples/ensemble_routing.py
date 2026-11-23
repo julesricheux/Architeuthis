@@ -121,7 +121,7 @@ for i, vessel_data in enumerate(vessel_files):
 
 global_corr_fac = 1.10 # global models speed correction (115% @ 10m, 105% @ 100m)
 
-recent = pd.Timestamp("now").floor("1d") #- pd.Timedelta("12h")
+recent = pd.Timestamp("now").floor("9h").floor("1d") #- pd.Timedelta("12h")
 # mirror_end = pd.Timestamp('2025-12-21 12:00')
 
 ATMOS = {}

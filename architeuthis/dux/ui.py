@@ -269,7 +269,7 @@ def grib_regex(
 
 #%% FORECASTS
 
-recent = pd.Timestamp("now").floor("1d8h").floor("1d")
+recent = pd.Timestamp("now").floor("9h").floor("1d")
 # recent = pd.Timestamp('2026-11-08 00:00:00')
 
 ATMOS = {}

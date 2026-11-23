@@ -24,7 +24,7 @@ from architeuthis.report import ReportCollection
 from architeuthis.vessel import Vessel
 
 domain = {"min_lon": -11.0, "max_lon": -2.0, "min_lat": 42.0, "max_lat": 50.0}
-recent = pd.Timestamp("now").floor("1d8h").floor("1d")  # latest 00 UTC run
+recent = pd.Timestamp("now").floor("9h").floor("1d")  # latest 00 UTC run
 
 #%% DUMMY FUNCTION POLAR
 
