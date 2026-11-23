@@ -674,13 +674,22 @@ def land() -> dict:
     """
     The land of the world, for the offline map of the viewer.
 
+    Natural Earth 1:10m land at two levels, built by
+    `tools/make_land.py`: simplified at 0.05 deg for the whole globe,
+    and at 0.005 deg under `detail`, which the page reads once it is
+    shown and draws close up.
+
     Returns:
-        A dict with `quantum`, the unit in deg, and `polygons`: lists
-        of rings, each a flat list of longitude and latitude steps.
+        A dict with `quantum`, the unit in deg, `polygons`: lists of
+        rings, each a flat list of longitude and latitude steps, and
+        `detail`, the finer land in the same form.
     """
-    with open(_DATA / "land.json", encoding="utf-8") as file:
-        data = json.load(file)
-    return {"quantum": data["quantum"], "polygons": data["polygons"]}
+    levels = []
+    for name in ("land.json", "land_detail.json"):
+        with open(_DATA / name, encoding="utf-8") as file:
+            data = json.load(file)
+        levels.append({"quantum": data["quantum"], "polygons": data["polygons"]})
+    return levels[0] | {"detail": levels[1]}
 
 
 # --------------------------------------------------------------------------

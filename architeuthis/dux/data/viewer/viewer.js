@@ -72,6 +72,13 @@
   const COAST_SHADE_WIDTH = 10;
   const COAST_LAYERS = Array.from({ length: COAST_SHADES }, (_, i) => [`coast-shade-${i + 1}`, (COAST_SHADE_WIDTH * (i + 1)) / COAST_SHADES])
     .concat([["coast", 0.5]]);
+  // The land and its coast are drawn from two levels of the file: the whole
+  // globe from the coarse one, and from DETAIL_ZOOM the finer one, read once
+  // the page is shown so that it never delays it. Each layer has a twin of
+  // the finer level, its id ending with "-detail".
+  const DETAIL_ZOOM = 5;
+  const LAND_LAYERS = ["land"].concat(COAST_LAYERS.map(([id]) => id));
+  const DETAIL = "-detail";
 
   const ICONS = {
     layers: "M12 2 2 7l10 5 10-5-10-5zm-7.8 9.1L2 12.2l10 5 10-5-2.2-1.1L12 15l-7.8-3.9zm0 5L2 17.2l10 5 10-5-2.2-1.1L12 20l-7.8-3.9z",
@@ -1139,8 +1146,10 @@
 
   function updateBasemap() {
     setVisible("osm", state.basemap === "osm");
-    setVisible("land", state.basemap !== "osm");
-    COAST_LAYERS.forEach(([id]) => setVisible(id, state.basemap !== "osm"));
+    LAND_LAYERS.forEach((id) => {
+      setVisible(id, state.basemap !== "osm");
+      setVisible(id + DETAIL, state.basemap !== "osm");
+    });
     SEAMARK_LEVELS.forEach(([zoom]) => setVisible(`seamarks-${zoom}`, state.seamarks));
     setVisible("graticule", state.graticule);
     const included = includedOverlays();
@@ -2085,11 +2094,13 @@
     if (map && map.getLayer("sea")) {
       const colors = THEMES[state.theme];
       map.setPaintProperty("sea", "background-color", colors.sea);
-      map.setPaintProperty("land", "fill-color", colors.land);
       map.setPaintProperty("graticule", "line-color", colors.graticule);
-      COAST_LAYERS.forEach(([id]) => {
-        map.setPaintProperty(id, "line-color", colors.coast);
-        if (id !== "coast") map.setPaintProperty(id, "line-opacity", colors.coastShade);
+      ["", DETAIL].forEach((suffix) => {
+        map.setPaintProperty("land" + suffix, "fill-color", colors.land);
+        COAST_LAYERS.forEach(([id]) => {
+          map.setPaintProperty(id + suffix, "line-color", colors.coast);
+          if (id !== "coast") map.setPaintProperty(id + suffix, "line-opacity", colors.coastShade);
+        });
       });
     }
     persist();
@@ -2107,11 +2118,11 @@
   // Map
   // --------------------------------------------------------------------
 
-  function landData() {
-    const quantum = scene.land.quantum;
+  function landData(level) {
+    const quantum = level.quantum;
     return {
       type: "FeatureCollection",
-      features: scene.land.polygons.map((rings) => ({
+      features: level.polygons.map((rings) => ({
         type: "Feature",
         properties: {},
         geometry: {
@@ -2178,6 +2189,19 @@
     return { type: "Feature", properties: {}, geometry: { type: "MultiLineString", coordinates: lines } };
   }
 
+  // Reads the finer land when the browser is idle, then draws the coarse
+  // one only below DETAIL_ZOOM.
+  function loadLandDetail() {
+    if (!scene.land.detail) return;
+    const idle = window.requestIdleCallback || ((callback) => setTimeout(callback, 200));
+    idle(() => {
+      const land = landData(scene.land.detail);
+      map.getSource("land-detail").setData(land);
+      map.getSource("coast-detail").setData(coastData(land));
+      LAND_LAYERS.forEach((id) => map.setLayerZoomRange(id, 0, DETAIL_ZOOM));
+    });
+  }
+
   function graticuleData() {
     const lines = [];
     for (let lon = -180; lon < 180; lon += 10) {
@@ -2209,10 +2233,12 @@
     const geojson = (data) => ({ type: "geojson", data: data || EMPTY });
     const blank = blankImage();
     const theme = THEMES[state.theme];
-    const land = landData();
+    const land = landData(scene.land);
     const sources = {
       land: geojson(land),
       coast: geojson(coastData(land)),
+      "land-detail": geojson(),
+      "coast-detail": geojson(),
       graticule: geojson(graticuleData()),
       osm: {
         type: "raster",
@@ -2257,17 +2283,19 @@
       { id: "osm", type: "raster", source: "osm", layout: hidden },
       { id: "field", type: "raster", source: "field", layout: hidden, paint: { "raster-opacity": state.opacity, "raster-fade-duration": 0, "raster-resampling": "linear" } },
     ];
-    const line = (id, width, opacity, offset) => ({
+    // Each land layer and its twin of the finer level, empty until it is read.
+    const twins = (layer) => [layer, Object.assign({}, layer, { id: layer.id + DETAIL, source: layer.source + DETAIL, minzoom: DETAIL_ZOOM })];
+    const line = (id, width, opacity, offset) => twins({
       id,
       type: "line",
       source: "coast",
       layout: round,
       paint: { "line-color": theme.coast, "line-width": zoomed(width), "line-opacity": opacity, "line-offset": zoomed(offset) },
     });
-    COAST_LAYERS.forEach(([id, width]) => { if (id !== "coast") layers.push(line(id, width, theme.coastShade, width / 2)); });
+    COAST_LAYERS.forEach(([id, width]) => { if (id !== "coast") layers.push(...line(id, width, theme.coastShade, width / 2)); });
     layers.push(
-      { id: "land", type: "fill", source: "land", paint: { "fill-color": theme.land } },
-      line("coast", 0.5, COAST_OPACITY, 0)
+      ...twins({ id: "land", type: "fill", source: "land", paint: { "fill-color": theme.land } }),
+      ...line("coast", 0.5, COAST_OPACITY, 0)
     );
     layers.push({ id: "graticule", type: "line", source: "graticule", paint: { "line-color": theme.graticule, "line-width": 0.6 } });
     SEAMARK_LEVELS.forEach(([zoom], index) => {
@@ -2419,6 +2447,7 @@
         .catch((error) => fail(`The forecast could not be read: ${error && error.message ? error.message : error}`));
       if (!scene.sources.length) $("loading").hidden = true;
       scheduleRender(true);
+      map.once("idle", loadLandDetail);
     });
     map.on("mousemove", onPointer);
     map.on("click", onClick);

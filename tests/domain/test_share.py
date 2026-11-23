@@ -596,6 +596,20 @@ def test_land_rings_decode_to_positions_on_earth():
             assert points[0] == pytest.approx(points[-1])
 
 
+def test_the_land_comes_with_a_finer_level_for_close_ups():
+    land = share.land()
+    detail = land["detail"]
+    points = lambda level: sum(len(ring) // 2 for rings in level["polygons"] for ring in rings)
+
+    assert detail["quantum"] < land["quantum"]
+    assert points(detail) > 3 * points(land)
+    for rings in detail["polygons"][:50]:
+        for ring in rings:
+            positions = np.cumsum(np.reshape(ring, (-1, 2)), axis=0) * detail["quantum"]
+            assert (np.abs(positions[:, 0]) <= 180.0).all() and (np.abs(positions[:, 1]) <= 90.0).all()
+            assert positions[0] == pytest.approx(positions[-1])
+
+
 # ----------------------------------------------------------------------
 # Page
 # ----------------------------------------------------------------------
