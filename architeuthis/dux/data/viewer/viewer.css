@@ -378,13 +378,29 @@ button { cursor: pointer; }
 .maplibregl-popup-tip { display: none; }
 .popup-title { display: flex; align-items: center; gap: 6px; font-weight: 650; }
 .popup-time { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
-.popup-text { white-space: pre-wrap; margin-bottom: 2px; max-width: 280px; }
-.popup-text.comment { padding-left: 6px; border-left: 3px solid var(--accent); }
+.popup-text { white-space: pre-wrap; margin-bottom: 3px; max-width: 340px; }
+/* A comment of the analyst: a tint and a bar of the colour of its route. */
+.popup-text.comment {
+  margin: 3px 0 4px;
+  padding: 3px 8px;
+  border-left: 3px solid var(--route, var(--accent));
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--route, var(--accent)) 16%, transparent);
+}
 .popup-hint { color: var(--muted); font-size: 11px; margin-top: 2px; }
-.popup-table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
-.popup-table td { padding: 0; }
-.popup-table td:first-child { color: var(--muted); padding-right: 10px; }
-.popup-table td:last-child { text-align: right; }
+/* Two columns of a label and a value: pairs such as TWS and TWA on a row. */
+.popup-grid {
+  display: grid;
+  grid-template-columns: auto auto auto auto;
+  column-gap: 8px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.popup-grid .pt-label { color: var(--muted); }
+.popup-grid .pt-value { text-align: right; padding-right: 6px; }
+.popup-grid .pt-value:nth-child(4n) { padding-right: 0; }
+.popup-fuel { display: flex; justify-content: space-between; gap: 12px; margin-top: 2px; padding-top: 2px; border-top: 1px solid var(--line); }
+.popup-fuel span { color: var(--muted); }
 
 .editor textarea {
   display: block;

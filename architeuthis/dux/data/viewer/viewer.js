@@ -1194,26 +1194,80 @@
 
   function routeById(id) { return scene.routes.find((route) => route.id === id); }
 
-  function popupContent(route, k, t, phase) {
-    const rows = hoverVariables()
-      .filter((name) => route.values[name])
-      .map((name) => {
-        const meta = scene.variables[name];
-        return `<tr><td title="${escapeHtml(meta.description)}">${escapeHtml(meta.label)}</td><td>${escapeHtml(formatValue(name, route.values[name][k]))}</td></tr>`;
+  // Variables that share a row of the route tooltip, and gusts, each on a
+  // row of its own under its speed.
+  const PAIRS = [["sog", "cog"], ["stw", "ctw"], ["tws", "twa"], ["aws", "awa"], ["swh", "mwa"], ["cs", "cd"], ["bhp", "max_bhp"], ["total_power", "hotel_load"], ["hourly_consumption", "sfoc"]];
+  const GUSTS = { tws_gust: "tws", aws_gust: "aws" };
+
+  // The variables of a tooltip in rows of two: pairs together, gusts alone
+  // under their speed, the others two by two, in the order chosen.
+  function tooltipRows(names) {
+    const rows = [];
+    const placed = new Set();
+    const partner = (name) => {
+      const pair = PAIRS.find((item) => item.includes(name));
+      return pair ? pair.find((other) => other !== name && names.includes(other)) : undefined;
+    };
+    let open = null; // a row of one variable without partner, to complete
+    names.forEach((name) => {
+      if (placed.has(name)) return;
+      if (GUSTS[name] && names.includes(GUSTS[name])) return; // placed under its speed
+      const other = partner(name);
+      let row;
+      if (other) {
+        const pair = PAIRS.find((item) => item.includes(name));
+        row = { cells: pair.filter((item) => item === name || item === other) };
+        placed.add(other);
+      } else if (open) {
+        open.cells.push(name);
+        open = null;
+        placed.add(name);
+        return;
+      } else {
+        row = { cells: [name] };
+        open = row;
+      }
+      placed.add(name);
+      rows.push(row);
+      if (other) open = null;
+      // The gust of a speed of this row, alone under it.
+      row.cells.forEach((cell) => {
+        Object.keys(GUSTS).forEach((gust) => {
+          if (GUSTS[gust] === cell && names.includes(gust)) {
+            rows.push({ cells: [gust], alone: true });
+            placed.add(gust);
+            if (open === row) open = null;
+          }
+        });
       });
+    });
+    return rows;
+  }
+
+  function popupContent(route, k, t, phase) {
+    const cell = (name) => {
+      if (!name) return '<span></span><span></span>';
+      const meta = scene.variables[name];
+      return `<span class="pt-label" title="${escapeHtml(meta.description)}">${escapeHtml(meta.label)}</span>` +
+        `<span class="pt-value">${escapeHtml(formatValue(name, route.values[name][k]))}</span>`;
+    };
+    const rows = tooltipRows(hoverVariables().filter((name) => route.values[name]))
+      .map((row) => cell(row.cells[0]) + cell(row.cells[1]));
     let when = formatTime(t);
     if (phase === "before") when = `Not under way yet · ETD ${formatShort(route.etd)}`;
     if (phase === "after") when = `Arrived · ETA ${formatShort(route.eta)}`;
-    const total = route.summary.fuel !== null ? `<tr><td>Voyage fuel</td><td>${route.summary.fuel.toFixed(1)} t</td></tr>` : "";
+    const shown = phase === "under way" || phase === "segment";
+    const total = route.summary.fuel !== null ? `<div class="popup-fuel"><span>Voyage fuel</span><b>${route.summary.fuel.toFixed(1)} t</b></div>` : "";
     // A point tells its comment, a boat the description of its route.
     const comment = phase === "segment" ? commentAt(route, k) : "";
     const description = phase === "segment" ? "" : routeDescription(route);
     return (
       `<div class="popup-title"><span class="swatch" style="background:${route.color}"></span>${escapeHtml(routeLabel(route))}</div>` +
       `<div class="popup-time">${escapeHtml(when)}</div>` +
-      (comment ? `<div class="popup-text comment">${escapeHtml(comment)}</div>` : "") +
+      (comment ? `<div class="popup-text comment" style="--route:${route.color}">${escapeHtml(comment)}</div>` : "") +
       (description ? `<div class="popup-text">${escapeHtml(description)}</div>` : "") +
-      `<table class="popup-table">${phase === "under way" || phase === "segment" ? rows.join("") : ""}${total}</table>` +
+      (shown && rows.length ? `<div class="popup-grid">${rows.join("")}</div>` : "") +
+      total +
       (state.editable && phase === "segment" ? `<div class="popup-hint">Click to ${comment ? "edit the" : "add a"} comment</div>` : "")
     );
   }
@@ -1232,7 +1286,7 @@
       lngLat = [route.clon[target.k], route.clat[target.k]];
       html = popupContent(route, target.k, route.ctim[target.k], "segment");
     }
-    if (!popup) popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 10, maxWidth: "300px" });
+    if (!popup) popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 10, maxWidth: "380px" });
     popup.setLngLat(lngLat).setHTML(html);
     if (!popup.isOpen()) popup.addTo(map);
   }
