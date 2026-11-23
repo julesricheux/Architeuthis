@@ -277,13 +277,14 @@ def test_the_page_follows_the_theme_of_the_map(ui):
 
 
 def test_routes_are_offered_under_their_label(layout, tagged_reports):
-    labels = [
-        component["props"]["children"]
-        for component in walk(layout["routes-options"]["children"])
-        if component["type"] == "Text"
-    ]
+    components = list(walk(layout["routes-options"]["children"]))
+    boxes = [component["props"] for component in components if component["type"] == "Checkbox"]
+    # The name is written once, in the box that renames the route.
+    names = [component["props"]["value"] for component in components if component["type"] == "TextInput"]
 
-    assert labels == share.route_labels(tagged_reports)
+    assert [box["value"] for box in boxes] == ["r0", "r1"]
+    assert all("label" not in box for box in boxes)
+    assert names == share.route_labels(tagged_reports)
 
 
 def test_tooltips_offer_every_variable_and_show_the_defaults(layout, tagged_reports):

@@ -539,8 +539,9 @@ def route_options(collection) -> list:
     """
     One checkbox per route, with its colour, fuel and distance.
 
-    Under each, boxes take the name of the route, its label by default,
-    and its description for the crew.
+    The name beside it is a box written in place: its label by default,
+    edited by clicking it. Under each, a box takes the description of
+    the route for the crew.
     """
     options = []
     for index, (report, label) in enumerate(zip(collection, route_labels(collection))):
@@ -560,26 +561,35 @@ def route_options(collection) -> list:
         options.append(
             dmc.Stack(
                 [
-                    dmc.Checkbox(
-                        value=f"r{index}",
-                        label=dmc.Group(
-                            [
-                                html.Span(style={"display": "inline-block", "width": 16, "height": 4, "borderRadius": 2, "background": color}),
-                                dmc.Text(label, size="sm", fw=600),
-                                *badges,
-                            ],
-                            gap=6,
-                            wrap="nowrap",
-                        ),
-                        description=" · ".join(details),
+                    dmc.Group(
+                        [
+                            dmc.Checkbox(value=f"r{index}", **{"aria-label": label}),
+                            html.Span(style={"display": "inline-block", "width": 16, "height": 4, "borderRadius": 2, "background": color, "flex": "none"}),
+                            # The name, written once and edited in place.
+                            dmc.TextInput(
+                                id={"type": "route-name", "index": index},
+                                placeholder=label,
+                                value=label,
+                                variant="unstyled",
+                                size="sm",
+                                style={"flex": 1, "minWidth": 0},
+                                styles={
+                                    "input": {
+                                        "fontWeight": 600,
+                                        "height": "auto",
+                                        "minHeight": 0,
+                                        "lineHeight": 1.4,
+                                        "borderBottom": "1px dotted var(--mantine-color-default-border)",
+                                        "cursor": "text",
+                                    }
+                                },
+                            ),
+                            *badges,
+                        ],
+                        gap=8,
+                        wrap="nowrap",
                     ),
-                    dmc.TextInput(
-                        id={"type": "route-name", "index": index},
-                        placeholder=label,
-                        value=label,
-                        size="xs",
-                        ml=32,
-                    ),
+                    dmc.Text(" · ".join(details), size="xs", c="dimmed", ml=32, mt=-6),
                     dmc.Textarea(
                         id={"type": "route-description", "index": index},
                         placeholder="Description of this route for the crew",
