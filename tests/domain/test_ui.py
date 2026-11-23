@@ -347,11 +347,11 @@ def test_the_preview_holds_both_models(scene):
 
 
 def test_every_field_of_the_forecasts_is_offered_and_ticked(layout):
-    offered = [component["props"] for component in walk(layout["fields-select"]["children"]) if component["type"] == "Checkbox"]
+    offered = layout["fields-select"]["data"]
 
-    assert [box["value"] for box in offered] == ["wind", "gust", "waves", "pressure", "cape", "ptype", "period", "slope"]
-    assert [box["label"] for box in offered][-2:] == ["Wave period", "Wave slope"]
-    assert layout["fields-select"]["value"] == [box["value"] for box in offered]
+    assert [option["value"] for option in offered] == ["wind", "gust", "waves", "pressure", "cape", "ptype", "period", "slope"]
+    assert [option["label"] for option in offered][-2:] == ["Wave period", "Wave slope"]
+    assert layout["fields-select"]["value"] == [option["value"] for option in offered]
 
 
 def test_iceberg_limit_and_library_zones_are_on_the_globe(scene, user_zone):

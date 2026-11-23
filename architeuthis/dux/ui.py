@@ -696,12 +696,15 @@ sidebar = dmc.Stack(
                 children=dmc.Group([dmc.Checkbox(label=model.upper(), value=model) for model in MODELS]),
                 value=list(MODELS),
             ),
-            dmc.CheckboxGroup(
+            dmc.MultiSelect(
                 id="fields-select",
                 label="Fields",
-                children=dmc.Group([dmc.Checkbox(label=label, value=layer) for layer, label in FIELDS.items()], gap="xs"),
+                placeholder="Forecast fields shared",
+                data=[{"value": layer, "label": label} for layer, label in FIELDS.items()],
                 value=list(FIELDS),
-                size="xs",
+                searchable=True,
+                clearable=True,
+                hidePickedOptions=True,
             ),
             html.Div(
                 dmc.NumberInput(
