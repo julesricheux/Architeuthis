@@ -1441,18 +1441,72 @@
     setPicker({ lat: center.lat, lon: center.lng });
   }
 
+  const COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+  function compass(degrees) { return COMPASS[Math.round((((degrees % 360) + 360) % 360) / 22.5) % 16]; }
+
+  // A small arrow pointing where the flow goes, as the glyphs of the map.
+  function flowArrow(towards) {
+    return `<svg class="pk-arrow" viewBox="0 0 12 12" style="transform:rotate(${towards.toFixed(0)}deg)"><path d="M6 1 10 10 6 8 2 10z"/></svg>`;
+  }
+
+  // What the picker tells: wind with its gusts, waves and pressure, then
+  // the field shown if it is another one, each when the file has it.
+  function pickerConditions(lat, lon) {
+    const source = currentSource();
+    if (!source) return { message: "No forecast in this file" };
+    const t = state.t;
+    lon = wrapLongitude(lon);
+    if (!frameAt(source, t)) return { message: `No forecast at this time`, source };
+    const q = source.quantities;
+    const at = (name) => (q[name] ? sampleAt(source, name, t, lat, lon) : NaN);
+    const rows = [];
+    const u = at("wind_u"), v = at("wind_v"), gust = at("gust");
+    if (u === u && v === v) {
+      const from = (Math.atan2(-u, -v) * 180) / Math.PI;
+      rows.push({
+        label: "Wind", value: Math.hypot(u, v).toFixed(0), unit: "kt", towards: from + 180,
+        detail: compass(from) + (gust === gust ? ` · gusts ${gust.toFixed(0)} kt` : ""),
+      });
+    } else if (gust === gust) {
+      rows.push({ label: "Gusts", value: gust.toFixed(0), unit: "kt", detail: "" });
+    }
+    const height = at("swh"), x = at("wave_x"), y = at("wave_y");
+    if (height === height) {
+      const from = (Math.atan2(x, y) * 180) / Math.PI;
+      const known = x === x && y === y && height > 0.05;
+      rows.push({ label: "Waves", value: height.toFixed(1), unit: "m", towards: known ? from + 180 : null, detail: known ? compass(from) : "" });
+    }
+    const pressure = at("pressure");
+    if (pressure === pressure) rows.push({ label: "Pressure", value: pressure.toFixed(0), unit: (scene.layers.pressure || {}).unit || "hPa", detail: "" });
+    const shown = state.layer;
+    if (shown && !["wind", "gust", "waves", "pressure"].includes(shown) && includedLayers(source).includes(shown)) {
+      const info = scene.layers[shown];
+      const value = layerValueAt(source, shown, t, lat, lon);
+      if (value === value) {
+        const text = formatLayerValue(info, value);
+        const unit = info.unit && text.endsWith(" " + info.unit) ? info.unit : "";
+        rows.push({ label: info.label, value: unit ? text.slice(0, -unit.length - 1) : text, unit, detail: "", shown: true });
+      }
+    }
+    if (!rows.length) return { message: "Outside the forecast", source };
+    return { rows, source };
+  }
+
   function updatePicker() {
     if (!pickerMarker || !state.picker) return;
     const card = pickerMarker.getElement().querySelector(".picker-card");
-    const found = conditions(state.picker.lat, state.picker.lon);
+    const found = pickerConditions(state.picker.lat, state.picker.lon);
     const rows = found.rows
-      ? found.rows.map((row) => `<tr><td>${escapeHtml(row.label)}</td><td><b>${escapeHtml(row.value)}</b></td><td>${escapeHtml(row.detail)}</td></tr>`).join("")
-      : `<tr><td colspan="3" class="muted">${escapeHtml(found.message)}</td></tr>`;
+      ? found.rows.map((row) =>
+        `<div class="pk-row${row.shown ? " shown" : ""}"><span class="pk-label">${escapeHtml(row.label)}</span>` +
+        `<span class="pk-value">${escapeHtml(row.value)}<small>${escapeHtml(row.unit)}</small></span>` +
+        `<span class="pk-detail">${row.towards !== undefined && row.towards !== null ? flowArrow(row.towards) : ""}${escapeHtml(row.detail)}</span></div>`).join("")
+      : `<div class="pk-message">${escapeHtml(found.message)}</div>`;
     card.innerHTML =
-      `<div class="picker-head"><span>${escapeHtml(formatPosition(state.picker.lat, state.picker.lon))}</span>` +
+      `<div class="picker-head"><div><div class="pk-position">${escapeHtml(formatPosition(state.picker.lat, state.picker.lon))}</div>` +
+      `<div class="pk-sub">${found.source ? `<span class="pk-model">${escapeHtml(found.source.label)}</span>` : ""}${escapeHtml(formatShort(state.t))}</div></div>` +
       `<button class="picker-close" type="button" title="Remove the picker">${icon("close")}</button></div>` +
-      `<table>${rows}</table>` +
-      `<div class="picker-foot">${escapeHtml(found.source ? found.source.label + " · " : "")}${escapeHtml(formatShort(state.t))}</div>`;
+      `<div class="pk-rows">${rows}</div>`;
   }
 
   // --------------------------------------------------------------------

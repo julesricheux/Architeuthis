@@ -423,25 +423,35 @@ button { cursor: pointer; }
   position: absolute;
   left: 7px;
   bottom: 56px;
-  padding: 3px 7px 3px 6px;
+  min-width: 150px;
+  padding: 5px 8px 6px 9px;
   border-left: 2px solid var(--picker);
-  border-radius: 0 6px 6px 0;
-  background: var(--panel-strong);
+  border-radius: 0 8px 8px 0;
+  background: var(--tooltip);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
   color: var(--fg);
   font-size: 12px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 .picker-card::before { content: ""; position: absolute; left: -2px; top: 100%; width: 2px; height: 48px; background: var(--picker); }
-.picker-head { display: flex; align-items: center; gap: 8px; font-weight: 650; }
+.picker-head { display: flex; align-items: flex-start; gap: 10px; padding-bottom: 4px; margin-bottom: 3px; border-bottom: 1px solid var(--line); }
+.pk-position { font-weight: 650; }
+.pk-sub { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+.pk-model { padding: 0 5px; border-radius: 4px; background: var(--hover); color: var(--fg); font-weight: 600; font-size: 10px; letter-spacing: 0.03em; }
 .picker-close { margin-left: auto; border: 0; background: none; padding: 0; width: 18px; height: 18px; display: inline-flex; color: var(--muted); }
 .picker-close:hover { color: var(--fg); }
 .picker-close svg { width: 16px; height: 16px; fill: currentColor; }
-.picker-card table { border-collapse: collapse; }
-.picker-card td { padding: 0 8px 0 0; }
-.picker-card td:first-child { color: var(--muted); }
-.picker-card td:last-child { color: var(--muted); padding-right: 0; }
-.picker-foot { color: var(--muted); font-size: 11px; }
+.pk-rows { display: grid; grid-template-columns: auto auto 1fr; column-gap: 8px; row-gap: 1px; align-items: baseline; }
+.pk-row { display: contents; }
+.pk-label { color: var(--muted); font-size: 11px; }
+.pk-value { font-weight: 650; font-size: 13px; text-align: right; }
+.pk-value small { font-weight: 500; font-size: 10px; color: var(--muted); margin-left: 2px; }
+.pk-detail { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 11px; }
+.pk-arrow { width: 10px; height: 10px; fill: var(--fg); flex: none; }
+.pk-row.shown .pk-label { color: var(--accent); }
+.pk-message { color: var(--muted); }
 
 /* Narrow screens: phones and small tablets */
 
