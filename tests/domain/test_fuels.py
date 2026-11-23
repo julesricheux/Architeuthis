@@ -63,7 +63,7 @@ def test_emissions_of_a_voyage():
     # 10 t of fuel is 427 GJ.
     assert mdo.ghg(10.0, well_to_wake=False) == pytest.approx(427e3 * mdo.ttw_intensity / 1e6)
     assert mdo.ghg(10.0) > mdo.ghg(10.0, well_to_wake=False)
-    assert mdo.energy_density == pytest.approx(0.83 * 42.7)
+    assert mdo.energy_density == pytest.approx(0.85 * 42.7)
 
 
 def test_the_plan_metadata_tells_the_fuel():

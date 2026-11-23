@@ -146,11 +146,11 @@ def test_consumptions_are_volumes_of_the_fuel_density():
     assert float(vessel.consumption({})["hourly_consumption"]) == pytest.approx(1000.0 * 200.0 / 1e3 / 0.99)
 
 
-def test_the_fuel_is_marine_diesel_oil_at_0_83_by_default():
+def test_the_fuel_is_marine_diesel_oil_at_0_85_by_default():
     vessel = Vessel("default", max_power=None, verbose=False)
 
     assert vessel.fuel_type == "mdo"
-    assert vessel.fuel_density == 0.83
+    assert vessel.fuel_density == 0.85
     assert vessel.fuel is FUELS["mdo"]
 
 

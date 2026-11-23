@@ -134,7 +134,7 @@ _IPCC = "IPCC 2006, Volume 2"
 # carbon-free fuels, biofuels and road fuels.
 FUELS = {
     # Marine distillates and residual fuels, ISO 8217
-    "mdo": Fuel("Marine diesel oil (ISO 8217 DMB)", density=0.83, lcv=42.7, cf_co2=3.206, wtt=14.4, **_OIL),
+    "mdo": Fuel("Marine diesel oil (ISO 8217 DMB)", density=0.85, lcv=42.7, cf_co2=3.206, wtt=14.4, **_OIL),
     "mgo": Fuel("Marine gas oil (ISO 8217 DMA)", density=0.85, lcv=42.7, cf_co2=3.206, wtt=14.4, **_OIL),
     "lfo": Fuel("Light fuel oil (ISO 8217 RMA-RMD)", density=0.93, lcv=41.0, cf_co2=3.151, wtt=13.2, **_OIL),
     "hfo": Fuel("Heavy fuel oil (ISO 8217 RME-RMK)", density=0.985, lcv=40.5, cf_co2=3.114, wtt=13.5, **_OIL),

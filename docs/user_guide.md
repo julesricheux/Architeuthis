@@ -143,7 +143,7 @@ vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa")
 vessel.add_function("sfoc", lambda x: 175. + 2e-6 * (x["total_power"] - 3000.)**2, ["total_power"])
 ```
 
-The fuel density, in kg/L, is `Vessel(fuel_density=...)`, from the bunker delivery note for example, else that of `fuel_type`, a key of `fuels.FUELS`, an alias of `fuels.FUEL_ALIASES` or a `fuels.Fuel` of your own: marine diesel oil at 0.83 kg/L by default. The passage plan metadata records both.
+The fuel density, in kg/L, is `Vessel(fuel_density=...)`, from the bunker delivery note for example, else that of `fuel_type`, a key of `fuels.FUELS`, an alias of `fuels.FUEL_ALIASES` or a `fuels.Fuel` of your own: marine diesel oil at 0.85 kg/L by default. The passage plan metadata records both.
 
 ```python
 vessel = Vessel("vessel", fuel_type="hfo", sfoc=180., hotel_load=180., max_power=4100.)  # 0.985 kg/L
@@ -154,7 +154,7 @@ vessel.fuel.ghg(report["fuel"])            # t of CO2 equivalent, well to wake (
 
 | Key | Fuel | Density, kg/L | LCV, MJ/kg | CO2, g/g | Well to wake, gCO2e/MJ |
 | --- | --- | --- | --- | --- | --- |
-| `mdo` | Marine diesel oil (ISO 8217 DMB) | 0.83 | 42.7 | 3.206 | 90.8 |
+| `mdo` | Marine diesel oil (ISO 8217 DMB) | 0.85 | 42.7 | 3.206 | 90.8 |
 | `mgo` | Marine gas oil (ISO 8217 DMA) | 0.85 | 42.7 | 3.206 | 90.8 |
 | `lfo` | Light fuel oil (ISO 8217 RMA-RMD) | 0.93 | 41 | 3.151 | 91.4 |
 | `hfo` | Heavy fuel oil (ISO 8217 RME-RMK) | 0.985 | 40.5 | 3.114 | 91.7 |

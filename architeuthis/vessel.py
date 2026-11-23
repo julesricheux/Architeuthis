@@ -34,7 +34,7 @@ POLAR_KEYS = ("bhp", "max_bhp", "sails_contribution")
 POLAR_DIMS = ("stw", "tws", "twa", "hs", "wa")
 
 # Fuel type of a vessel by default, a key of `fuels.FUELS`, whose density
-# (0.83 kg/L) turns consumptions, volumes in L/h, into the fuel of a voyage,
+# (0.85 kg/L) turns consumptions, volumes in L/h, into the fuel of a voyage,
 # a mass in tonnes.
 DEFAULT_FUEL = "mdo"
 
@@ -125,7 +125,7 @@ class Vessel(ArchiteuthisData):
             given, and its emission factors (`fuel`).
         fuel_density: Density of the fuel in kg/L, from the bunker
             delivery note for example; None for that of `fuel_type`
-            (0.83 for "mdo").
+            (0.85 for "mdo").
         sfc: Former name of `sfoc`, deprecated: removed in 0.4.0.
 
     Example:
