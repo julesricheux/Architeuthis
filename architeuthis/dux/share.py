@@ -49,6 +49,12 @@ import xarray as xr
 from PIL import Image
 
 from architeuthis.common import _HOME, status
+from architeuthis.toolbox.windy_colormaps import (
+    DEFAULT_FIELD_COLORMAP,
+    FIELD_COLORMAPS,
+    PRECIPITATION_TYPES,
+    get_field_cmap,
+)
 
 
 MAPLIBRE_VERSION = "5.24.0"
@@ -174,24 +180,6 @@ ARROW_QUANTITIES = {
     "current": ("current_u", "current_v"),
 }
 
-# Codes of precipitation types, WMO GRIB2 code table 4.201, as IFS gives
-# them in `ptype`: label and colour, None for no precipitation.
-PRECIPITATION_TYPES = {
-    0: ("None", None),
-    1: ("Rain", "#3a86ff"),
-    2: ("Thunderstorm", "#8338ec"),
-    3: ("Freezing rain", "#ff006e"),
-    4: ("Mixed, ice", "#fb5607"),
-    5: ("Snow", "#ffffff"),
-    6: ("Wet snow", "#a8dadc"),
-    7: ("Rain and snow", "#90be6d"),
-    8: ("Ice pellets", "#ffbe0b"),
-    9: ("Graupel", "#f4a261"),
-    10: ("Hail", "#e63946"),
-    11: ("Drizzle", "#8ecae6"),
-    12: ("Freezing drizzle", "#f72585"),
-}
-
 GRAVITY = 9.80665  # m/s2
 
 
@@ -205,7 +193,7 @@ def _rate_to_mm_per_hour(values):
 
 # Fields shown besides the built-in layers, by layer, found under the
 # first of `names` that a forecast has: label, unit, conversion to that
-# unit, colour scale (a matplotlib colormap and its range) or categories,
+# unit, colour scale (`windy_colormaps.FIELD_COLORMAPS`) or categories,
 # ticks, decimals, values under which nothing is drawn (`floor`), and
 # arrows drawn with it. `slope` is computed from the waves and their
 # period. Any other field of a forecast is shown in its own units, on a
@@ -217,7 +205,7 @@ FIELDS = {
         "label": "Wave period",
         "unit": "s",
         "description": "Mean wave period",
-        "colormap": ("YlGnBu", 0.0, 20.0),
+        "colormap": FIELD_COLORMAPS["period"],
         "ticks": [0, 4, 8, 12, 16],
         "digits": 1,
         "arrows": "waves",
@@ -227,7 +215,7 @@ FIELDS = {
         "label": "Wave slope",
         "unit": "%",
         "description": "Wave steepness, 2 pi Hs / (g T2), from the height and period",
-        "colormap": ("magma", 0.0, 8.0),
+        "colormap": FIELD_COLORMAPS["slope"],
         "ticks": [0, 2, 4, 6, 8],
         "digits": 1,
         "arrows": "waves",
@@ -238,7 +226,7 @@ FIELDS = {
         "unit": "°C",
         "description": "Air temperature at 2 m",
         "convert": _kelvin_to_celsius,
-        "colormap": ("RdYlBu_r", -30.0, 40.0),
+        "colormap": FIELD_COLORMAPS["temperature"],
         "ticks": [-20, -10, 0, 10, 20, 30],
         "digits": 0,
         "arrows": "wind",
@@ -248,7 +236,7 @@ FIELDS = {
         "label": "CAPE",
         "unit": "J/kg",
         "description": "Convective available potential energy",
-        "colormap": ("inferno", 0.0, 3000.0),
+        "colormap": FIELD_COLORMAPS["cape"],
         "ticks": [0, 500, 1000, 2000, 3000],
         "digits": 0,
         "floor": 50.0,
@@ -260,7 +248,7 @@ FIELDS = {
         "unit": "mm/h",
         "description": "Precipitation rate",
         "convert": _rate_to_mm_per_hour,
-        "colormap": ("YlGnBu", 0.0, 10.0),
+        "colormap": FIELD_COLORMAPS["precipitation"],
         "ticks": [0, 1, 2, 5, 10],
         "digits": 1,
         "floor": 0.1,
@@ -1141,7 +1129,7 @@ def _fields(dataset: xr.Dataset) -> tuple:
             "label": label,
             "unit": str(attrs.get("GRIB_units") or attrs.get("units") or ""),
             "description": label,
-            "colormap": "viridis",
+            "colormap": DEFAULT_FIELD_COLORMAP,
             "range": None,
             "ticks": None,
             "digits": None,
@@ -1312,6 +1300,8 @@ def _layers(extras: Optional[Mapping] = None) -> dict:
     wind, wind_norm = get_wind_cmap()
     wave, wave_norm = get_wave_cmap()
     wind_colours = _hex_scale(lambda kt: wind(wind_norm(kt / KNOTS_PER_MS)), 0.0, 70.0)
+    current, current_norm = get_field_cmap("current")
+    pressure, pressure_norm = get_field_cmap("pressure")
     layers = {
         "wind": {
             "colormap": {"min": 0.0, "max": 70.0, "colors": wind_colours},
@@ -1341,7 +1331,7 @@ def _layers(extras: Optional[Mapping] = None) -> dict:
             "colormap": {
                 "min": 0.0,
                 "max": 3.0,
-                "colors": _hex_scale(lambda kt: colormaps["viridis"](kt / 3.0), 0.0, 3.0),
+                "colors": _hex_scale(lambda kt: current(current_norm(kt)), 0.0, 3.0),
             },
             "ticks": [0, 0.5, 1, 1.5, 2, 2.5],
             "unit": "kt",
@@ -1353,7 +1343,7 @@ def _layers(extras: Optional[Mapping] = None) -> dict:
             "colormap": {
                 "min": 960.0,
                 "max": 1050.0,
-                "colors": _hex_scale(lambda hpa: colormaps["RdYlBu_r"]((hpa - 960.0) / 90.0), 960.0, 1050.0),
+                "colors": _hex_scale(lambda hpa: pressure(pressure_norm(hpa)), 960.0, 1050.0),
             },
             "ticks": [960, 980, 1000, 1020, 1040],
             "unit": "hPa",

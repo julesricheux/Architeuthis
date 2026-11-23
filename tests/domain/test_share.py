@@ -729,3 +729,17 @@ def test_viewer_files_are_in_the_package():
         assert (share._TEMPLATES / name).read_text(encoding="utf-8").strip()
     template = (share._TEMPLATES / "viewer.html").read_text(encoding="utf-8")
     assert set(re.findall(r"<!--@(\w+)@-->", template)) == {"TITLE", "MAPLIBRE_CSS", "VIEWER_CSS", "SCENE", "MAPLIBRE_JS", "VIEWER_JS"}
+
+
+def test_the_field_scales_come_from_windy_colormaps():
+    from architeuthis.toolbox import windy_colormaps
+
+    cmap, norm = windy_colormaps.get_field_cmap("cape")
+
+    assert share.FIELDS["cape"]["colormap"] == windy_colormaps.FIELD_COLORMAPS["cape"]
+    assert share.FIELDS["ptype"]["categories"] is windy_colormaps.PRECIPITATION_TYPES
+    assert (norm.vmin, norm.vmax) == (0.0, 3000.0)
+    assert cmap.name == "inferno"
+    assert windy_colormaps.get_field_cmap("other", 1.0, 2.0)[0].name == windy_colormaps.DEFAULT_FIELD_COLORMAP
+    with pytest.raises(ValueError, match="give low and high"):
+        windy_colormaps.get_field_cmap("other")

@@ -87,7 +87,7 @@ dux/           display and user experience, Dash in the `dux` extra; nothing abo
                  tools/make_land.py from Natural Earth 1:10m), viewer/ (viewer.html, .css, .js: the page of share.py)
   assets/        style and icons of the former Leaflet map
 
-toolbox/       geo_utils (route geometry, central_angle), windy_colormaps (wind, waves, satellite colour scales), plot_utils (figures, documented in docs/user_guide.md),
+toolbox/       geo_utils (route geometry, central_angle), windy_colormaps (wind, waves, satellite and other forecast field colour scales: FIELD_COLORMAPS, PRECIPITATION_TYPES), plot_utils (figures, documented in docs/user_guide.md),
                json_utils (report JSON codec), wms_utils (WMS requests, tiled maps, GIBS times and colormaps),
                image_utils (PNG, palette inversion, smooth rescaling, colour scales, quantile matching, blending, GIF),
                inspect_tools, string_formatting...
