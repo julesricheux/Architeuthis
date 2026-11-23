@@ -39,7 +39,7 @@ from architeuthis.vessel import Vessel
 
 domain = {"min_lon": -70.0, "max_lon": 5.0, "min_lat": 30.0, "max_lat": 60.0}
 steps = list(range(0, 145, 3)) + list(range(150, 361, 6))
-recent = pd.Timestamp("now").floor("9h").floor("1d")  # latest 00 UTC run
+recent = (pd.Timestamp.now("UTC").tz_localize(None) - pd.Timedelta("9h")).floor("1d")  # latest 00 UTC run
 
 #%% DUMMY FUNCTION-BASED POLAR
 

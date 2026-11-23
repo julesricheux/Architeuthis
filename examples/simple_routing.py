@@ -148,7 +148,7 @@ for i, vessel_data in enumerate(vessel_files):
 # global_corr_fac = 1.10 # global models speed correction (120% @ 10m, 105% @ 100m)
 global_corr_fac = 1.20 # global models speed correction (120% @ 10m, 105% @ 100m)
 
-recent = pd.Timestamp("now").floor("9h").floor("1d")
+recent = (pd.Timestamp.now("UTC").tz_localize(None) - pd.Timedelta("9h")).floor("1d")
 # recent = pd.Timestamp('2026-05-30 00:00')
 # mirror_end = pd.Timestamp('2025-12-21 12:00')
 

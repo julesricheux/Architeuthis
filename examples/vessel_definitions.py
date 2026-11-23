@@ -34,7 +34,7 @@ from architeuthis.vessel import Vessel
 
 domain = {"min_lon": -8.0, "max_lon": 0.0, "min_lat": 42.0, "max_lat": 49.0}
 steps = list(range(0, 73, 3))
-recent = pd.Timestamp("now").floor("9h").floor("1d")  # latest 00 UTC run
+recent = (pd.Timestamp.now("UTC").tz_localize(None) - pd.Timedelta("9h")).floor("1d")  # latest 00 UTC run
 
 HOTEL_LOAD = 172.  # kW
 SFOC = 196.  # g/kWh

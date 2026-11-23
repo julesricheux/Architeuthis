@@ -32,7 +32,7 @@ minimum_latitude = 30.
 maximum_latitude = 60.
 
 steps = list(range(0, 145, 3)) + list(range(150, 361, 6)) # fxx
-recent = pd.Timestamp("now").floor("9h").floor("1d") # latest 00 UTC run
+recent = (pd.Timestamp.now("UTC").tz_localize(None) - pd.Timedelta("9h")).floor("1d") # latest 00 UTC run
 
 global_corr_fac = 1.20 # global models speed correction (120% @ 10m, 105% @ 100m)
 
