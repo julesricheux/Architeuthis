@@ -258,6 +258,7 @@ and this project follows Semantic Versioning https://semver.org
 ### Fixed
 - On a phone, the time of the share page's timeline no longer widens the page: its distance to now is left out and the time shortened.
 - The GFS wind of `ui.py` also matched the 10 mb level (`(?:U|V)GRD:10 m`): it reads `10 m above ground` only.
+- `sky.IFS_SKY_REGEX` downloaded only the temperature at 700 hPa with recent Herbie, which writes the empty level of the IFS surface fields `nan` (`:tcc:nan:sfc:`), so `add_sky_models` failed on `tcc`: it reads both forms.
 - `examples/simple_routing.py` stopped at its fuel distribution figure since its polars became `eff1` and `eff90`: its figures still selected `eff45` and `eff60`, now they take the vessels that were routed. `plot_fuel_distribution` names an empty group (`ValueError`) instead of failing inside matplotlib.
 
 ---

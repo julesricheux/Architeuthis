@@ -67,12 +67,13 @@ SKY_FIELDS = {
 }
 
 # Herbie searches of the nine fields. IFS open data: surface fields and
-# t at 700 hPa. GFS: instantaneous covers and rate only (`hour fcst` at
+# t at 700 hPa, the empty level of the surface fields written "nan" or
+# left out, depending on the version of Herbie. GFS: instantaneous covers and rate only (`hour fcst` at
 # the end, not the `hour ave fcst` averages that cfgrib would give the
 # same names), CAPE of the lowest 255 hPa, the closest to the IFS
 # most-unstable CAPE. GFS has no middle and high covers at step 0: start
 # its steps at 3 h.
-IFS_SKY_REGEX = r":(?:tcc|lcc|mcc|hcc|mucape|tprate|2t|2d):sfc:|:t:700:pl:"
+IFS_SKY_REGEX = r":(?:tcc|lcc|mcc|hcc|mucape|tprate|2t|2d):(?:nan:)?sfc:|:t:700:pl:"
 GFS_SKY_REGEX = (
     r":(?:TCDC:entire atmosphere|LCDC:low cloud layer|MCDC:middle cloud layer"
     r"|HCDC:high cloud layer|PRATE:surface):\d+ hour fcst$"

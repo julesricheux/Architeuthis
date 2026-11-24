@@ -201,6 +201,15 @@ def test_ifs_search_keeps_the_nine_fields():
     assert found == {"tcc", "lcc", "mcc", "hcc", "mucape", "tprate", "2t", "2d", "t:700"}
 
 
+def test_ifs_search_reads_the_empty_level_written_nan():
+    # Herbie 2025 writes the missing level of the surface fields "nan".
+    inventory = [line.replace(":sfc:", ":nan:sfc:").replace(":pl:", ":pl:nan:") for line in IFS_INVENTORY]
+
+    found = {line.split(":")[1] + (":700" if ":700:" in line else "") for line in inventory if re.search(sky.IFS_SKY_REGEX, line)}
+
+    assert found == {"tcc", "lcc", "mcc", "hcc", "mucape", "tprate", "2t", "2d", "t:700"}
+
+
 @pytest.mark.parametrize("model", ["ifs", "gfs"])
 def test_forecast_fields_are_registered_in_the_units_of_the_diagnosis(model):
     time = (pd.date_range("2026-11-17", periods=3, freq="6h") - pd.Timestamp("1970-01-01")).total_seconds().to_numpy()
