@@ -1726,13 +1726,16 @@
   // Width of the axis labels on the left of the plots, and the colours of
   // the curves, vivid enough for both themes.
   const PLOT_GUTTER = 34;
+  // Widths of the lines of the plots, and the dashes of the secondary ones.
+  const PLOT_LINE = 1.1;
+  const PLOT_THIN = 0.9;
+  const PLOT_DASH = [3, 2];
   const PLOT_COLORS = {
     sog: "#4cc9f0",
     stw: "#f8961e",
     sails: "#2ec4b6",
     hotel: "#f9c74f",
     propulsion: "#9b5de5",
-    fluctuation: "#f15bb5",
     wind: "#90e0ef",
     waves: "#48bfe3",
     pressure: "#c77dff",
@@ -1783,22 +1786,23 @@
     return (unit <= 1 ? 1 : unit <= 2 ? 2 : unit <= 2.5 ? 2.5 : unit <= 5 ? 5 : 10) * power;
   }
 
-  // The range of a plot over some series, from zero unless `free`, with
-  // round ticks.
-  function plotRange(lists, free, bounds) {
-    if (bounds) return { low: bounds[0], high: bounds[1], ticks: [bounds[0], (bounds[0] + bounds[1]) / 2, bounds[1]] };
-    let low = Infinity, high = -Infinity;
+  // The range of a plot over some series: `low` and `high` where given
+  // (null leaves a bound free), else the extremes of the values with a
+  // little room, and round ticks inside it.
+  function plotRange(lists, low, high) {
+    let min = Infinity, max = -Infinity;
     lists.forEach((values) => (values || []).forEach((value) => {
-      if (value !== null && value === value) { low = Math.min(low, value); high = Math.max(high, value); }
+      if (value !== null && value === value) { min = Math.min(min, value); max = Math.max(max, value); }
     }));
-    if (!(high >= low)) { low = 0; high = 1; }
-    if (!free) low = Math.min(0, low);
-    if (high - low < 1e-6) high = low + 1;
-    const step = niceStep(high - low, 2);
-    low = Math.floor(low / step) * step;
-    high = Math.ceil(high / step) * step;
+    if (!(max >= min)) { min = low === null ? 0 : low; max = high === null ? min + 1 : high; }
+    const from = low === null ? min : low, to = high === null ? max : high;
+    let room = 0.08 * Math.abs(to - from);
+    if (room < 1e-9) room = Math.max(0.5, 0.05 * Math.abs(to));
+    low = low === null ? min - room : low;
+    high = high === null ? Math.max(max + room, low + 1e-6) : high;
+    const step = niceStep(high - low, 3);
     const ticks = [];
-    for (let tick = low; tick <= high + step / 2; tick += step) ticks.push(Math.round(tick * 1e6) / 1e6);
+    for (let tick = Math.ceil(low / step - 1e-9) * step; tick <= high + step * 1e-9; tick += step) ticks.push(Math.round(tick * 1e6) / 1e6);
     return { low, high, ticks };
   }
 
@@ -1822,7 +1826,8 @@
 
   // A canvas of a plot with its geometry: time and value to pixels.
   function plotFrame(canvas, route, range) {
-    const ratio = window.devicePixelRatio || 1;
+    // At least twice the pixels of the page, so that thin lines stay smooth.
+    const ratio = Math.max(2, window.devicePixelRatio || 1);
     const width = canvas.clientWidth, height = canvas.clientHeight;
     if (canvas.width !== Math.round(width * ratio)) canvas.width = Math.round(width * ratio);
     if (canvas.height !== Math.round(height * ratio)) canvas.height = Math.round(height * ratio);
@@ -1845,27 +1850,31 @@
     c.save();
     c.strokeStyle = cssColor("--line");
     c.fillStyle = cssColor("--muted");
-    c.lineWidth = 1;
+    // One pixel of the screen, aligned on it.
+    const pixel = 1 / (window.devicePixelRatio || 1);
+    const align = (value) => (Math.round(value / pixel) + 0.5) * pixel;
+    c.lineWidth = pixel;
     c.font = "10px system-ui, sans-serif";
     c.textAlign = "right";
     c.textBaseline = "middle";
     if (range) {
       range.ticks.forEach((tick) => {
-        const y = Math.round(frame.y(tick)) + 0.5;
+        const y = align(frame.y(tick));
         c.beginPath(); c.moveTo(frame.left, y); c.lineTo(frame.right, y); c.stroke();
         c.fillText(format ? format(tick) : String(tick), frame.left - 5, Math.max(6, Math.min(frame.height - 5, y)));
       });
     }
-    c.setLineDash([2, 3]);
+    c.setLineDash([2, 2]);
     for (let t = Math.ceil(frame.t0 / DAY) * DAY; t < frame.t1; t += DAY) {
-      const x = Math.round(frame.x(t)) + 0.5;
+      const x = align(frame.x(t));
       c.beginPath(); c.moveTo(x, frame.top); c.lineTo(x, frame.bottom); c.stroke();
     }
     c.restore();
   }
 
   // The path of a series per segment, as steps from node to node, broken
-  // where values are missing. `base` closes it into an area down to it.
+  // where values are missing and kept inside the frame. `base` closes it
+  // into an area down to it.
   function stepPath(frame, route, values, base) {
     const c = frame.context;
     const parts = [];
@@ -1873,7 +1882,8 @@
     values.forEach((value, k) => {
       if (value === null || value !== value) { part = null; return; }
       if (!part) parts.push((part = []));
-      part.push([frame.x(route.tim[k]), frame.y(value)], [frame.x(route.tim[k + 1]), frame.y(value)]);
+      const y = Math.max(frame.top, Math.min(frame.bottom, frame.y(value)));
+      part.push([frame.x(route.tim[k]), y], [frame.x(route.tim[k + 1]), y]);
     });
     c.beginPath();
     parts.forEach((points) => {
@@ -1940,12 +1950,12 @@
       available: (route) => !!series(route, speed),
       draw(canvas, route) {
         const values = series(route, speed), gusts = series(route, gust);
-        const range = plotRange([values, gusts]);
+        const range = plotRange([values, gusts], 0, null);
         const frame = plotFrame(canvas, route, range);
         drawGrid(frame, range);
         fillSeries(frame, route, values, scaleFill(frame, "wind", range.low, range.high, 0.8, PLOT_COLORS.wind));
-        if (gusts) strokeSeries(frame, route, gusts, cssColor("--fg"), 1, [4, 3]);
-        strokeSeries(frame, route, values, cssColor("--fg"), 1.4);
+        if (gusts) strokeSeries(frame, route, gusts, cssColor("--fg"), PLOT_THIN, PLOT_DASH);
+        strokeSeries(frame, route, values, cssColor("--fg"), PLOT_LINE);
         return frame;
       },
       readout(route, k) {
@@ -1974,7 +1984,7 @@
       available: (route) => !!(series(route, "sog") || series(route, "stw")),
       draw(canvas, route) {
         const sog = series(route, "sog"), stw = series(route, "stw");
-        const range = plotRange([sog, stw], true);
+        const range = plotRange([sog, stw], null, null);
         const frame = plotFrame(canvas, route, range);
         drawGrid(frame, range);
         if (sog) {
@@ -1983,8 +1993,8 @@
           fill.addColorStop(1, rgba(PLOT_COLORS.sog, 0.02));
           fillSeries(frame, route, sog, fill);
         }
-        if (stw) strokeSeries(frame, route, stw, PLOT_COLORS.stw, 1.6);
-        if (sog) strokeSeries(frame, route, sog, PLOT_COLORS.sog, 1.8);
+        if (stw) strokeSeries(frame, route, stw, PLOT_COLORS.stw, PLOT_LINE);
+        if (sog) strokeSeries(frame, route, sog, PLOT_COLORS.sog, PLOT_LINE);
         return frame;
       },
       readout(route, k) {
@@ -1998,14 +2008,14 @@
       available: (route) => !!series(route, "sails_contribution"),
       draw(canvas, route) {
         const values = series(route, "sails_contribution");
-        const range = plotRange([], false, [0, 100]);
+        const range = plotRange([], 0, 100);
         const frame = plotFrame(canvas, route, range);
         drawGrid(frame, range);
         const fill = frame.context.createLinearGradient(0, frame.top, 0, frame.bottom);
         fill.addColorStop(0, rgba(PLOT_COLORS.sails, 0.75));
         fill.addColorStop(1, rgba(PLOT_COLORS.sails, 0.12));
         fillSeries(frame, route, values, fill);
-        strokeSeries(frame, route, values, PLOT_COLORS.sails, 1.6);
+        strokeSeries(frame, route, values, PLOT_COLORS.sails, PLOT_LINE);
         return frame;
       },
       readout(route, k) {
@@ -2020,20 +2030,25 @@
         const total = parts.propulsion.map((value, k) => (value === null || parts.hotel[k] === null ? null : value + parts.hotel[k]));
         const upper = parts.fluctuation ? total.map((value, k) => (value === null || parts.fluctuation[k] === null ? null : value + parts.fluctuation[k])) : null;
         const lower = upper ? total.map((value, k) => (value === null || parts.fluctuation[k] === null ? null : value - parts.fluctuation[k])) : null;
-        const range = plotRange([total, upper]);
+        const range = plotRange([total, upper], 0, null);
         const frame = plotFrame(canvas, route, range);
         drawGrid(frame, range, (tick) => (tick >= 1000 ? `${tick / 1000}k` : String(tick)));
         // Hotel load at the bottom, propulsion stacked on it.
         fillSeries(frame, route, parts.hotel, rgba(PLOT_COLORS.hotel, 0.8));
         fillSeries(frame, route, total, rgba(PLOT_COLORS.propulsion, 0.75), (k) => frame.y(parts.hotel[k] || 0));
         if (upper) {
-          stepPath(frame, route, upper, (k) => frame.y(lower[k] === null ? 0 : lower[k]));
-          frame.context.fillStyle = rgba(PLOT_COLORS.fluctuation, 0.12);
+          // The fluctuation of the brake power around the total, in the
+          // colour of its line.
+          stepPath(frame, route, upper, (k) => Math.min(frame.bottom, frame.y(lower[k] === null ? 0 : lower[k])));
+          frame.context.save();
+          frame.context.globalAlpha = 0.12;
+          frame.context.fillStyle = cssColor("--fg");
           frame.context.fill();
-          strokeSeries(frame, route, upper, PLOT_COLORS.fluctuation, 1, [4, 3]);
-          strokeSeries(frame, route, lower, PLOT_COLORS.fluctuation, 1, [4, 3]);
+          frame.context.restore();
+          strokeSeries(frame, route, upper, cssColor("--fg"), PLOT_THIN, PLOT_DASH);
+          strokeSeries(frame, route, lower, cssColor("--fg"), PLOT_THIN, PLOT_DASH);
         }
-        strokeSeries(frame, route, total, cssColor("--fg"), 1.2);
+        strokeSeries(frame, route, total, cssColor("--fg"), PLOT_LINE);
         return frame;
       },
       readout(route, k) {
@@ -2041,7 +2056,7 @@
         let text = "";
         if (parts.hasPropulsion) text += `${chip(PLOT_COLORS.propulsion)}prop. <b>${formatFixed(parts.propulsion[k], 0)}</b>`;
         if (parts.hasHotel) text += `${chip(PLOT_COLORS.hotel)}hotel <b>${formatFixed(parts.hotel[k], 0)}</b>`;
-        if (parts.fluctuation) text += `${chip(PLOT_COLORS.fluctuation, true)}± <b>${formatFixed(parts.fluctuation[k], 0)}</b>`;
+        if (parts.fluctuation) text += `${chip(cssColor("--fg"), true)}± <b>${formatFixed(parts.fluctuation[k], 0)}</b>`;
         return text + " kW";
       },
     },
@@ -2052,11 +2067,11 @@
       available: (route) => !!series(route, "swh"),
       draw(canvas, route) {
         const values = series(route, "swh");
-        const range = plotRange([values]);
+        const range = plotRange([values], 0, null);
         const frame = plotFrame(canvas, route, range);
         drawGrid(frame, range);
         fillSeries(frame, route, values, scaleFill(frame, "waves", range.low, range.high, 0.85, PLOT_COLORS.waves));
-        strokeSeries(frame, route, values, cssColor("--fg"), 1.4);
+        strokeSeries(frame, route, values, cssColor("--fg"), PLOT_LINE);
         return frame;
       },
       readout(route, k) {
@@ -2069,11 +2084,11 @@
       available: (route) => !!series(route, "pressure"),
       draw(canvas, route) {
         const values = series(route, "pressure");
-        const range = plotRange([values], true);
+        const range = plotRange([values], null, null);
         const frame = plotFrame(canvas, route, range);
         drawGrid(frame, range);
         fillSeries(frame, route, values, scaleFill(frame, "pressure", range.low, range.high, 0.55, PLOT_COLORS.pressure));
-        strokeSeries(frame, route, values, cssColor("--fg"), 1.4);
+        strokeSeries(frame, route, values, cssColor("--fg"), PLOT_LINE);
         return frame;
       },
       readout(route, k) {
