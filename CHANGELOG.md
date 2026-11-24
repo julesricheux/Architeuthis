@@ -267,6 +267,7 @@ and this project follows Semantic Versioning https://semver.org
 - `sky.IFS_SKY_REGEX` downloaded only the temperature at 700 hPa with recent Herbie, which writes the empty level of the IFS surface fields `nan` (`:tcc:nan:sfc:`), so `add_sky_models` failed on `tcc`: it reads both forms.
 - `sky.GFS_SKY_REGEX` left out the GFS covers and precipitation rate with recent Herbie, whose inventory lines end with a colon (`:TCDC:entire atmosphere:24 hour fcst:`), so `add_sky_models` failed on `tcc` there too: it reads both forms.
 - `examples/simple_routing.py` stopped at its fuel distribution figure since its polars became `eff1` and `eff90`: its figures still selected `eff45` and `eff60`, now they take the vessels that were routed. `plot_fuel_distribution` names an empty group (`ValueError`) instead of failing inside matplotlib.
+- Routing analyses no longer print casadi 3.8's `FutureWarning` about NumPy functions called on casadi values: `architeuthis.numpy` now wraps the element-wise functions that were still plain NumPy (`sin`, `cos`, `tan` and their inverses, `arctan2`, the hyperbolic functions, `sqrt`, `exp`, `log`, `log10`, `floor`, `ceil`, `sign`, `fmax`, `fmin`, `hypot`), with casadi's functions for symbolic values and NumPy's for numbers and DM, as before, and `sind`, `cosd`, `arctan2d`, `clip`, `softmax`, the rotation matrices and `cosspace` use them. `examples/comparison_ascat_models.py` turns its queries into arrays.
 
 ---
 

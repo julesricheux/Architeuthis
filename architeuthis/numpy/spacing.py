@@ -1,5 +1,6 @@
 import numpy as _onp
 import casadi as _cas
+from architeuthis.numpy import elementwise as _elementwise
 from architeuthis.numpy.determine_type import is_casadi_type
 
 
@@ -31,7 +32,7 @@ def cosspace(start: float = 0.0, stop: float = 1.0, num: int = 50):
     mean = (stop + start) / 2
     amp = (stop - start) / 2
     ones = 0 * start + 1
-    spaced_array = mean + amp * _onp.cos(linspace(_onp.pi * ones, 0 * ones, num))
+    spaced_array = mean + amp * _elementwise.cos(linspace(_onp.pi * ones, 0 * ones, num))
 
     # Fix the endpoints, which might not be exactly right due to floating-point error.
     spaced_array[0] = start

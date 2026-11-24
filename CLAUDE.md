@@ -189,7 +189,7 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 - `architeuthis.numpy` begins with `from numpy import *`, so any function it does not override is plain NumPy and can fail or misbehave on CasADi types. Check the overrides when using a less common function.
 - `toolbox/geo_utils.py` is mixed. `distances`, `headings`, `midpoints` and `resample_coordinates` work symbolically. `poly_deviated_route`, `deviated_gc_segment` and `great_circle_route` are numeric only and may only build reference routes before optimization.
 - `core.py` itself uses non-smooth `np.mod`, `np.abs`, `np.fmax` and `np.fmin`. This is existing behaviour, not a pattern to extend.
-- casadi 3.8 raises a `FutureWarning` when a NumPy function receives a casadi value (`core.py` at `np.fmax`, `geo_utils.distances` and `headings`, and parts of `numpy/` and `Opti.variable`). This works through casadi's legacy behaviour, which a later release may change.
+- casadi 3.8 raises a `FutureWarning` when a NumPy function receives a casadi value. `architeuthis.numpy` wraps the element-wise functions the code uses (`numpy/elementwise.py`: trigonometric, `sqrt`, `exp`, `log`, `fmax`, `fmin`...), casadi's for SX and MX, NumPy's for numbers and DM (as arrays, the result of casadi 3.7.2), imported first in `numpy/__init__.py` so that its other modules take them. A function it does not wrap is still plain NumPy: add it there rather than calling `onp` on casadi values. Code using plain NumPy on query results calls `.full()` first.
 - `headings` is a local flat approximation and nothing unwraps longitude, so routes crossing the antimeridian are unsupported.
 
 **Figures**
