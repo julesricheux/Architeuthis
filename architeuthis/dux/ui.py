@@ -126,8 +126,8 @@ ATMOSPHERE_FIELDS = [
     "gust",
     "cape",
     "precipitation_type",
-    # "precipitation",
-    # "temperature",
+    "precipitation",
+    "temperature",
 ]
 WAVE_FIELDS = [
     "wave_height",
