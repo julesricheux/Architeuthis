@@ -227,7 +227,7 @@ and this project follows Semantic Versioning https://semver.org
 
 ---
 
-## Unreleased
+## v0.4.0 - 2026-11-25
 
 ### Added
 - `architeuthis.fuels`: `FUELS`, the fuel types (MDO, MGO, LFO, HFO, VLSFO, LNG by engine type, LPG, methanol, ethanol, ammonia, hydrogen, FAME, HVO, road diesel, unleaded petrol) with their density, lower heating value, CO2, CH4 and N2O factors, methane slip and well-to-tank intensity (FuelEU Maritime defaults, IPCC for road fuels), their tank-to-wake and well-to-wake intensities, and `co2(fuel)` and `ghg(fuel)` of a voyage; `get_fuel` finds them by key or alias (`FUEL_ALIASES`).
@@ -253,11 +253,17 @@ and this project follows Semantic Versioning https://semver.org
 - Consumptions are volumes, in L/h: an `hourly_consumption` table or function gives litres per hour, the mass burnt at `sfoc` is divided by the fuel density, and the fuel of the voyage, still in tonnes, is the volume times the density. The density is the new `Vessel(fuel_density=...)`, in kg/L, else that of the new `Vessel(fuel_type=...)`, marine diesel oil ("mdo", 0.85 kg/L) by default; the passage plan metadata records both. Reports, tooltips and figures give `hourly_consumption` in L/h. An `hourly_consumption` model written in kg/h should be divided by the density.
 - `ui.py` is now the analyst's page for sharing: beside a live preview of the file, it chooses the report file of `~/data/routes/`, the routes, the variables of the route tooltips, the models, the NOAA surface analysis, a title and a note, and downloads the file. It runs from anywhere with `python -m architeuthis.dux.ui`, without debug mode, and writes nothing to the working directory. The globe replaces the Mercator map. Only the iceberg limit is ticked at first, the zones of the library being unticked, and the file holds only the zones ticked in the preview, all shown when it opens (`ticked_zones`, sent by the page as `"architeuthis:zones"`), and the NOAA analysis comes with its valid time, estimated from the date of the chart: it is always shared, hidden at first, and its box follows each toggle of the chart in the preview.
 - The page is flat: panels, labels and glyphs have no outline or shadow, except the thin white outline of the routes. The sea is dark grey, the land flat over the weather with a thin, faint coastline shaded on the sea side, and wind barbs and wave and current arrows take the vivid colour of the field under them, on a lattice that panning and rotating the globe leave in place, in both themes alike, as the isobars. Wave glyphs tell the height: a head for each 4 m, a chevron of the same proportions for each metre left. The points of the routes are 1.3 times their first size (`ROUTE_POINT_SCALE` at the top of `viewer.js`), and the latitude and longitude lines stronger. Routes follow the great circles between their nodes, with their points halfway along them and the boats moving along them, rather than straight lines in latitude and longitude.
-
-### Deprecated
-- `architeuthis.wrappers.json_wrapper` and `architeuthis.wrappers.leaflet_wrapper`, moved to `architeuthis.dux`: the former names warn (`DeprecationWarning`) and give the new modules until 0.4.0.
+- Vessel models other than the consumption, `max_bhp` and `sails_contribution` included, are computed only when listed in `variables`, as deprecated in 0.3.2: `RoutingAnalysis(..., variables=["max_bhp"])`. A constraint on an unlisted one raises a `KeyError`.
+- The gusts `tws_gust` and `aws_gust` are computed only when `"gust"` (or one of them) is in the `variables`, no longer by default, as deprecated in 0.3.1.
+- `Vessel(max_power=...)` defaults to None, no power limit, instead of 1e12 kW.
+- A `bhp` or `total_power` model without `sfoc` raises a `ValueError` instead of burning at 0 g/kWh.
+- `RoutingAnalysis(options=...)` defaults to an empty dict, and `options={"include_gusts": ...}` raises a `ValueError` that asks for `variables=["gust"]`.
 
 ### Removed
+- `RoutingAnalysis(options={"include_gusts": ...})`, deprecated since 0.3.1: give `variables=["gust"]`.
+- `Vessel(sfc=...)` and `Vessel.sfc`, deprecated since 0.3.2 in favour of `sfoc`.
+- The former report and `ctx` name `avg_bhp` of the brake power, deprecated since 0.3.2 in favour of `bhp` (`report.RENAMED_ENTRIES`). Reports saved with `avg_bhp` are still read with `bhp` (`report.SAVED_ENTRY_NAMES`).
+- `architeuthis.wrappers.json_wrapper` and `architeuthis.wrappers.leaflet_wrapper`: import `architeuthis.dux.json_wrapper` and `architeuthis.dux.leaflet_wrapper`, with the `dux` extra.
 - The `app` extra, replaced by `dux`: `pip install "architeuthis[dux]"`.
 - The Leaflet map of `ui.py`, its forecast raster, arrow and contour routes, its EUMETSAT animation, and the tracked `assets/noaa_overlay.png` that it overwrote at each start. `leaflet_wrapper` and `json_wrapper` stay, in `architeuthis.dux`, with the `assets/` folder; a stray copy of `dashExtensions_default.js` in `toolbox/assets/` is gone.
 
@@ -268,18 +274,3 @@ and this project follows Semantic Versioning https://semver.org
 - `sky.GFS_SKY_REGEX` left out the GFS covers and precipitation rate with recent Herbie, whose inventory lines end with a colon (`:TCDC:entire atmosphere:24 hour fcst:`), so `add_sky_models` failed on `tcc` there too: it reads both forms.
 - `examples/simple_routing.py` stopped at its fuel distribution figure since its polars became `eff1` and `eff90`: its figures still selected `eff45` and `eff60`, now they take the vessels that were routed. `plot_fuel_distribution` names an empty group (`ValueError`) instead of failing inside matplotlib.
 - Routing analyses no longer print casadi 3.8's `FutureWarning` about NumPy functions called on casadi values: `architeuthis.numpy` now wraps the element-wise functions that were still plain NumPy (`sin`, `cos`, `tan` and their inverses, `arctan2`, the hyperbolic functions, `sqrt`, `exp`, `log`, `log10`, `floor`, `ceil`, `sign`, `fmax`, `fmin`, `hypot`), with casadi's functions for symbolic values and NumPy's for numbers and DM, as before, and `sind`, `cosd`, `arctan2d`, `clip`, `softmax`, the rotation matrices and `cosspace` use them. `examples/comparison_ascat_models.py` turns its queries into arrays.
-
----
-
-## v0.4.0 - Planned
-
-### Removed
-- `RoutingAnalysis(options={"include_gusts": ...})`, deprecated since 0.3.1: give `variables=["gust"]`. An analysis then computes `tws_gust` and `aws_gust` only when `"gust"` is in its variables, no longer by default.
-- `Vessel(sfc=...)` and `Vessel.sfc`, deprecated in favour of `sfoc`.
-- The former report and `ctx` name `avg_bhp` of the brake power, deprecated in favour of `bhp`. Saved reports with `avg_bhp` are still read with `bhp`.
-- `architeuthis.wrappers.json_wrapper` and `architeuthis.wrappers.leaflet_wrapper`, deprecated in favour of `architeuthis.dux.json_wrapper` and `architeuthis.dux.leaflet_wrapper`.
-
-### Changed
-- Vessel models other than the consumption, `max_bhp` and `sails_contribution` included, are computed only when listed in `variables`.
-- `Vessel(max_power=...)` defaults to None, no power limit, instead of 1e12 kW.
-- A `bhp` or `total_power` model without `sfoc` raises an error instead of burning at 0 g/kWh.
