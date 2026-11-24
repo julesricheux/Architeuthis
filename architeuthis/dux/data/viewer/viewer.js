@@ -15,6 +15,15 @@
   const scene = JSON.parse(document.getElementById("architeuthis-scene").textContent);
   const $ = (id) => document.getElementById(id);
 
+  // The points of a route sit halfway along the great circle between its
+  // nodes, on the line drawn, rather than halfway in latitude and longitude
+  // as the reports place them: a few hundred metres apart at most.
+  scene.routes.forEach((route) => {
+    for (let k = 0; k < route.clat.length && k + 1 < route.lat.length; k++) {
+      [route.clat[k], route.clon[k]] = greatCircle(route.lat[k], route.lon[k], route.lat[k + 1], route.lon[k + 1], 0.5);
+    }
+  });
+
   const NO_DATA = 255;
   const MERCATOR_LIMIT = 85.05;
   const HOUR = 3600;
@@ -1166,12 +1175,43 @@
       if (times[middle] <= t) low = middle; else high = middle;
     }
     const f = (t - times[low]) / (times[high] - times[low]);
-    return {
-      lat: route.lat[low] + f * (route.lat[high] - route.lat[low]),
-      lon: route.lon[low] + f * (route.lon[high] - route.lon[low]),
-      k: Math.min(low, route.ctim.length - 1),
-      phase: "under way",
-    };
+    const [lat, lon] = greatCircle(route.lat[low], route.lon[low], route.lat[high], route.lon[high], f);
+    return { lat, lon, k: Math.min(low, route.ctim.length - 1), phase: "under way" };
+  }
+
+  // The point a fraction `f` of the way along the great circle between two
+  // positions, as the routing computes its legs.
+  function greatCircle(lat1, lon1, lat2, lon2, f) {
+    const rad = Math.PI / 180;
+    const a = [Math.cos(lat1 * rad) * Math.cos(lon1 * rad), Math.cos(lat1 * rad) * Math.sin(lon1 * rad), Math.sin(lat1 * rad)];
+    const b = [Math.cos(lat2 * rad) * Math.cos(lon2 * rad), Math.cos(lat2 * rad) * Math.sin(lon2 * rad), Math.sin(lat2 * rad)];
+    const angle = Math.acos(Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2])));
+    if (angle < 1e-9) return [lat1 + f * (lat2 - lat1), lon1 + f * (lon2 - lon1)];
+    const wa = Math.sin((1 - f) * angle) / Math.sin(angle), wb = Math.sin(f * angle) / Math.sin(angle);
+    const x = wa * a[0] + wb * b[0], y = wa * a[1] + wb * b[1], z = wa * a[2] + wb * b[2];
+    const lat = Math.atan2(z, Math.hypot(x, y)) / rad;
+    let lon = Math.atan2(y, x) / rad;
+    // Kept on the side of the first point, so that lines do not jump.
+    while (lon - lon1 > 180) lon -= 360;
+    while (lon - lon1 < -180) lon += 360;
+    return [lat, lon];
+  }
+
+  // The line of a route along the great circles between its nodes, a
+  // point every half degree or so.
+  function routeLine(route) {
+    if (route.line) return route.line;
+    const line = [[route.lon[0], route.lat[0]]];
+    for (let i = 1; i < route.lat.length; i++) {
+      const lat1 = route.lat[i - 1], lon1 = line[line.length - 1][0];
+      const span = Math.hypot(route.lat[i] - lat1, (route.lon[i] - route.lon[i - 1]) * Math.cos((lat1 * Math.PI) / 180));
+      const pieces = Math.max(1, Math.ceil(span / 0.5));
+      for (let p = 1; p <= pieces; p++) {
+        const [lat, lon] = greatCircle(lat1, lon1, route.lat[i], route.lon[i], p / pieces);
+        line.push([lon, lat]);
+      }
+    }
+    return (route.line = line);
   }
 
   function updateRoutes() {
@@ -1181,7 +1221,7 @@
       features: shown.map((route) => ({
         type: "Feature",
         properties: { id: route.id, color: route.color },
-        geometry: { type: "LineString", coordinates: route.lon.map((lon, i) => [lon, route.lat[i]]) },
+        geometry: { type: "LineString", coordinates: routeLine(route) },
       })),
     });
     const points = [];
