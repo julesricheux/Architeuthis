@@ -430,6 +430,16 @@ button { cursor: pointer; }
 }
 /* Weather is drawn the same in both themes: isobars as in the dark one. */
 .isobar-label { color: var(--isobar); font-weight: 500; font-size: 10px; }
+/* A high or a low: its letter, and its pressure under it. */
+.pressure-centre {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: var(--isobar);
+  line-height: 1;
+}
+.pressure-centre b { font-size: 20px; font-weight: 700; }
+.pressure-centre span { font-size: 10px; font-weight: 600; margin-top: 1px; font-variant-numeric: tabular-nums; }
 
 /* Weather picker: a dot to drag, with a line from it up the left side of
    the card that tells the weather there. The marker is 16 px wide, the dot

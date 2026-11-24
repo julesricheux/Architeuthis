@@ -46,6 +46,12 @@
   // Spacings of the isobars offered in the layers, in hPa, and the first.
   const ISOBAR_STEPS = [2, 4];
   const DEFAULT_ISOBAR_STEP = 4;
+  // Highs and lows: the lowest or highest pressure within this many degrees
+  // of latitude around, at least CENTRE_DEPTH hPa below or above the mean
+  // pressure on the edge of that disc, so that a dent of an isobar is not
+  // taken for a system.
+  const CENTRE_RADIUS = 6;
+  const CENTRE_DEPTH = 1.5;
 
   // Map colours of each theme. The weather is drawn the same in both: arrows
   // and barbs take the colour of the field under them, made vivid with
@@ -118,6 +124,7 @@
     isobars: true,
     isobarLabels: true,
     isobarStep: DEFAULT_ISOBAR_STEP,
+    centres: true,
     opacity: 1,
     basemap: "offline",
     seamarks: false,
@@ -147,7 +154,7 @@
   scene.zones.forEach((zone) => { state.zones[zone.id] = zone.visible; });
   scene.overlays.forEach((overlay) => { state.overlays[overlay.id] = overlay.visible; });
   if (stored) {
-    ["speed", "source", "layer", "arrowKind", "isobars", "isobarLabels", "isobarStep", "opacity", "basemap", "seamarks", "graticule", "panelOpen", "noteOpen", "theme", "picker"]
+    ["speed", "source", "layer", "arrowKind", "isobars", "isobarLabels", "isobarStep", "centres", "opacity", "basemap", "seamarks", "graticule", "panelOpen", "noteOpen", "theme", "picker"]
       .forEach((key) => { if (key in stored) state[key] = stored[key]; });
     ["hidden", "zones", "overlays"].forEach((key) => { Object.assign(state[key], stored[key] || {}); });
   }
@@ -171,7 +178,7 @@
         const view = map ? { center: map.getCenter().toArray(), zoom: map.getZoom(), bearing: map.getBearing() } : null;
         const keep = {
           t: state.t, view, speed: state.speed, source: state.source, layer: state.layer, arrowKind: state.arrowKind,
-          isobars: state.isobars, isobarLabels: state.isobarLabels, isobarStep: state.isobarStep, opacity: state.opacity, basemap: state.basemap,
+          isobars: state.isobars, isobarLabels: state.isobarLabels, isobarStep: state.isobarStep, centres: state.centres, opacity: state.opacity, basemap: state.basemap,
           seamarks: state.seamarks, graticule: state.graticule, hidden: state.hidden, zones: state.zones,
           overlays: state.overlays, panelOpen: state.panelOpen, noteOpen: state.noteOpen, theme: state.theme,
           picker: state.picker,
@@ -1018,12 +1025,90 @@
   }
 
   const isobarMarkers = [];
+  const centreMarkers = [];
+
+  // The highs and lows of a pressure grid: [{lat, lon, high, value}]. A
+  // point is one where it is the lowest (highest) of the disc of
+  // CENTRE_RADIUS around it, and CENTRE_DEPTH below (above) the mean of
+  // the edge of that disc. Only points that are already the lowest
+  // (highest) of their eight neighbours are tried, so that it stays fast.
+  function pressureCentres(values, g) {
+    const n = g.nlon, rows = g.nlat;
+    const reach = Math.max(2, Math.round(CENTRE_RADIUS / Math.abs(g.dlat)));
+    const margin = Math.max(2, Math.round(reach / 3));
+    const found = [];
+    for (let j = margin; j < rows - margin; j++) {
+      const lat = g.lat0 + j * g.dlat;
+      const across = Math.min(n, Math.max(2, Math.round(reach * Math.abs(g.dlat) / (Math.abs(g.dlon) * Math.max(Math.cos((lat * Math.PI) / 180), 0.2)))));
+      for (let i = margin; i < n - margin; i++) {
+        const value = values[j * n + i];
+        if (value !== value) continue;
+        let lowest = true, highest = true;
+        for (let dj = -1; dj <= 1 && (lowest || highest); dj++) {
+          for (let di = -1; di <= 1; di++) {
+            if (!di && !dj) continue;
+            const other = values[(j + dj) * n + i + di];
+            if (other !== other) continue;
+            if (other < value) lowest = false;
+            if (other > value) highest = false;
+          }
+        }
+        if (lowest === highest) continue; // flat or neither
+        // The disc around, clipped to the grid, and the mean of its edge.
+        let extreme = true, edge = 0, count = 0;
+        for (let dj = -reach; dj <= reach && extreme; dj++) {
+          const jj = j + dj;
+          if (jj < 0 || jj >= rows) continue;
+          for (let di = -across; di <= across; di++) {
+            const ii = i + di;
+            if (ii < 0 || ii >= n) continue;
+            const r = (dj / reach) * (dj / reach) + (di / across) * (di / across);
+            if (r > 1) continue;
+            const other = values[jj * n + ii];
+            if (other !== other) continue;
+            if (lowest ? other < value : other > value) { extreme = false; break; }
+            if (r > 0.7) { edge += other; count++; }
+          }
+        }
+        if (!extreme || !count) continue;
+        const depth = lowest ? edge / count - value : value - edge / count;
+        if (depth < CENTRE_DEPTH) continue;
+        // A flat bottom gives several points: the first is kept.
+        const close = found.some((item) => item.high === highest && Math.abs(item.j - j) <= reach && Math.abs(item.i - i) <= across);
+        if (!close) found.push({ i, j, lat, lon: g.lon0 + i * g.dlon, high: highest, value });
+      }
+    }
+    return found;
+  }
+
+  function updateCentres(values, source) {
+    const centres = values && state.centres ? pressureCentres(values, source.grid) : [];
+    while (centreMarkers.length < centres.length) {
+      const element = document.createElement("div");
+      element.className = "map-label pressure-centre";
+      centreMarkers.push({ marker: new maplibregl.Marker({ element }), added: false });
+    }
+    centreMarkers.forEach((item, index) => {
+      if (index < centres.length) {
+        const centre = centres[index];
+        const element = item.marker.getElement();
+        element.innerHTML = `<b>${centre.high ? "H" : "L"}</b><span>${Math.round(centre.value)}</span>`;
+        element.title = `${centre.high ? "High" : "Low"}, ${Math.round(centre.value)} hPa`;
+        item.marker.setLngLat([centre.lon, centre.lat]);
+        if (!item.added) { item.marker.addTo(map); item.added = true; }
+      } else if (item.added) {
+        item.marker.remove();
+        item.added = false;
+      }
+    });
+  }
 
   function updateIsobars() {
     const source = currentSource();
     const features = [];
     const labels = [];
     const values = state.isobars && source && source.quantities.pressure && includedLayers(source).includes("pressure") ? grid(source, "pressure", state.t) : null;
+    updateCentres(values, source);
     if (values) {
       let low = Infinity, high = -Infinity;
       for (let k = 0; k < values.length; k++) {
@@ -1675,6 +1760,9 @@
         const labels = checkbox("Pressure labels", state.isobarLabels, (on) => { state.isobarLabels = on; onFieldsChanged(); }, { disabled: !state.isobars });
         labels.classList.add("sub");
         weather.append(labels);
+        const centres = checkbox("Highs and lows", state.centres, (on) => { state.centres = on; onFieldsChanged(); }, { disabled: !state.isobars });
+        centres.classList.add("sub");
+        weather.append(centres);
       }
       const range = element("label", "range", "<span>Opacity</span>");
       const slider = element("input");
