@@ -1727,8 +1727,104 @@
     return node;
   }
 
+  // The colours of a layer in a small swatch: its scale, or its categories.
+  function layerRamp(layer) {
+    const info = scene.layers[layer];
+    const colors = info.categories
+      ? info.categories.filter((category) => category.color).map((category) => category.color)
+      : info.colormap.colors.filter((_, index, all) => index % Math.max(1, Math.floor(all.length / 12)) === 0);
+    if (!colors.length) return "transparent";
+    if (colors.length === 1) return colors[0];
+    const stops = colors.map((color, index) => `${color} ${((100 * index) / (colors.length - 1)).toFixed(0)}%`);
+    return `linear-gradient(to right, ${stops.join(", ")})`;
+  }
+
+  // The fields of a source, then none, in the order of the list.
+  function layerChoices(source) {
+    return includedLayers(source).concat([""]);
+  }
+
+  // Shows the field above (-1) or below (+1) the current one in the list.
+  function stepLayer(direction) {
+    const source = currentSource();
+    if (!source) return;
+    const choices = layerChoices(source);
+    const index = choices.indexOf(state.layer || "");
+    const next = Math.max(0, Math.min(choices.length - 1, (index < 0 ? 0 : index) + direction));
+    if (choices[next] === (state.layer || "")) return;
+    state.layer = choices[next];
+    state.arrowKind = null;
+    onFieldsChanged();
+  }
+
+  // The fields of the source, one per row as a list of Blender: a swatch of
+  // its colours, its name and its unit, the field shown highlighted.
+  function layerList(source) {
+    const list = element("div", "uilist");
+    list.setAttribute("role", "listbox");
+    list.title = "Field shown: click, or ↑ and ↓";
+    layerChoices(source).forEach((layer) => {
+      const info = scene.layers[layer];
+      const active = layer === (state.layer || "");
+      const row = element("button", "uilist-row" + (active ? " active" : "") + (layer ? "" : " none"));
+      row.type = "button";
+      row.setAttribute("role", "option");
+      row.setAttribute("aria-selected", active ? "true" : "false");
+      row.innerHTML = layer
+        ? `<i class="ramp" style="background:${layerRamp(layer)}"></i><span>${escapeHtml(info.label)}</span><span class="unit">${escapeHtml(info.unit || "")}</span>`
+        : '<i class="ramp"></i><span>None</span>';
+      row.addEventListener("click", () => { state.layer = layer; state.arrowKind = null; onFieldsChanged(); });
+      list.append(row);
+    });
+    return list;
+  }
+
+  // The other choices of the weather, a label on the left of each row.
+  function weatherProperties(source) {
+    const grid = element("div", "props");
+    const row = (label, ...controls) => {
+      grid.append(element("span", "prop-label", escapeHtml(label)));
+      const cell = element("div", "prop-value");
+      cell.append(...controls);
+      grid.append(cell);
+      return cell;
+    };
+    const kinds = availableArrows(source);
+    if (kinds.length) {
+      const arrows = segmented(kinds.map((kind) => [kind, ARROW_LABELS[kind]]).concat([["", "Off"]]), currentArrows(source) || "", (kind) => { state.arrowKind = kind; onFieldsChanged(); });
+      arrows.classList.add("joined");
+      row("Arrows", arrows);
+    }
+    if (source.quantities.pressure && includedLayers(source).includes("pressure")) {
+      const steps = segmented(ISOBAR_STEPS.map((step) => [step, `${step} hPa`]), state.isobarStep, (step) => { state.isobarStep = step; onFieldsChanged(); });
+      steps.classList.add("joined");
+      if (!state.isobars) steps.classList.add("disabled");
+      row("Isobars", checkbox("", state.isobars, (on) => { state.isobars = on; onFieldsChanged(); }), steps).classList.add("inline");
+      const off = { disabled: !state.isobars };
+      row("", checkbox("Pressure labels", state.isobarLabels, (on) => { state.isobarLabels = on; onFieldsChanged(); }, off));
+      row("", checkbox("Highs and lows", state.centres, (on) => { state.centres = on; onFieldsChanged(); }, off));
+    }
+    const slider = element("input");
+    slider.type = "range";
+    slider.min = "0.1";
+    slider.max = "1";
+    slider.step = "0.05";
+    slider.value = String(state.opacity);
+    const shown = element("span", "prop-number", `${Math.round(100 * state.opacity)} %`);
+    slider.addEventListener("input", () => {
+      state.opacity = Number(slider.value);
+      shown.textContent = `${Math.round(100 * state.opacity)} %`;
+      map.setPaintProperty("field", "raster-opacity", state.opacity);
+      persist();
+    });
+    row("Opacity", slider, shown).classList.add("inline");
+    return grid;
+  }
+
   function buildPanel() {
     const panel = $("panel");
+    // Rebuilt at each choice: the panel stays where it was scrolled.
+    const scroll = panel.scrollTop;
     panel.innerHTML = "";
     const source = currentSource();
 
@@ -1736,48 +1832,17 @@
       const weather = section("Weather");
       const sources = includedSources();
       if (sources.length > 1) {
-        weather.append(segmented(sources.map((s) => [s.id, s.label]), source.id, (id) => {
+        const models = segmented(sources.map((s) => [s.id, s.label]), source.id, (id) => {
           state.source = id;
           state.layer = null;
           ensureSelection();
           onFieldsChanged();
-        }));
+        });
+        models.classList.add("joined");
+        weather.append(models);
       }
-      const layers = includedLayers(source).map((layer) => [layer, scene.layers[layer].label]).concat([["", "Off"]]);
-      weather.append(segmented(layers, state.layer || "", (layer) => { state.layer = layer; state.arrowKind = null; onFieldsChanged(); }));
-      const kinds = availableArrows(source);
-      if (kinds.length) {
-        weather.append(element("div", "seg-label", "Arrows"));
-        const arrows = kinds.map((kind) => [kind, ARROW_LABELS[kind]]).concat([["", "Off"]]);
-        weather.append(segmented(arrows, currentArrows(source) || "", (kind) => { state.arrowKind = kind; onFieldsChanged(); }));
-      }
-      if (source.quantities.pressure && includedLayers(source).includes("pressure")) {
-        weather.append(checkbox("Isobars", state.isobars, (on) => { state.isobars = on; onFieldsChanged(); }));
-        const steps = segmented(ISOBAR_STEPS.map((step) => [step, `every ${step} hPa`]), state.isobarStep, (step) => { state.isobarStep = step; onFieldsChanged(); });
-        steps.classList.add("sub");
-        if (!state.isobars) steps.classList.add("disabled");
-        weather.append(steps);
-        const labels = checkbox("Pressure labels", state.isobarLabels, (on) => { state.isobarLabels = on; onFieldsChanged(); }, { disabled: !state.isobars });
-        labels.classList.add("sub");
-        weather.append(labels);
-        const centres = checkbox("Highs and lows", state.centres, (on) => { state.centres = on; onFieldsChanged(); }, { disabled: !state.isobars });
-        centres.classList.add("sub");
-        weather.append(centres);
-      }
-      const range = element("label", "range", "<span>Opacity</span>");
-      const slider = element("input");
-      slider.type = "range";
-      slider.min = "0.1";
-      slider.max = "1";
-      slider.step = "0.05";
-      slider.value = String(state.opacity);
-      slider.addEventListener("input", () => {
-        state.opacity = Number(slider.value);
-        map.setPaintProperty("field", "raster-opacity", state.opacity);
-        persist();
-      });
-      range.append(slider);
-      weather.append(range);
+      weather.append(layerList(source));
+      weather.append(weatherProperties(source));
       panel.append(weather);
     }
 
@@ -1853,6 +1918,7 @@
       }));
     });
     panel.append(base);
+    panel.scrollTop = scroll;
   }
 
   // A chart is drawn at its valid time: showing one brings the forecast,
@@ -2615,6 +2681,7 @@
       if (event.key === " ") { togglePlay(); event.preventDefault(); }
       else if (event.key === "ArrowRight") { if (event.shiftKey) setTime(state.t + DAY); else step(1); event.preventDefault(); }
       else if (event.key === "ArrowLeft") { if (event.shiftKey) setTime(state.t - DAY); else step(-1); event.preventDefault(); }
+      else if (event.key === "ArrowUp" || event.key === "ArrowDown") { stepLayer(event.key === "ArrowUp" ? -1 : 1); event.preventDefault(); }
       else if (event.key === "l" || event.key === "L") setPanel(!state.panelOpen);
       else if (event.key === "p" || event.key === "P") togglePicker();
       else if (event.key === "t" || event.key === "T") toggleTheme();
