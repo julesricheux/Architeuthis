@@ -637,7 +637,7 @@ reports.share(
 | `member` | first | Ensemble member of the forecasts. |
 | `fields` | all | Layers of the forecasts to put in the file, such as `["wind", "waves", "period"]`. A layer brings the fields of its arrows: wave arrows with the period. |
 | `settings` | `None` | Initial choices of the page: `theme` (`"dark"`, the default, or `"light"`), and for `ui.py` the routes, sources, overlays and tooltip variables shown. |
-| `resolution`, `margin`, `time_margin` | 0.5 deg, 10 deg, 12 h | Grid of the forecast frames, and the forecast kept around the routes and before and after them. |
+| `resolution`, `margin`, `time_margin` | 0.5 deg, 10 deg, 12 h | Grid of the forecast frames, the forecast kept around the routes, and after the last arrival: every step before it is kept, from the first of the forecast, whenever the routes leave. |
 
 ```python
 reports.share(

@@ -256,9 +256,9 @@ def test_fake_final_steps_are_dropped(dataset):
     assert scene["sources"][0]["times"] == pytest.approx(TIME)
 
 
-def test_frames_cover_the_routes_with_one_more_step_each_side(scene, reports):
-    # The routes sail from 0 to 60 h, so 12 h of margin keeps -12 to 72 h,
-    # and one more step 75 h (the forecast starts at -12 h).
+def test_frames_cover_the_routes_with_one_more_step_after(scene, reports):
+    # The routes sail from 0 to 60 h, so 12 h of margin keeps up to 72 h,
+    # and one more step 75 h; every step before them is kept.
     assert [float(np.min(report["tim"])) for report in reports] == [0.0, 0.0]
     assert [float(np.max(report["tim"])) for report in reports] == [60 * HOUR, 60 * HOUR]
 
@@ -893,3 +893,16 @@ def test_the_cloud_colormap_goes_from_a_clear_sky_to_an_overcast_one():
     assert (norm.vmin, norm.vmax) == (0.0, 100.0)
     assert to_hex(cmap(0.0)) == "#7d704b"
     assert to_hex(cmap(1.0)) == "#f2f2f2"
+
+
+def test_frames_start_with_the_forecast_whenever_the_routes_leave(reports, dataset):
+    late = ReportCollection([copy.deepcopy(report) for report in reports])
+    for report in late:
+        for key in ("tim", "ctim"):
+            report[key] = np.asarray(report[key]) + 48 * HOUR
+
+    times = share.build_scene(late, forecasts={"IFS": dataset})["sources"][0]["times"]
+
+    # Two days after the start of the forecast, its first step is still kept.
+    assert times[0] == pytest.approx(TIME[0])
+    assert times[-1] == pytest.approx(TIME[-1])

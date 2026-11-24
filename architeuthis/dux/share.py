@@ -78,7 +78,7 @@ KNOTS_PER_MS = 1.0 / 0.514444
 
 DEFAULT_RESOLUTION = 0.5  # deg, grid of the forecast frames
 DEFAULT_MARGIN = 10.0  # deg of forecast kept around the routes
-DEFAULT_TIME_MARGIN = 12 * 3600.0  # s of forecast kept before and after
+DEFAULT_TIME_MARGIN = 12 * 3600.0  # s of forecast kept after the last arrival
 MAX_GRID_CELLS = 60_000  # the grid is thinned further above this size
 NO_DATA = 255
 
@@ -551,7 +551,8 @@ def build_scene(
             brings the fields of its arrows: wave arrows with `period`.
         resolution: Grid spacing of the forecast frames, in deg.
         margin: Forecast kept around the routes, in deg.
-        time_margin: Forecast kept before and after the routes, in s.
+        time_margin: Forecast kept after the last arrival, in s; every
+            step before it is kept, whenever the routes leave.
 
     Returns:
         The scene, as read by `viewer_html`.
@@ -907,12 +908,15 @@ def _route_box(reports: Sequence[Mapping], margin: float) -> Optional[tuple]:
 
 def _route_window(reports: Sequence[Mapping], time_margin: float) -> Optional[tuple]:
     """
-    First departure and last arrival of the routes, with a margin.
+    The forecast times kept: up to the last arrival, with a margin.
+
+    Every step before is kept, from the first of each forecast, whenever
+    the routes leave.
     """
     if not reports:
         return None
     tim = np.concatenate([np.ravel(report["tim"]) for report in reports])
-    return float(np.nanmin(tim)) - time_margin, float(np.nanmax(tim)) + time_margin
+    return -np.inf, float(np.nanmax(tim)) + time_margin
 
 
 # --------------------------------------------------------------------------
