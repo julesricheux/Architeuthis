@@ -3,7 +3,6 @@
 import importlib
 import json
 import os
-import sys
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -328,17 +327,6 @@ def json_wrapper(tmp_path, monkeypatch):
     # in the working directory, which must not be the repository.
     monkeypatch.chdir(tmp_path)
     return importlib.import_module("architeuthis.dux.json_wrapper")
-
-
-@pytest.mark.parametrize("name", ["json_wrapper", "leaflet_wrapper"])
-def test_the_former_wrappers_warn_and_give_the_dux_modules(name, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delitem(sys.modules, f"architeuthis.wrappers.{name}", raising=False)
-
-    with pytest.warns(DeprecationWarning, match=f"architeuthis.dux.{name}"):
-        module = importlib.import_module(f"architeuthis.wrappers.{name}")
-
-    assert module is importlib.import_module(f"architeuthis.dux.{name}")
 
 
 def test_json_wrapper_keeps_giving_the_codec(json_wrapper):

@@ -95,7 +95,7 @@ toolbox/       geo_utils (route geometry, central_angle), windy_colormaps (wind,
                image_utils (PNG, palette inversion, smooth rescaling, colour scales, quantile matching, blending, GIF),
                inspect_tools, string_formatting...
 data/          package data: cloud_genera.json (the 10 WMO genera, étages, precipitation)
-wrappers/      legacy provider wrappers; json_wrapper and leaflet_wrapper are deprecated aliases of dux
+wrappers/      legacy provider wrappers (Herbie, Copernicus Marine, EUMDAC)
 examples/      simple_routing, long_term_routing, ensemble_routing, post_leg_rewind,
                passage_planning, ifs_route_tested_with_gfs, short_term_routing, comparison_ascat_models,
                function_polar_routing, sky_along_route, vessel_definitions, wind_only_routing,
@@ -246,8 +246,6 @@ Not covered: the real IIP server (`test_icebergs.py` replaces `requests.get`), `
 ## Deprecations
 
 To remove in **0.4.0**, with an entry under "Removed" in `CHANGELOG.md`:
-
-- `architeuthis/wrappers/json_wrapper.py` and `leaflet_wrapper.py`, aliases of the `architeuthis.dux` modules that warn. Remove them and `test_the_former_wrappers_warn_and_give_the_dux_modules`.
 
 - `RoutingAnalysis(options={"include_gusts": ...})`, deprecated in 0.3.1 in favour of `variables=["gust"]`. Remove the `DeprecationWarning` and the `"include_gusts"` default of `options` in `RoutingAnalysis.__init__`, and the gust prefix of `_variables`, so that the gusts are computed only when `"gust"` is listed. Then update the tests that rely on default gusts (`test_routing.py`, `test_plots.py`, the `routing` fixture reports) and the docstrings and `docs/user_guide.md` passages that mention the option.
 - `Vessel(sfc=...)` and the `Vessel.sfc` property, deprecated in favour of `sfoc` (`_warn_sfc`). Remove them and `test_sfc_is_the_deprecated_name_of_sfoc`.
