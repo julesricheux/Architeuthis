@@ -30,13 +30,11 @@ def test_max_power_stays_a_raw_value():
     assert Vessel("ship", filepath="polar.nc", max_power=3100.0).max_power == 3100.0
 
 
-def test_max_power_defaults_to_1e12_until_0_4():
-    with pytest.warns(DeprecationWarning, match="max_power"):
-        vessel = Vessel("ship", verbose=False)
+def test_max_power_defaults_to_none():
+    vessel = Vessel("ship", verbose=False)
 
-    assert vessel.max_power == 1e12
+    assert vessel.max_power is None
     assert vessel.sfoc is None
-    assert Vessel("ship", max_power=None, verbose=False).max_power is None
 
 
 def cubic(x):
@@ -169,14 +167,12 @@ def test_a_vessel_without_consumption_model_is_reported():
         vessel.consumption(QUERY)
 
 
-def test_a_missing_sfoc_is_zero_until_0_4():
+def test_a_missing_sfoc_is_reported():
     vessel = Vessel("ship", max_power=None, verbose=False)
     vessel.add_function("bhp", cubic, ["stw"])
 
-    with pytest.warns(DeprecationWarning, match="no sfoc"):
-        consumption = values(vessel.consumption(QUERY))
-
-    assert consumption["hourly_consumption"] == pytest.approx(0.0)
+    with pytest.raises(ValueError, match="needs sfoc"):
+        vessel.consumption(QUERY)
 
 
 def test_a_missing_hotel_load_is_reported():

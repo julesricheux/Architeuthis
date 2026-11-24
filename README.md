@@ -180,7 +180,7 @@ Quantities your model does not use can be computed all the same, to constrain th
 - **Stay differentiable:** write with `architeuthis.numpy`, and use `np.where`, `np.softmax` or `np.sigmoid` rather than `if` on values.
 - **Mind the units:** routing quantities are in kt and degrees, angles in absolute value. Forecast fields arrive as stored (m/s, K): convert them with `fac=` or a function.
 - **Return components:** `(value, {"sails": ...})`, then pick one with `output=`.
-- **Set a realistic `max_power`, or `None`:** a huge power limit unsettles the solver. `max_power=None` leaves the power free; until 0.4.0, leaving it out still gives 1e12 kW, with a warning.
+- **Set a realistic `max_power`, or `None`:** a huge power limit unsettles the solver. `max_power=None`, the default, leaves the power free.
 
 The complete script is [`examples/function_polar_routing.py`](examples/function_polar_routing.py), and the [User Guide](docs/user_guide.md) has the details.
 

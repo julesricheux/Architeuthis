@@ -208,7 +208,7 @@ Speeds in knots, distances in nautical miles, angles in degrees, time in float e
 - `Schedule` and `Voyage` convert dates with `common.to_timestamp`; naive dates are UTC, so give local times with a timezone.
 - Divergence and spread signs are relative to the travel direction: `Route.reversed()` negates divergences, so the reverse route's `plus` is the forward `minus`.
 - `Route.from_position` restarts with a straight first segment. `Voyage.from_position` cannot restart `route_minus`/`route_plus` given as functions and falls back to the spread paths; pass Routes to keep them.
-- `Vessel.hotel_load` and `Vessel.sfoc` are wrapped into callables, while `Vessel.max_power` stays a raw value. `sfoc` defaults to None, and the `bhp` and `total_power` formulations then burn at 0 with a `DeprecationWarning` (`ValueError` from 0.4.0). `max_power` left out is 1e12 kW with a `DeprecationWarning` (sentinel `_UNSET`; None from 0.4.0); `max_power=None` gives no power constraint. A huge value such as 1e12 kW is a slack that can send IPOPT's adaptive barrier off and the route diverging, so give a realistic value or none.
+- `Vessel.hotel_load` and `Vessel.sfoc` are wrapped into callables, while `Vessel.max_power` stays a raw value. `sfoc` defaults to None, and the `bhp` and `total_power` formulations then raise `ValueError`. `max_power` defaults to None, no power constraint. A huge value such as 1e12 kW is a slack that can send IPOPT's adaptive barrier off and the route diverging, so give a realistic value or none.
 - Only the consumption models are meant to be evaluated by default: a constraint on `ctx["max_bhp"]` or a figure of `sails_contribution` should list them in `variables`. Until 0.4.0, `_variables` still adds the `IMPLICIT_VESSEL_VARIABLES` that the vessel has and nobody listed, with a `DeprecationWarning`; from 0.4.0, a missing one is a `KeyError`. The plots and `json_wrapper` skip them when absent.
 - `EnsembleHerbieForecast.add_interpolator` takes `var_dim, time_dim, member_dim, latitude_dim, longitude_dim`, which must be the order of the array.
 - `json_wrapper.route_to_geojson` also needs `init_fac`, which `run` records but `evaluate` does not; `share.route_label` uses it only when present. `ReportCollection.save` writes to `~/data/routes/` by default.
@@ -248,9 +248,7 @@ Not covered: the real IIP server (`test_icebergs.py` replaces `requests.get`), `
 To remove in **0.4.0**, with an entry under "Removed" in `CHANGELOG.md`:
 
 - The implicit `max_bhp` and `sails_contribution`: remove `IMPLICIT_VESSEL_VARIABLES` and its part of `_variables` in `core.py`, and `test_unlisted_max_bhp_and_sails_are_still_computed_until_0_4`. Tests using the `vessel` fixture through `analyse` then lose `max_bhp` unless they list it.
-- The `max_power` default of 1e12 kW: replace `_UNSET` by None in `Vessel.__init__` and drop its warning; update `test_max_power_defaults_to_1e12_until_0_4` and the `unset` case of `test_the_power_limit_is_optional`.
 - The former name `avg_bhp`: remove `RENAMED_ENTRIES`, `_renamed` and `_RenamedEntries` in `report.py` (`RoutingReport` and the `ctx` of `core.py` then become plain dicts again), and `test_avg_bhp_is_the_deprecated_name_of_bhp`.
-- The zero `sfoc`: in `Vessel._load`, raise `ValueError` for a missing `sfoc` as for `hotel_load`; update the two `test_a_missing_sfoc_is_zero_until_0_4`.
 
 ## Known inconsistencies
 

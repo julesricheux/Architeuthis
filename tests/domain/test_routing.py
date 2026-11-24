@@ -1046,11 +1046,9 @@ class TestConsumption:
         with pytest.raises(KeyError, match="no consumption model"):
             baseline(vessel)
 
-    def test_a_missing_sfoc_is_zero_until_0_4(self, baseline):
-        with pytest.warns(DeprecationWarning, match="no sfoc"):
-            report = baseline(consumption_vessel("total_power", max_power=None))
-
-        assert report["fuel"] == 0.0
+    def test_a_missing_sfoc_is_reported(self, baseline):
+        with pytest.raises(ValueError, match="needs sfoc"):
+            baseline(consumption_vessel("total_power", max_power=None))
 
     def test_the_power_limit_is_optional(self, analyse, open_sea):
         def count(vessel):
@@ -1058,10 +1056,9 @@ class TestConsumption:
             return len(analysis.evaluate(analysis.run(solve=False, solver_options=MUMPS))["constraint_violations"])
 
         assert count(consumption_vessel("bhp", sfoc=SFC, max_power=None)) == 1
-        with pytest.warns(DeprecationWarning, match="max_power"):
-            unset = consumption_vessel("bhp", sfoc=SFC)
-        assert unset.max_power == 1e12
-        assert count(unset) == 2
+        unset = consumption_vessel("bhp", sfoc=SFC)
+        assert unset.max_power is None
+        assert count(unset) == 1
         assert count(consumption_vessel("bhp", sfoc=SFC, max_power=1e6)) == 2
         assert count(consumption_vessel("total_power", sfoc=SFC, max_power=1e6)) == 2
         assert count(consumption_vessel("hourly_consumption", max_power=1e6)) == 1
