@@ -54,18 +54,6 @@ def _label_from_path(filepath: str) -> str:
     return match.group(0) if match else stem
 
 
-def _warn_sfc():
-    """
-    Deprecation warning of the former name of `sfoc`.
-    """
-    warnings.warn(
-        "Vessel 'sfc' is deprecated and will be removed in 0.4.0: use 'sfoc', "
-        "the specific fuel oil consumption in g/kWh.",
-        DeprecationWarning,
-        stacklevel=3,
-    )
-
-
 class Vessel(ArchiteuthisData):
     """
     Represents the vessel and its performance characteristics.
@@ -126,7 +114,6 @@ class Vessel(ArchiteuthisData):
         fuel_density: Density of the fuel in kg/L, from the bunker
             delivery note for example; None for that of `fuel_type`
             (0.85 for "mdo").
-        sfc: Former name of `sfoc`, deprecated: removed in 0.4.0.
 
     Example:
         >>> vessel = Vessel("ship", sfoc=190., max_power=4000.)
@@ -144,7 +131,6 @@ class Vessel(ArchiteuthisData):
         label: Optional[str] = None,
         fuel_type: Union[str, Fuel] = DEFAULT_FUEL,
         fuel_density: Optional[float] = None, # kg/L
-        sfc: Union[Callable, float, int, None] = None,
     ):
         super().__init__(name, verbose)
 
@@ -152,12 +138,6 @@ class Vessel(ArchiteuthisData):
         if label is None:
             label = _label_from_path(filepath) if filepath is not None else name
         self.label = label
-
-        if sfc is not None:
-            _warn_sfc()
-            if sfoc is not None:
-                raise TypeError("Give sfoc only: sfc is its former name.")
-            sfoc = sfc
 
         self.fuel = get_fuel(fuel_type)
         self.fuel_type = fuel_key(self.fuel) or self.fuel.label
@@ -176,22 +156,6 @@ class Vessel(ArchiteuthisData):
             )
             max_power = _DEFAULT_MAX_POWER
         self.max_power = max_power
-
-    @property
-    def sfc(self):
-        """
-        Former name of `sfoc`, deprecated: removed in 0.4.0.
-        """
-        _warn_sfc()
-        return self.sfoc
-
-    @sfc.setter
-    def sfc(self, value):
-        """
-        Set `sfoc` through its former name, deprecated.
-        """
-        _warn_sfc()
-        self.sfoc = ensure_callable(value)
 
     @property
     def consumption_model(self) -> Optional[str]:

@@ -39,21 +39,6 @@ def test_max_power_defaults_to_1e12_until_0_4():
     assert Vessel("ship", max_power=None, verbose=False).max_power is None
 
 
-def test_sfc_is_the_deprecated_name_of_sfoc():
-    with pytest.warns(DeprecationWarning, match="sfoc"):
-        vessel = Vessel("ship", sfc=224.0, verbose=False)
-    assert vessel.sfoc(0.0) == 224.0
-
-    with pytest.warns(DeprecationWarning, match="sfoc"):
-        assert vessel.sfc(0.0) == 224.0
-    with pytest.warns(DeprecationWarning, match="sfoc"):
-        vessel.sfc = 190.0
-    assert vessel.sfoc(0.0) == 190.0
-
-    with pytest.warns(DeprecationWarning), pytest.raises(TypeError, match="sfoc only"):
-        Vessel("ship", sfc=224.0, sfoc=190.0, verbose=False)
-
-
 def cubic(x):
     return POLAR_POWER_COEFFICIENT * x["stw"] ** 3
 
