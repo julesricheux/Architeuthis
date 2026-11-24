@@ -93,10 +93,11 @@ def deterministic_names(forecast):
     """The fields that the `regex` of a forecast asks of its provider."""
     regex = forecast.regex or ""
     if forecast.model == "ifs":
-        # As Herbie searches the IFS inventory: parameter, then level and level type.
+        # As Herbie searches the IFS inventory: parameter, then level ("nan"
+        # at the surface) and level type.
         surface = {"u10": "10u", "v10": "10v", "fg10": "10fg", "msl": "msl", "u100": "100u", "v100": "100v", "t2m": "2t", "swh": "swh", "mwd": "mwd", "mwp": "mwp",
                    "tcc": "tcc", "lcc": "lcc", "mcc": "mcc", "hcc": "hcc", "mucape": "mucape", "tprate": "tprate", "d2m": "2d"}
-        tokens = {name: f":{param}:sfc:" for name, param in surface.items()} | {"t": ":t:700:pl:"}
+        tokens = {name: f":{param}:nan:sfc:" for name, param in surface.items()} | {"t": ":t:700:pl:"}
         return [name for name, token in tokens.items() if re.search(regex, token)]
     if forecast.model == "gfs":
         return ["u10", "v10"] + (["gust"] if "GUST" in regex else [])

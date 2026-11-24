@@ -42,3 +42,21 @@ def test_release_check_reads_the_same_version():
 
 def test_keyring_is_a_dependency():
     assert "keyring" in pyproject()["project"]["dependencies"]
+
+
+DUX_DEPENDENCIES = ("dash", "flask", "dash-extensions", "dash-leaflet", "dash-mantine-components", "dash-iconify")
+
+
+def names(requirements):
+    return {re.split(r"[<>=!\[; ]", requirement, maxsplit=1)[0].lower() for requirement in requirements}
+
+
+def test_the_display_tools_are_an_extra():
+    # pip install architeuthis gives the routing without Dash, architeuthis[dux] adds the pages.
+    project = pyproject()["project"]
+    extras = project["optional-dependencies"]
+
+    assert not names(project["dependencies"]) & set(DUX_DEPENDENCIES)
+    assert set(DUX_DEPENDENCIES) <= names(extras["dux"])
+    assert "app" not in extras
+    assert "architeuthis[dux]" in extras["test"]

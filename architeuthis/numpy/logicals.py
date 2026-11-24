@@ -1,5 +1,6 @@
 import numpy as _onp
 import casadi as _cas
+from architeuthis.numpy import elementwise as _elementwise
 from architeuthis.numpy.determine_type import is_casadi_type
 
 
@@ -14,7 +15,7 @@ def clip(x, min, max):
     Returns:
 
     """
-    return _onp.fmin(_onp.fmax(x, min), max)
+    return _elementwise.fmin(_elementwise.fmax(x, min), max)
 
 
 def logical_and(x1, x2):

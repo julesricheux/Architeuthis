@@ -35,7 +35,7 @@ No graph, no grid search: the waypoints are continuous variables of a single non
 - 🧊 **Real-world constraints**: land, shallow water, exclusion zones, the iceberg limit, maximum power, your own rules
 - 🎲 **Forecast uncertainty**: optimize each ensemble member, test a plan against other models, members or vessels
 - 🛰️ **Satellite observations**: ASCAT winds to check the forecasts, and one seamless cloud layer from Meteosat and GOES-East
-- 📊 **Ready-to-use outputs**: A4 reports, maps, tables, GPX tracks and an interactive viewer
+- 📊 **Ready-to-use outputs**: A4 reports, maps, tables, GPX tracks, and a 3D globe of routes and forecasts to send aboard as one file
 
 **Architeuthis** provides the **onshore weather routing support** of [Neoliner Origin](https://www.neoline.eu/) 🌬️⛵⚓
 
@@ -46,7 +46,8 @@ No graph, no grid search: the waypoints are continuous variables of a single non
 ## 🚀 Quick Start
 
 ```bash
-pip install architeuthis            # add [app] for the interactive viewer
+pip install architeuthis            # routing, data sources, reports and figures
+pip install "architeuthis[dux]"     # also the display tools: the analyst's page, dux/ui.py
 ```
 
 Or from source: `git clone https://github.com/julesricheux/Architeuthis.git`, then `conda env create -f environment.yaml` and run everything from the repository root (Python 3.11 or later).
@@ -108,7 +109,7 @@ report = analysis.run()
 reports = ReportCollection([report])
 print(reports.summary())
 reports.to_gpx()     # a track for your navigation system
-reports.save()       # for the viewer
+reports.save()       # for ui.py
 plot_report(report)  # one A4 page: speed, sails, power, waves and wind
 ```
 
@@ -143,9 +144,11 @@ The objective is the fuel, so the vessel needs one model of its consumption, the
 
 | Model | Unit | Burnt at |
 | --- | --- | --- |
-| `hourly_consumption` | kg/h | (it is the consumption) |
+| `hourly_consumption` | L/h | (it is the consumption) |
 | `total_power`, propulsion and hotel | kW | `sfoc`, g/kWh |
 | `bhp`, propulsion | kW | `sfoc`, after adding `hotel_load`, kW |
+
+Consumptions are volumes, in L/h: a polar table or function of `hourly_consumption` gives litres per hour, and the mass burnt at `sfoc` is divided by the fuel density. Only the fuel of the whole voyage is a mass, in tonnes. The density is that of `Vessel(fuel_type="mdo")`, marine diesel oil at 0.85 kg/L by default, or `fuel_density=...` in kg/L, from the bunker delivery note for example: `Vessel("ship", fuel_type="hfo", fuel_density=0.991)`. `architeuthis.fuels.FUELS` lists the fuel types (MDO, MGO, LFO, HFO, VLSFO, LNG by engine type, LPG, methanol, ethanol, ammonia, hydrogen, FAME, HVO, road diesel and unleaded petrol) with their density, heating value and greenhouse gas factors.
 
 Each can be a table, a function or a constant (`vessel.add_constant("bhp", 1500.)`). `hotel_load` and `sfoc` are numbers or functions of the power given to `Vessel(...)`, or models of their own, which can take `bhp` or `total_power` as an input: an sfoc curve of the engine load, for example. Any other model of the vessel, such as `max_bhp` or `sails_contribution`, is computed only when you list it: `RoutingAnalysis(..., variables=["max_bhp"])`. Until 0.4.0, `max_bhp` and `sails_contribution` are still computed when the vessel has them, with a deprecation warning that asks to list them.
 
@@ -180,6 +183,23 @@ Quantities your model does not use can be computed all the same, to constrain th
 - **Set a realistic `max_power`, or `None`:** a huge power limit unsettles the solver. `max_power=None` leaves the power free; until 0.4.0, leaving it out still gives 1e12 kW, with a warning.
 
 The complete script is [`examples/function_polar_routing.py`](examples/function_polar_routing.py), and the [User Guide](docs/user_guide.md) has the details.
+
+---
+
+## 📤 Sharing with the Crew
+
+The routes, the forecasts of the voyage and the exclusion zones fit in one HTML file of a few MB. It opens in any browser, offline, on a 3D globe, dark or light: boats moving along their routes, a timeline of the forecasts, wind barbs, wave glyphs that tell the height, isobars, a weather picker to drag anywhere, the values the analyst chose on each route, and their comments on the strategy.
+
+```python
+reports.share(
+    forecasts={"IFS": [atmosphere, wave]},
+    routes=[0, 2],                          # leave out the routes the crew does not need
+    variables=["sog", "tws", "twa", "swh"],   # shown when hovering a route
+    note="Expect the low to cross the route on Saturday: keep north.",
+)                                           # ~/data/shared/<title>_<time>.html
+```
+
+Or run `python -m architeuthis.dux.ui`, with the `dux` extra: the page shows the file as the crew will see it, beside checkboxes for the routes, the tooltips and the models, a description of each route, and comments placed by clicking the routes, and downloads it. See the [User Guide](docs/user_guide.md#sharing-routes).
 
 ---
 
@@ -278,7 +298,8 @@ Everything goes to `~/data/`:
 | --- | --- |
 | `topo/`, `cmems/`, `cds/`, `eumetsat/`, `wms/`, `iip/` | Downloads: relief, currents, reanalysis, satellite data, satellite images (by server, layer and box), iceberg limit |
 | `route_library/`, `route_sets/`, `passage_plans/`, `exclusion_zones/` | Your saved routes, plans and zones |
-| `routes/` | Reports saved by `ReportCollection.save`, read by the viewer |
+| `routes/` | Reports saved by `ReportCollection.save`, read by `dux/ui.py` |
+| `shared/`, `viewer/` | Files written by `ReportCollection.share`, and the MapLibre library they hold |
 
 Set `ARCHITEUTHIS_HOME` to move it, then open a new terminal: `setx ARCHITEUTHIS_HOME "D:\architeuthis-data"` on Windows, `export ARCHITEUTHIS_HOME="$HOME/architeuthis-data"` in `~/.bashrc` elsewhere. Herbie keeps the GRIB files in its own `save_dir` (`~/.config/herbie/config.toml`).
 
@@ -349,7 +370,7 @@ Architeuthis downloads with it the ASCAT winds of the OSI SAF (`EO:EUM:DAT:METOP
 
 ## 🗺️ The Routing Problem
 
-- **Objective:** total fuel, `sum(hourly_consumption * dt) / 1e3`, in tonnes, where the consumption is `(bhp + hotel_load) * sfoc / 1e3` kg/h, `total_power * sfoc / 1e3` or your own `hourly_consumption`.
+- **Objective:** total fuel, `sum(hourly_consumption * dt) * fuel_density / 1e3`, in tonnes, where the consumption is `(bhp + hotel_load) * sfoc / 1e3 / fuel_density` L/h, `total_power * sfoc / 1e3 / fuel_density` or your own `hourly_consumption` in L/h, and `fuel_density` that of the vessel, in kg/L: given, or that of its `fuel_type` (0.85 for marine diesel oil, the default).
 - **Fixed:** departure, arrival, ETD and ETA. The schedule is a requirement, the speed an outcome.
 - **Environment:** the wind, waves and current you give; any of them left out is zero, so `RoutingAnalysis("analysis", vessel, voyage, atmosphere, topography=topography)` routes in the wind alone.
 - **Variables:** the positions along the route, and optionally a factor blending the reference route towards two alternatives.

@@ -16,6 +16,8 @@ All credit for the underlying methods and implementations belongs to the origina
 from numpy import *
 
 ### Overwrite some functions
+# First the element-wise ones, which the modules below import from here.
+from architeuthis.numpy.elementwise import *
 from architeuthis.numpy.array import *
 from architeuthis.numpy.arithmetic_monadic import *
 from architeuthis.numpy.arithmetic_dyadic import *

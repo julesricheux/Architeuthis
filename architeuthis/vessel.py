@@ -21,6 +21,7 @@ from collections.abc import Callable
 from architeuthis.toolbox.inspect_tools import ensure_callable
 
 from architeuthis.common import ArchiteuthisData, VESSEL_KEYS, status
+from architeuthis.fuels import Fuel, fuel_key, get_fuel
 
 # Models that give the fuel consumption, by order of precedence. Routing
 # needs one of them: it is the objective.
@@ -31,6 +32,11 @@ CONSUMPTION_QUANTITIES = ("bhp", "hotel_load", "total_power", "sfoc", "hourly_co
 # Variables of a usual polar table, and its axes, in its order.
 POLAR_KEYS = ("bhp", "max_bhp", "sails_contribution")
 POLAR_DIMS = ("stw", "tws", "twa", "hs", "wa")
+
+# Fuel type of a vessel by default, a key of `fuels.FUELS`, whose density
+# (0.85 kg/L) turns consumptions, volumes in L/h, into the fuel of a voyage,
+# a mass in tonnes.
+DEFAULT_FUEL = "mdo"
 
 # Power limit when `max_power` is not given, until 0.4.0, where it becomes None.
 _DEFAULT_MAX_POWER = 1e12 # kW
@@ -73,11 +79,16 @@ class Vessel(ArchiteuthisData):
     Routing only needs the fuel consumption, its objective, given by
     the first of these models that the vessel has:
 
-    - `hourly_consumption`: the fuel consumption itself, in kg/h.
+    - `hourly_consumption`: the fuel consumption itself, in L/h.
     - `total_power`: the power of all consumers, propulsion and
       hotel, in kW, burnt at `sfoc`.
     - `bhp`: the brake power of the propulsion, in kW, plus
       `hotel_load`, burnt at `sfoc`.
+
+    Consumptions are volumes, in L/h: the mass burnt at `sfoc` is
+    divided by `fuel_density`, and the fuel of a voyage is the volume
+    times `fuel_density`, in tonnes. The density is that of
+    `fuel_type` in `fuels.FUELS` unless given.
 
     `hotel_load` and `sfoc` are numbers, functions of the power (the
     brake power for `hotel_load`, the total power for `sfoc`), or
@@ -107,6 +118,14 @@ class Vessel(ArchiteuthisData):
             which makes the fuel zero: an error from 0.4.0.
         verbose: Whether to report progress.
         label: Short identifier of the vessel in reports.
+        fuel_type: Fuel burnt, a key of `fuels.FUELS` ("mdo",
+            "hfo", "lng", "methanol", "unleaded"...) or of
+            `fuels.FUEL_ALIASES`, or a `fuels.Fuel`: marine diesel oil
+            by default. It gives `fuel_density` when that is not
+            given, and its emission factors (`fuel`).
+        fuel_density: Density of the fuel in kg/L, from the bunker
+            delivery note for example; None for that of `fuel_type`
+            (0.85 for "mdo").
         sfc: Former name of `sfoc`, deprecated: removed in 0.4.0.
 
     Example:
@@ -123,6 +142,8 @@ class Vessel(ArchiteuthisData):
         sfoc: Union[Callable, float, int, None] = None, # g/kWh
         verbose: bool = True,
         label: Optional[str] = None,
+        fuel_type: Union[str, Fuel] = DEFAULT_FUEL,
+        fuel_density: Optional[float] = None, # kg/L
         sfc: Union[Callable, float, int, None] = None,
     ):
         super().__init__(name, verbose)
@@ -138,6 +159,11 @@ class Vessel(ArchiteuthisData):
                 raise TypeError("Give sfoc only: sfc is its former name.")
             sfoc = sfc
 
+        self.fuel = get_fuel(fuel_type)
+        self.fuel_type = fuel_key(self.fuel) or self.fuel.label
+        self.fuel_density = self.fuel.density if fuel_density is None else float(fuel_density)
+        if not self.fuel_density > 0.:
+            raise ValueError(f"The fuel density of {name} should be positive, in kg/L: {fuel_density}.")
         self.hotel_load = ensure_callable(hotel_load)
         self.sfoc = ensure_callable(sfoc)
         if max_power is _UNSET:
@@ -182,7 +208,7 @@ class Vessel(ArchiteuthisData):
             raise KeyError(
                 f"{self.name} has no consumption model. Add one of 'bhp' (with "
                 "hotel_load and sfoc), 'total_power' (with sfoc) or "
-                "'hourly_consumption' (kg/h), with add_interpolator, "
+                "'hourly_consumption' (L/h), with add_interpolator, "
                 "add_function or add_constant."
             )
         return formulation
@@ -243,8 +269,9 @@ class Vessel(ArchiteuthisData):
 
         With a `bhp` model, the total power is `bhp + hotel_load`. The
         total power, from it or from a `total_power` model, is burnt
-        at `sfoc`. An `hourly_consumption` model gives the consumption
-        directly. Each model takes the inputs it names in `query`, and
+        at `sfoc`, and the mass divided by `fuel_density`. An
+        `hourly_consumption` model gives the consumption directly, in
+        L/h. Each model takes the inputs it names in `query`, and
         those computed before it: `bhp`, `hotel_load`, `total_power`.
 
         Args:
@@ -254,7 +281,7 @@ class Vessel(ArchiteuthisData):
         Returns:
             A dict of the quantities of `consumption_quantities`, in
             order: `bhp` and `hotel_load` (kW), `total_power` (kW),
-            `sfoc` (g/kWh) and `hourly_consumption` (kg/h). A constant
+            `sfoc` (g/kWh) and `hourly_consumption` (L/h). A constant
             may stay a scalar.
 
         Example:
@@ -279,7 +306,8 @@ class Vessel(ArchiteuthisData):
         query["total_power"] = total_power
 
         sfoc = self._load("sfoc", query, total_power)
-        hourly_consumption = np.abs(total_power) * sfoc / 1e3 # kW * g/kWh = g/h, in kg/h
+        # kW * g/kWh = g/h, in kg/h, then in L/h
+        hourly_consumption = np.abs(total_power) * sfoc / 1e3 / self.fuel_density
 
         return quantities | {
             "total_power": total_power,
