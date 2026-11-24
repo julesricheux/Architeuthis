@@ -1776,55 +1776,6 @@
     return values && values.some((value) => value !== null) ? values : null;
   }
 
-  // A value of a forecast at a point and time, from the frames themselves:
-  // faster than the grids of the map for a few points at many times.
-  function pointValue(source, name, t, lat, lon) {
-    const frame = frameAt(source, t);
-    const info = source.quantities[name];
-    if (!frame || !info || !source.data[name]) return NaN;
-    const g = source.grid;
-    const x = (wrapLongitude(lon) - g.lon0) / g.dlon, y = (lat - g.lat0) / g.dlat;
-    const first = byteBilinear(source.data[name][frame.i0], g, x, y);
-    const second = byteBilinear(source.data[name][frame.i1], g, x, y);
-    if (!(first === first && second === second)) return NaN;
-    return info.offset + info.scale * (first + frame.a * (second - first));
-  }
-
-  // Bilinear value of the bytes of a frame, the missing ones left out.
-  function byteBilinear(values, g, x, y) {
-    if (!(x >= 0 && y >= 0 && x <= g.nlon - 1 && y <= g.nlat - 1)) return NaN;
-    const i = Math.min(Math.floor(x), g.nlon - 2), j = Math.min(Math.floor(y), g.nlat - 2);
-    const fx = x - i, fy = y - j, n = g.nlon;
-    const corners = [values[j * n + i], values[j * n + i + 1], values[(j + 1) * n + i], values[(j + 1) * n + i + 1]];
-    const weights = [(1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy];
-    let sum = 0, weight = 0;
-    for (let c = 0; c < 4; c++) {
-      if (corners[c] !== NO_DATA) { sum += weights[c] * corners[c]; weight += weights[c]; }
-    }
-    return weight >= 0.5 ? sum / weight : NaN;
-  }
-
-  // The pressure along a route, from the source shown, kept until either
-  // changes.
-  const pressureCache = {};
-  function routePressure(route, source) {
-    if (!source || !source.ready || !source.quantities.pressure) return null;
-    const key = `${route.id}@${source.id}`;
-    if (!(key in pressureCache)) {
-      const values = route.ctim.map((t, k) => pointValue(source, "pressure", t, route.clat[k], route.clon[k]));
-      pressureCache[key] = values.some((value) => value === value) ? values.map((value) => (value === value ? value : null)) : null;
-    }
-    return pressureCache[key];
-  }
-
-  // The sky along a route: that of the source shown, else of another one.
-  function routeSky(route, source) {
-    if (!route.sky) return null;
-    const id = source && route.sky[source.id] ? source.id : Object.keys(route.sky)[0];
-    const found = scene.sources.find((item) => item.id === id);
-    return id ? { sky: route.sky[id], label: found ? found.label : id } : null;
-  }
-
   function niceStep(span, count) {
     const raw = span / Math.max(count, 1);
     const power = Math.pow(10, Math.floor(Math.log10(raw)));
@@ -2115,9 +2066,9 @@
     },
     {
       id: "pressure", title: "Pressure", unit: "hPa", height: 52,
-      available: (route, source) => !!routePressure(route, source),
-      draw(canvas, route, source) {
-        const values = routePressure(route, source);
+      available: (route) => !!series(route, "pressure"),
+      draw(canvas, route) {
+        const values = series(route, "pressure");
         const range = plotRange([values], true);
         const frame = plotFrame(canvas, route, range);
         drawGrid(frame, range);
@@ -2125,24 +2076,23 @@
         strokeSeries(frame, route, values, cssColor("--fg"), 1.4);
         return frame;
       },
-      readout(route, k, source) {
-        const value = routePressure(route, source)[k];
-        return `${chip(scaleColor("pressure", value || 1013) || PLOT_COLORS.pressure)}<b>${formatFixed(value, 1)}</b> hPa · ${escapeHtml(source.label)}`;
+      readout(route, k) {
+        const value = series(route, "pressure")[k];
+        return `${chip(scaleColor("pressure", value || 1013) || PLOT_COLORS.pressure)}<b>${formatFixed(value, 1)}</b> hPa`;
       },
     },
     {
       id: "clouds", title: "Clouds", unit: "km", height: 116,
-      available: (route, source) => !!routeSky(route, source),
-      draw(canvas, route, source) {
+      available: (route) => !!route.sky,
+      draw(canvas, route) {
         const frame = plotFrame(canvas, route, null);
         frame.y = (km) => frame.bottom - (kmToRow(km) / 3) * (frame.bottom - frame.top);
-        drawSky(frame, route, routeSky(route, source).sky);
+        drawSky(frame, route, route.sky);
         drawGrid(frame, { ticks: [0, 2, 6, 12] });
         return frame;
       },
-      readout(route, k, source) {
-        const found = routeSky(route, source);
-        return skyText(found.sky, k) + ` · ${escapeHtml(found.label)}`;
+      readout(route, k) {
+        return skyText(route.sky, k);
       },
     },
   ];
@@ -2521,26 +2471,24 @@
   }
 
   // Draws the plots again when what they show changes: the route, the
-  // forecast, its decoding, the theme, the names or the width. The time
-  // alone only moves their cursor.
+  // theme, the names or the width. The time alone only moves their cursor.
   function rebuildPlots(force) {
     if (!state.plotsOpen) { plotsKey = null; plotCursors = []; return; }
-    const route = plotRoute(), source = currentSource();
+    const route = plotRoute();
     const routes = shownRoutes().map((item) => `${item.id}:${routeLabel(item)}`).join(",");
-    const key = [route && route.id, source && source.id, source && source.ready, state.theme, $("plots").clientWidth, routes].join("|");
+    const key = [route && route.id, state.theme, $("plots").clientWidth, routes].join("|");
     if (!force && key === plotsKey) return;
     plotsKey = key;
     buildPlots();
   }
 
-  // Builds the plots of the route: drawn once for a route and a source,
+  // Builds the plots of the route: drawn once for a route and a width,
   // the time only moves their cursor and changes their values.
   function buildPlots() {
     const box = $("plots");
     plotCursors = [];
     if (!state.plotsOpen) return;
     const route = plotRoute();
-    const source = currentSource();
     box.innerHTML = "";
     const head = element("div", "plots-head");
     const routes = shownRoutes().length ? shownRoutes() : includedRoutes();
@@ -2569,7 +2517,7 @@
     const body = element("div", "plots-body");
     box.append(body);
     if (!route) return;
-    const shown = PLOTS.filter((plot) => plot.available(route, source));
+    const shown = PLOTS.filter((plot) => plot.available(route));
     if (!shown.length) body.append(element("div", "empty", "No values along this route"));
     const drawn = [];
     shown.forEach((plot) => {
@@ -2588,7 +2536,7 @@
     const axis = element("div", "plots-axis");
     body.append(axis);
     // Drawn once laid out, so that the canvases have their size.
-    drawn.forEach((item) => { item.frame = item.plot.draw(item.canvas, route, source); });
+    drawn.forEach((item) => { item.frame = item.plot.draw(item.canvas, route); });
     const frame = drawn.length ? drawn[0].frame : null;
     if (frame) {
       const every = Math.max(1, Math.ceil(56 / ((frame.right - frame.left) / Math.max(1, (frame.t1 - frame.t0) / DAY))));
@@ -2601,7 +2549,7 @@
         axis.append(label);
       }
     }
-    plotCursors = drawn.map((item) => ({ ...item, route, source }));
+    plotCursors = drawn.map((item) => ({ ...item, route }));
     updatePlotCursors();
   }
 
@@ -2634,7 +2582,7 @@
       const on = k >= 0 && item.frame;
       item.cursor.hidden = !on;
       if (on) item.cursor.style.left = `${item.frame.x(state.t)}px`;
-      item.values.innerHTML = on ? item.plot.readout(route, k, item.source) : '<span class="muted">off the route at this time</span>';
+      item.values.innerHTML = on ? item.plot.readout(route, k) : '<span class="muted">off the route at this time</span>';
     });
   }
 
