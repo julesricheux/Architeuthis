@@ -2979,8 +2979,9 @@
   }
 
   // Height of a printed page within its margins, in CSS pixels, a little
-  // short of the 273 mm of A4 so that rounding never pushes a plot over.
-  const PRINT_PAGE_HEIGHT = (273 / 25.4) * 96 * 0.97;
+  // short of the 273 mm of A4 so that rounding, or a browser's own
+  // margins, never push a plot over.
+  const PRINT_PAGE_HEIGHT = (273 / 25.4) * 96 * 0.95;
   const PRINT_PAGES = 2;
   const PRINT_MAX_STRETCH = 3.5;
 
@@ -3063,8 +3064,7 @@
     .facts div { min-width: 0; }
     .facts span { display: block; color: #5d6670; font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.04em; }
     .facts b { font-weight: 600; }
-    .page { break-after: page; }
-    .page:last-of-type { break-after: auto; }
+    .page + .page { break-before: page; }
     figure { margin: 0 0 6px; break-inside: avoid; }
     figcaption { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 8.5pt; margin-bottom: 1px; }
     figcaption .unit { color: #5d6670; }
