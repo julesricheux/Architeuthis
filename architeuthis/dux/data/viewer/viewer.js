@@ -2677,16 +2677,45 @@
     return node;
   }
 
-  // The colours of a layer in a small swatch: its scale, or its categories.
-  function layerRamp(layer) {
-    const info = scene.layers[layer];
-    const colors = info.categories
-      ? info.categories.filter((category) => category.color).map((category) => category.color)
-      : info.colormap.colors.filter((_, index, all) => index % Math.max(1, Math.floor(all.length / 12)) === 0);
-    if (!colors.length) return "transparent";
-    if (colors.length === 1) return colors[0];
-    const stops = colors.map((color, index) => `${color} ${((100 * index) / (colors.length - 1)).toFixed(0)}%`);
-    return `linear-gradient(to right, ${stops.join(", ")})`;
+  // Icons of the weather fields, drawn with lines in the colour of the
+  // text on a 24 x 24 grid.
+  const CLOUD = "M7 18a4 4 0 0 1-.4-7.98 5.5 5.5 0 0 1 10.6-1.4A4.7 4.7 0 0 1 17 18z";
+  // The cloud smaller, lower or higher above a horizon.
+  const smallCloud = (y) => `<path d="M2 21.5h20"/><path d="${CLOUD}" transform="translate(4.5 ${y}) scale(0.62)" vector-effect="non-scaling-stroke"/>`;
+  const FIELD_ICONS = {
+    wind: '<path d="M3 8h10a2.5 2.5 0 1 0-2.5-2.5M3 12h15a2.5 2.5 0 1 1-2.5 2.5M3 16h7"/>',
+    gust: '<path d="M5 21V3M5 5l14 2.5v5L5 15M10 6v8M15 7v6"/>',
+    waves: '<path d="M2 9q2.5-3 5 0t5 0 5 0 5 0M2 15q2.5-3 5 0t5 0 5 0 5 0"/>',
+    current: '<path d="M3 17q2.5-3 5 0t5 0 5 0 5 0M4 9h14m-4-4 4 4-4 4"/>',
+    pressure: '<circle cx="12" cy="12" r="9"/><path d="M12 12l4.5-4.5M7 12h1M12 7v1M16 12h1"/><circle cx="12" cy="12" r="1" fill="currentColor"/>',
+    period: '<circle cx="12" cy="13.5" r="7.5"/><path d="M12 13.5V9.5M10 2.5h4M18.5 6.5l1.5-1.5"/>',
+    slope: '<path d="M2 20h20M3 20c4-1 6-5 8-10 1.5-3.5 5-4.5 7-2.5 1.5 1.5.5 4-1.5 3.5"/>',
+    temperature: '<path d="M14 14.5V5a2 2 0 0 0-4 0v9.5a4 4 0 1 0 4 0z"/><path d="M12 11v6"/>',
+    dew: '<path d="M12 3s6 6.6 6 11a6 6 0 0 1-12 0c0-4.4 6-11 6-11z"/>',
+    cape: '<path d="M13 2 4.5 13.5H11L10 22l8.5-11.5H12z"/>',
+    precipitation: `<path d="${CLOUD}"/><path d="M8 20.5l-.7 1.5M12 20.5l-.7 1.5M16 20.5l-.7 1.5" transform="translate(0 -1)"/>`,
+    ptype: '<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9M10 4.5l2 2 2-2M10 19.5l2-2 2 2"/>',
+    cloud: `<path d="${CLOUD}"/>`,
+    "cloud-low": smallCloud(8.8),
+    "cloud-middle": smallCloud(3.8),
+    "cloud-high": smallCloud(-1.2),
+    none: '<circle cx="12" cy="12" r="8"/><path d="M6.5 17.5l11-11"/>',
+    // Any other field: a mesh, as the data mode of an object in Blender.
+    data: '<path d="M12 4.5 4.5 18.5h15z"/><circle cx="12" cy="4.5" r="2" fill="currentColor"/><circle cx="4.5" cy="18.5" r="2" fill="currentColor"/><circle cx="19.5" cy="18.5" r="2" fill="currentColor"/>',
+  };
+  // Names of forecast variables with the icon of a field.
+  const FIELD_ICON_NAMES = {
+    u10: "wind", v10: "wind", si10: "wind", i10fg: "gust", fg10: "gust", swh: "waves", mwp: "period", pp1d: "period",
+    msl: "pressure", prmsl: "pressure", sp: "pressure", t2m: "temperature", sst: "temperature", thetao: "temperature",
+    d2m: "dew", r: "dew", rh: "dew", r2: "dew", mucape: "cape", tprate: "precipitation", prate: "precipitation",
+    tp: "precipitation", tcc: "cloud", lcc: "cloud-low", mcc: "cloud-middle", hcc: "cloud-high", uo: "current", vo: "current",
+  };
+
+  // The icon of a field: its own, that of its quantity, or a mesh.
+  function fieldIcon(layer) {
+    const info = scene.layers[layer] || {};
+    const name = [layer, info.quantity].map((key) => (FIELD_ICONS[key] ? key : FIELD_ICON_NAMES[key])).find(Boolean) || (layer ? "data" : "none");
+    return `<svg class="field-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${FIELD_ICONS[name]}</svg>`;
   }
 
   // The fields of a source, then none, in the order of the list.
@@ -2707,8 +2736,8 @@
     onFieldsChanged();
   }
 
-  // The fields of the source, one per row as a list of Blender: a swatch of
-  // its colours, its name and its unit, the field shown highlighted.
+  // The fields of the source, one per row as a list of Blender: an icon
+  // of the field, its name and its unit, the field shown highlighted.
   function layerList(source) {
     const list = element("div", "uilist");
     list.setAttribute("role", "listbox");
@@ -2721,8 +2750,8 @@
       row.setAttribute("role", "option");
       row.setAttribute("aria-selected", active ? "true" : "false");
       row.innerHTML = layer
-        ? `<i class="ramp" style="background:${layerRamp(layer)}"></i><span>${escapeHtml(info.label)}</span><span class="unit">${escapeHtml(info.unit || "")}</span>`
-        : '<i class="ramp"></i><span>None</span>';
+        ? `${fieldIcon(layer)}<span>${escapeHtml(info.label)}</span><span class="unit">${escapeHtml(info.unit || "")}</span>`
+        : `${fieldIcon("")}<span>None</span>`;
       row.addEventListener("click", () => { state.layer = layer; state.arrowKind = null; onFieldsChanged(); });
       list.append(row);
     });
