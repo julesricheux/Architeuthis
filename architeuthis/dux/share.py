@@ -612,7 +612,7 @@ def build_scene(
     extra = {}
     if any("sky" in scene_route for scene_route in scene_routes):
         extra["cloud_genera"] = [
-            {"abbreviation": genus["abbreviation"], "name": genus["name"], "etage": genus["etage"]}
+            {"abbreviation": genus["abbreviation"], "name": genus["name"], "etage": genus["etage"], "form": genus["form"]}
             for genus in sky.load_genera()["genera"]
         ]
 

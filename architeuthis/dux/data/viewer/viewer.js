@@ -1870,7 +1870,7 @@
   // The sky of the cloud plot: by day and by night, horizon and top, and the
   // clouds lit and in shade, as plot_utils.plot_sky draws it.
   const DAY_SKY = [[0.74, 0.87, 0.96], [0.18, 0.44, 0.73]];
-  const NIGHT_SKY = [[0.50, 0.61, 0.75], [0.13, 0.29, 0.50]];
+  const NIGHT_SKY = [[0.42, 0.52, 0.67], [0.10, 0.23, 0.43]];
   // The night is only a hint, as in plot_sky: from the Sun at TWILIGHT[0]
   // deg (civil twilight) to day at TWILIGHT[1] (sunset), the clouds keeping
   // NIGHT_CLOUD_LIGHT of their brightness.
@@ -1891,6 +1891,13 @@
     Ac: [3.2, 4.6, 0.8, 0.15, "rolls"],
     Cs: [7.0, 10.0, 0.6, 0.05, "veil"],
     Ci: [8.0, 10.5, 0.75, 0.0, "fibres"],
+  };
+  // Colours of the genus tags by form, as plot_utils._SKY_FORM_COLORS.
+  const SKY_FORM_COLORS = {
+    cumuliform: "#1f4e79",
+    stratocumuliform: "#2e7d32",
+    stratiform: "#424242",
+    cirriform: "#7b1fa2",
   };
   const RAIN_RATE = 0.1; // mm/h
   const RAIN_COLOR = "rgba(30, 136, 229, 0.9)";
@@ -2435,6 +2442,7 @@
       }
     };
     let seed = 0;
+    const tagged = [];
     Object.entries(SKY_LAYERS).forEach(([genus, [bottom, topKm, opacity, darkness, texture]]) => {
       seed++;
       const etage = etageOf[genus];
@@ -2448,6 +2456,7 @@
         if (genus === "St" || genus === "Sc") return bottomOf(k) + topKm;
         return topKm;
       };
+      tagged.push({ genus, texture, here, bottomOf, topOf });
       if (texture === "puffs") {
         here.forEach((on, k) => {
           if (!on) return;
@@ -2626,7 +2635,50 @@
         c.stroke();
       }
     }
+    labelGenera(c, frame, tagged, genera, count, xAt, yOf);
     c.restore();
+  }
+
+  // Tags of the genera, as _label_genera of plot_utils: one per stretch of
+  // a genus wide enough, more on long ones, at its height in the column,
+  // moved down a row from a tag already there, else left out.
+  function labelGenera(c, frame, tagged, genera, count, xAt, yOf) {
+    const forms = {};
+    genera.forEach((genus) => { forms[genus.abbreviation] = genus.form; });
+    const boxes = [], height = 11;
+    c.font = "600 9px system-ui, sans-serif";
+    c.textAlign = "center";
+    c.textBaseline = "middle";
+    const overlaps = (x, y, width) => boxes.some((box) => Math.abs(box.x - x) < (box.width + width) / 2 + 2 && Math.abs(box.y - y) < height + 1);
+    tagged.forEach(({ genus, texture, here, bottomOf, topOf }) => {
+      const color = SKY_FORM_COLORS[forms[genus]] || SKY_FORM_COLORS.stratiform;
+      const width = c.measureText(genus).width + 6;
+      for (let start = 0; start < count; start++) {
+        if (!here[start]) continue;
+        let end = start;
+        while (end + 1 < count && here[end + 1]) end++;
+        const span = xAt(end + 1) - xAt(start);
+        const tags = span < 16 ? 0 : Math.max(1, Math.round(span / 120));
+        for (let n = 0; n < tags; n++) {
+          const k = Math.min(end, Math.floor(start + ((n + 0.5) * (end - start + 1)) / tags));
+          const km = texture === "tower" ? 9.9 : texture === "puffs" ? bottomOf(k) + 0.35 * (topOf(k) - bottomOf(k)) : 0.5 * (bottomOf(k) + topOf(k));
+          const x = Math.max(frame.left + width / 2 + 1, Math.min(frame.right - width / 2 - 1, xAt(k + 0.5)));
+          let y = Math.max(frame.top + height / 2 + 1, Math.min(frame.bottom - height / 2 - 1, yOf(kmToRow(km))));
+          if (overlaps(x, y, width)) {
+            y += height + 1;
+            if (y > frame.bottom - height / 2 - 1 || overlaps(x, y, width)) continue;
+          }
+          boxes.push({ x, y, width });
+          c.beginPath();
+          c.roundRect(x - width / 2, y - height / 2, width, height, 3);
+          c.fillStyle = rgba(color, 0.85);
+          c.fill();
+          c.fillStyle = "#fff";
+          c.fillText(genus, x, y + 0.5);
+        }
+        start = end;
+      }
+    });
   }
 
   // ---- The panel ----
@@ -2899,9 +2951,10 @@
     c.restore();
   }
 
-  // The plots of a route as images, drawn on white with light fills, in
-  // the light theme whatever the page shows, with the comments marked.
-  function reportPlots(route, comments) {
+  // The plots of a route as images at the heights of `layout`, drawn on
+  // white with light fills, in the light theme whatever the page shows,
+  // with the comments marked.
+  function reportPlots(route, comments, layout) {
     const root = document.documentElement, theme = root.dataset.theme;
     const box = element("div");
     box.style.cssText = `position:fixed;left:${-2 * PRINT_WIDTH}px;top:0;width:${PRINT_WIDTH}px;visibility:hidden`;
@@ -2909,9 +2962,9 @@
     root.dataset.theme = "light";
     printing = true;
     try {
-      return PLOTS.filter((plot) => plot.available(route)).map((plot) => {
+      return layout.map(({ plot, height }) => {
         const canvas = element("canvas");
-        canvas.style.cssText = `display:block;width:${PRINT_WIDTH}px;height:${plot.height}px`;
+        canvas.style.cssText = `display:block;width:${PRINT_WIDTH}px;height:${height}px`;
         box.append(canvas);
         const frame = plot.draw(canvas, route);
         markComments(frame, route, comments);
@@ -2925,6 +2978,77 @@
     }
   }
 
+  // Height of a printed page within its margins, in CSS pixels, a little
+  // short of the 273 mm of A4 so that rounding never pushes a plot over.
+  const PRINT_PAGE_HEIGHT = (273 / 25.4) * 96 * 0.97;
+  const PRINT_PAGES = 2;
+  const PRINT_MAX_STRETCH = 3.5;
+
+  // The heights of the parts of a report around its plots, measured in a
+  // hidden frame with its styles: header, caption of a plot, time axis
+  // and footer.
+  function measureReport(header) {
+    return new Promise((resolve) => {
+      const frame = element("iframe");
+      frame.style.cssText = "position:fixed;left:-3000px;top:0;width:186mm;height:600px;border:0;visibility:hidden";
+      frame.addEventListener("load", () => {
+        const page = frame.contentDocument;
+        const figure = page.querySelector("figure");
+        const sizes = {
+          header: figure.getBoundingClientRect().top,
+          caption: figure.getBoundingClientRect().height + 6,
+          axis: page.querySelector(".axis").getBoundingClientRect().height + 2,
+          footer: page.querySelector("footer").getBoundingClientRect().height + 16,
+          width: page.body.clientWidth,
+        };
+        frame.remove();
+        resolve(sizes);
+      }, { once: true });
+      frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><style>${REPORT_STYLE}</style></head><body>${header}` +
+        '<figure><figcaption><b>Speed</b><span class="unit">kt</span><span class="key"><i></i>SOG</span></figcaption></figure>' +
+        '<div class="axis"><span>Mon 1 Jan</span></div><footer>Times in UTC</footer></body></html>';
+      document.body.append(frame);
+    });
+  }
+
+  // The plots over PRINT_PAGES pages, each page's taller in proportion to
+  // fill it: the split that stretches its least stretched page most.
+  function reportPages(plots, sizes) {
+    const count = Math.min(PRINT_PAGES, plots.length);
+    const room = (index, from, to) => PRINT_PAGE_HEIGHT - (index === 0 ? sizes.header : 0) - (to - from) * sizes.caption - sizes.axis - (to === plots.length ? sizes.footer : 0);
+    const sum = (from, to) => plots.slice(from, to).reduce((total, plot) => total + plot.height, 0);
+    let splits = [plots.length];
+    if (count === 2) {
+      let best = -Infinity;
+      for (let k = 1; k < plots.length; k++) {
+        const stretch = Math.min(room(0, 0, k) / sum(0, k), room(1, k, plots.length) / sum(k, plots.length));
+        if (stretch > best) { best = stretch; splits = [k, plots.length]; }
+      }
+    }
+    let from = 0;
+    return splits.map((to, index) => {
+      const stretch = Math.max(1, Math.min(PRINT_MAX_STRETCH, room(index, from, to) / sum(from, to)));
+      const page = plots.slice(from, to).map((plot) => ({ plot, height: Math.floor(plot.height * stretch) }));
+      from = to;
+      return page;
+    });
+  }
+
+  // The time axis under the plots of a page: the days, and noon where
+  // they leave room for it.
+  function reportAxis(frame) {
+    const perDay = ((frame.right - frame.left) * DAY) / (frame.t1 - frame.t0);
+    let axis = "";
+    for (let t = Math.floor(frame.t0 / DAY) * DAY; t <= frame.t1; t += DAY / 2) {
+      if (t < frame.t0) continue;
+      const left = `${((100 * frame.x(t)) / PRINT_WIDTH).toFixed(2)}%`;
+      const date = new Date(t * 1000);
+      if (date.getUTCHours() === 0) axis += `<span class="day" style="left:${left}">${DAYS[date.getUTCDay()]} ${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]}</span>`;
+      else if (perDay >= 120) axis += `<span style="left:${left}">12:00</span>`;
+    }
+    return `<div class="axis">${axis}</div>`;
+  }
+
   const REPORT_STYLE = `
     @page { size: A4; margin: 12mm; }
     * { box-sizing: border-box; }
@@ -2933,12 +3057,14 @@
     .eyebrow { color: #5d6670; font-size: 8.5pt; text-transform: uppercase; letter-spacing: 0.06em; }
     h1 { display: flex; align-items: center; gap: 8px; margin: 2px 0 4px; font-size: 16pt; }
     h1 i { width: 18px; height: 0; border-top: 5px solid var(--route); border-radius: 3px; flex: none; }
-    h2 { font-size: 11pt; margin: 14px 0 6px; }
+    h2 { font-size: 11pt; margin: 0 0 6px; }
     .description { margin: 0 0 8px; white-space: pre-wrap; }
     .facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px 12px; margin: 8px 0 12px; padding: 8px 0; border-top: 1px solid #d5d9dd; border-bottom: 1px solid #d5d9dd; }
     .facts div { min-width: 0; }
     .facts span { display: block; color: #5d6670; font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.04em; }
     .facts b { font-weight: 600; }
+    .page { break-after: page; }
+    .page:last-of-type { break-after: auto; }
     figure { margin: 0 0 6px; break-inside: avoid; }
     figcaption { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 8.5pt; margin-bottom: 1px; }
     figcaption .unit { color: #5d6670; }
@@ -2946,8 +3072,10 @@
     .key i { width: 12px; height: 0; border-top: 2.5px solid var(--key); }
     .key i.dashed { border-top-style: dashed; border-top-width: 1.5px; }
     img { display: block; width: 100%; }
-    .axis { position: relative; height: 14px; font-size: 8pt; color: #5d6670; break-before: avoid; }
+    .axis { position: relative; height: 15px; font-size: 8pt; color: #8a929a; break-before: avoid; }
     .axis span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+    .axis span.day { color: #3b4249; font-weight: 600; }
+    .comments { break-before: page; }
     ol { list-style: none; margin: 0; padding: 0; }
     li { display: grid; grid-template-columns: 22px 1fr; gap: 2px 8px; padding: 5px 0; border-bottom: 1px solid #e6e9ec; break-inside: avoid; }
     .number { grid-row: span 2; align-self: start; display: flex; align-items: center; justify-content: center; height: 16px; border: 1px solid ${PRINT_MARK}; border-radius: 4px; color: ${PRINT_MARK}; font-weight: 600; font-size: 8.5pt; }
@@ -2957,42 +3085,45 @@
   `;
 
   // The report of a route as a document to print: its name and figures,
-  // its plots with the comments numbered, then the comments themselves.
-  function reportDocument(route) {
+  // then its plots, taller to fill two pages, each page with its time
+  // axis and the comments numbered, then the comments themselves.
+  async function reportDocument(route) {
     const comments = routeComments(route);
-    const plots = reportPlots(route, comments);
     const label = routeLabel(route), description = routeDescription(route).trim();
     const facts = reportFacts(route).map(([name, value]) => `<div><span>${escapeHtml(name)}</span><b>${escapeHtml(value)}</b></div>`).join("");
-    const figures = plots.map((item) =>
-      `<figure><figcaption><b>${escapeHtml(item.plot.title)}</b><span class="unit">${escapeHtml(item.plot.unit)}</span>${item.legend}</figcaption>` +
-      `<img src="${item.image}" alt="${escapeHtml(item.plot.title)}"></figure>`).join("");
-    let axis = "";
-    if (plots.length) {
-      const frame = plots[0].frame;
-      for (let t = Math.ceil(frame.t0 / DAY) * DAY; t <= frame.t1; t += DAY) {
-        const date = new Date(t * 1000);
-        axis += `<span style="left:${((100 * frame.x(t)) / PRINT_WIDTH).toFixed(2)}%">${DAYS[date.getUTCDay()]} ${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]}</span>`;
-      }
-    }
+    const title = (scene.title || "").trim();
+    const header = `<header><div class="eyebrow">${title ? `${escapeHtml(title)} · ` : ""}Route report</div>` +
+      `<h1 style="--route:${route.color}"><i></i>${escapeHtml(label)}</h1>` +
+      (description ? `<p class="description">${escapeHtml(description)}</p>` : "") +
+      `<div class="facts">${facts}</div></header>`;
+    const footer = `<footer>Times in UTC · printed ${escapeHtml(formatDate(Date.now() / 1000))} · Architeuthis</footer>`;
+    const shown = PLOTS.filter((plot) => plot.available(route));
+    const pages = shown.length ? reportPages(shown, await measureReport(header)) : [];
+    const drawn = reportPlots(route, comments, pages.flat());
+    let at = 0;
+    const body = pages.map((page, index) => {
+      const items = drawn.slice(at, at + page.length);
+      at += page.length;
+      const figures = items.map((item) =>
+        `<figure><figcaption><b>${escapeHtml(item.plot.title)}</b><span class="unit">${escapeHtml(item.plot.unit)}</span>${item.legend}</figcaption>` +
+        `<img src="${item.image}" alt="${escapeHtml(item.plot.title)}"></figure>`).join("");
+      return `<section class="page">${index === 0 ? header : ""}${figures}${reportAxis(items[items.length - 1].frame)}${index === pages.length - 1 ? footer : ""}</section>`;
+    }).join("");
     const notes = comments.map((item, index) =>
       `<li><span class="number">${index + 1}</span><span class="when">${escapeHtml(formatTime(route.ctim[item.k]))} · ${escapeHtml(formatPosition(route.clat[item.k], route.clon[item.k]))}</span>` +
       `<span class="text">${escapeHtml(item.text)}</span></li>`).join("");
-    const title = (scene.title || "").trim();
     return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(label)} report</title><style>${REPORT_STYLE}</style></head><body>` +
-      `<header><div class="eyebrow">${title ? `${escapeHtml(title)} · ` : ""}Route report</div>` +
-      `<h1 style="--route:${route.color}"><i></i>${escapeHtml(label)}</h1>` +
-      (description ? `<p class="description">${escapeHtml(description)}</p>` : "") +
-      `<div class="facts">${facts}</div></header>` +
-      (figures ? `<section>${figures}<div class="axis">${axis}</div></section>` : "<p>No values along this route.</p>") +
-      (notes ? `<section><h2>Comments</h2><ol>${notes}</ol></section>` : "") +
-      `<footer>Times in UTC · printed ${escapeHtml(formatDate(Date.now() / 1000))} · Architeuthis</footer></body></html>`;
+      (body || `${header}<p>No values along this route.</p>${footer}`) +
+      (notes ? `<section class="comments"><h2>Comments</h2><ol>${notes}</ol></section>` : "") +
+      "</body></html>";
   }
 
   // Opens the print dialog on the report of a route, from which it can be
   // saved as a PDF; the frame holding it goes once printed.
-  function printReport(route) {
+  async function printReport(route) {
     const previous = document.getElementById("print-frame");
     if (previous) previous.remove();
+    const html = await reportDocument(route);
     const frame = element("iframe");
     frame.id = "print-frame";
     frame.title = "Route report";
@@ -3004,7 +3135,7 @@
       view.focus();
       view.print();
     }, { once: true });
-    frame.srcdoc = reportDocument(route);
+    frame.srcdoc = html;
     document.body.append(frame);
   }
 

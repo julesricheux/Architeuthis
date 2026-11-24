@@ -942,7 +942,7 @@ _SKY_CMAP = matplotlib.colors.ListedColormap(plt.get_cmap("Greys")(onp.linspace(
 # _TWILIGHT[0] deg (civil twilight) to day at _TWILIGHT[1] (sunset), and
 # the clouds keep _NIGHT_CLOUD_LIGHT of their brightness in it.
 _DAY_SKY = ((0.18, 0.44, 0.73), (0.74, 0.87, 0.96))
-_NIGHT_SKY = ((0.13, 0.29, 0.50), (0.50, 0.61, 0.75))
+_NIGHT_SKY = ((0.10, 0.23, 0.43), (0.42, 0.52, 0.67))
 _TWILIGHT = (-6.0, 0.0)
 _NIGHT_CLOUD_LIGHT = 0.85
 _CLOUD_LIT = onp.array([1.0, 1.0, 1.0])
