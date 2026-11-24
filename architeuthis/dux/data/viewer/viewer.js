@@ -1963,15 +1963,14 @@
       if (value === null || value !== value) { part = null; return; }
       if (!part) parts.push((part = []));
       const y = Math.max(frame.top, Math.min(frame.bottom, frame.y(value)));
-      part.push([frame.x(route.tim[k]), y], [frame.x(route.tim[k + 1]), y]);
+      part.push([frame.x(route.tim[k]), y, k], [frame.x(route.tim[k + 1]), y, k]);
     });
     c.beginPath();
     parts.forEach((points) => {
       points.forEach(([x, y], index) => (index ? c.lineTo(x, y) : c.moveTo(x, y)));
       if (base) {
         for (let index = points.length - 1; index >= 0; index--) {
-          const k = Math.floor(index / 2);
-          const b = typeof base === "function" ? base(k, points[index]) : base;
+          const b = typeof base === "function" ? base(points[index][2], points[index]) : base;
           c.lineTo(points[index][0], b);
         }
         c.closePath();
@@ -2015,6 +2014,21 @@
     frame.context.fill();
   }
 
+  // A translucent band in the colour of the text, from a series down to
+  // `lower(k)` on each segment.
+  function fillBand(frame, route, values, lower) {
+    stepPath(frame, route, values, (k) => {
+      const value = lower(k);
+      return value === null || value !== value ? frame.bottom : Math.max(frame.top, Math.min(frame.bottom, frame.y(value)));
+    });
+    const c = frame.context;
+    c.save();
+    c.globalAlpha = 0.12;
+    c.fillStyle = cssColor("--fg");
+    c.fill();
+    c.restore();
+  }
+
   function formatFixed(value, digits) {
     return value === null || value === undefined || value !== value ? "–" : value.toFixed(digits);
   }
@@ -2026,7 +2040,7 @@
   // A speed and its gust, its area coloured by the wind scale.
   function windPlot(id, title, speed, gust) {
     return {
-      id, title, unit: "kt", height: 64,
+      id, title, unit: "kt", height: 96,
       available: (route) => !!series(route, speed),
       draw(canvas, route) {
         const values = series(route, speed), gusts = series(route, gust);
@@ -2034,7 +2048,11 @@
         const frame = plotFrame(canvas, route, range);
         drawGrid(frame, range);
         fillSeries(frame, route, values, scaleFill(frame, "wind", range.low, range.high, 0.8, PLOT_COLORS.wind));
-        if (gusts) strokeSeries(frame, route, gusts, cssColor("--fg"), PLOT_THIN, PLOT_DASH);
+        if (gusts) {
+          // From the mean wind up to the gusts, in the colour of their lines.
+          fillBand(frame, route, gusts, (k) => values[k]);
+          strokeSeries(frame, route, gusts, cssColor("--fg"), PLOT_THIN, PLOT_DASH);
+        }
         strokeSeries(frame, route, values, cssColor("--fg"), PLOT_LINE);
         return frame;
       },
@@ -2060,7 +2078,7 @@
 
   const PLOTS = [
     {
-      id: "speed", title: "Speed", unit: "kt", height: 60,
+      id: "speed", title: "Speed", unit: "kt", height: 90,
       available: (route) => !!(series(route, "sog") || series(route, "stw")),
       draw(canvas, route) {
         const sog = series(route, "sog"), stw = series(route, "stw");
@@ -2084,7 +2102,7 @@
       },
     },
     {
-      id: "sails", title: "Sails", unit: "%", height: 46,
+      id: "sails", title: "Sails", unit: "%", height: 69,
       available: (route) => !!series(route, "sails_contribution"),
       draw(canvas, route) {
         const values = series(route, "sails_contribution");
@@ -2103,7 +2121,7 @@
       },
     },
     {
-      id: "power", title: "Power", unit: "kW", height: 72,
+      id: "power", title: "Power", unit: "kW", height: 108,
       available: (route) => !!powerParts(route),
       draw(canvas, route) {
         const parts = powerParts(route);
@@ -2119,12 +2137,7 @@
         if (upper) {
           // The fluctuation of the brake power around the total, in the
           // colour of its line.
-          stepPath(frame, route, upper, (k) => Math.min(frame.bottom, frame.y(lower[k] === null ? 0 : lower[k])));
-          frame.context.save();
-          frame.context.globalAlpha = 0.12;
-          frame.context.fillStyle = cssColor("--fg");
-          frame.context.fill();
-          frame.context.restore();
+          fillBand(frame, route, upper, (k) => (lower[k] === null ? 0 : lower[k]));
           strokeSeries(frame, route, upper, cssColor("--fg"), PLOT_THIN, PLOT_DASH);
           strokeSeries(frame, route, lower, cssColor("--fg"), PLOT_THIN, PLOT_DASH);
         }
@@ -2143,7 +2156,7 @@
     windPlot("tws", "True wind", "tws", "tws_gust"),
     windPlot("aws", "Apparent wind", "aws", "aws_gust"),
     {
-      id: "swh", title: "Waves", unit: "m", height: 52,
+      id: "swh", title: "Waves", unit: "m", height: 78,
       available: (route) => !!series(route, "swh"),
       draw(canvas, route) {
         const values = series(route, "swh");
@@ -2160,7 +2173,7 @@
       },
     },
     {
-      id: "pressure", title: "Pressure", unit: "hPa", height: 52,
+      id: "pressure", title: "Pressure", unit: "hPa", height: 78,
       available: (route) => !!series(route, "pressure"),
       draw(canvas, route) {
         const values = series(route, "pressure");
@@ -2177,7 +2190,7 @@
       },
     },
     {
-      id: "clouds", title: "Clouds", unit: "km", height: 116,
+      id: "clouds", title: "Clouds", unit: "km", height: 174,
       available: (route) => !!route.sky,
       draw(canvas, route) {
         const frame = plotFrame(canvas, route, null);
