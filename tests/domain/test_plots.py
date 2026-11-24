@@ -927,7 +927,9 @@ def test_smooth_sky_is_darker_at_night():
     image = plot_sky(columns, times, style="smooth", latitude=[0.0, 0.0], longitude=[0.0, 0.0], show=False).axes[0].get_images()[0]
     pixels = np.asarray(image.get_array())
 
-    assert pixels[:, : pixels.shape[1] // 4].mean() < 0.5 * pixels[:, -pixels.shape[1] // 4:].mean()
+    night, day = pixels[:, : pixels.shape[1] // 4].mean(), pixels[:, -pixels.shape[1] // 4:].mean()
+    # Darker, but only a hint that leaves the clouds readable.
+    assert 0.6 * day < night < 0.85 * day
 
 
 def test_sun_elevation_at_noon_and_midnight_on_the_equinox():

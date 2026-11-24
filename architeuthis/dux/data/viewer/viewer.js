@@ -1870,7 +1870,12 @@
   // The sky of the cloud plot: by day and by night, horizon and top, and the
   // clouds lit and in shade, as plot_utils.plot_sky draws it.
   const DAY_SKY = [[0.74, 0.87, 0.96], [0.18, 0.44, 0.73]];
-  const NIGHT_SKY = [[0.24, 0.32, 0.48], [0.07, 0.13, 0.27]];
+  const NIGHT_SKY = [[0.50, 0.61, 0.75], [0.13, 0.29, 0.50]];
+  // The night is only a hint, as in plot_sky: from the Sun at TWILIGHT[0]
+  // deg (civil twilight) to day at TWILIGHT[1] (sunset), the clouds keeping
+  // NIGHT_CLOUD_LIGHT of their brightness.
+  const TWILIGHT = [-6, 0];
+  const NIGHT_CLOUD_LIGHT = 0.85;
   const CLOUD_LIT = [1, 1, 1];
   const CLOUD_SHADE = [0.33, 0.36, 0.42];
   const ROW_KM = [0, 2, 6, 12];
@@ -2392,10 +2397,10 @@
       phase[px] = k + f;
       const lat = route.lat[k] + f * (route.lat[k + 1] - route.lat[k]);
       const lon = route.lon[k] + f * (route.lon[k + 1] - route.lon[k]);
-      daylight[px] = smoothstep(-12, 6, sunElevation(t, lat, lon));
+      daylight[px] = smoothstep(TWILIGHT[0], TWILIGHT[1], sunElevation(t, lat, lon));
     }
     const perColumn = W / count;
-    daylight = smoothLine(daylight, Math.round(0.8 * perColumn));
+    daylight = smoothLine(daylight, Math.round(0.1 * perColumn));
     const rowOf = (py) => 3 * (1 - (py + 0.5) / H);
     const shade = new Float32Array(W * H), weightSum = new Float32Array(W * H), transmitted = new Float32Array(W * H).fill(1);
     const over = (index, opacity, darkness) => {
@@ -2554,9 +2559,9 @@
           const night = nightSky[0][c] * (1 - level) + nightSky[1][c] * level;
           const background = night * (1 - light) + day * light;
           // On paper, clouds are grey on white, as dark by night as by day.
-          const cloud = (cloudLit[c] * (1 - darkness) + cloudShade[c] * darkness) * (printing ? 1 : 0.5 + 0.5 * light);
+          const cloud = (cloudLit[c] * (1 - darkness) + cloudShade[c] * darkness) * (printing ? 1 : NIGHT_CLOUD_LIGHT + (1 - NIGHT_CLOUD_LIGHT) * light);
           const value = background * (1 - opacity) + cloud * opacity;
-          pixels[4 * index + c] = Math.round(255 * Math.max(0, Math.min(1, value * (1 - mist) + FOG_COLOR[c] * (0.5 + 0.5 * light) * mist)));
+          pixels[4 * index + c] = Math.round(255 * Math.max(0, Math.min(1, value * (1 - mist) + FOG_COLOR[c] * (NIGHT_CLOUD_LIGHT + (1 - NIGHT_CLOUD_LIGHT) * light) * mist)));
         }
         pixels[4 * index + 3] = 255;
       }
@@ -2583,7 +2588,7 @@
     c.lineWidth = 0.9;
     strokes.forEach((stroke) => {
       const x0 = xAt(stroke.x - 0.25), y0 = yOf(stroke.row), length = Math.max(5, 0.55 * segment);
-      c.strokeStyle = printing ? `rgba(${PRINT_SKY.cirrus}, 0.6)` : `rgba(255, 255, 255, ${(0.5 * (0.5 + 0.5 * stroke.light)).toFixed(2)})`;
+      c.strokeStyle = printing ? `rgba(${PRINT_SKY.cirrus}, 0.6)` : `rgba(255, 255, 255, ${(0.5 * (NIGHT_CLOUD_LIGHT + (1 - NIGHT_CLOUD_LIGHT) * stroke.light)).toFixed(2)})`;
       c.beginPath();
       c.moveTo(x0, y0);
       c.quadraticCurveTo(x0 + 0.75 * length, y0 - 1.5, x0 + length, y0 - 4);
