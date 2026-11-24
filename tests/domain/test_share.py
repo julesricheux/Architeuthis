@@ -836,3 +836,60 @@ def test_the_field_scales_come_from_windy_colormaps():
     assert windy_colormaps.get_field_cmap("other", 1.0, 2.0)[0].name == windy_colormaps.DEFAULT_FIELD_COLORMAP
     with pytest.raises(ValueError, match="give low and high"):
         windy_colormaps.get_field_cmap("other")
+
+
+def cloud_dataset(cover_scale=1.0, rate=True):
+    """A forecast with cloud covers, from 0 to 1 or in %, and a precipitation rate."""
+    time, lat, lon = np.meshgrid(TIME / HOUR, LATITUDE, LONGITUDE, indexing="ij")
+    cover = np.clip((lat - LATITUDE[0]) / (LATITUDE[-1] - LATITUDE[0]), 0.0, 1.0) + 0.0 * time
+    overrides = {name: cover * cover_scale for name in ("tcc", "lcc", "mcc", "hcc")}
+    if rate:
+        overrides["tprate"] = (lon - LONGITUDE[0]) / 3600.0 + 0.0 * time  # kg m-2 s-1, 1 mm/h per degree east
+    return forecast_dataset(**overrides)
+
+
+@pytest.mark.parametrize("cover_scale", [1.0, 100.0])
+def test_the_clouds_are_one_layer_with_the_precipitation_over_the_cover(reports, cover_scale):
+    scene = share.build_scene(reports, forecasts={"IFS": cloud_dataset(cover_scale)})
+    (source,) = scene["sources"]
+    layer = scene["layers"]["clouds"]
+
+    # The covers by étage are part of it, never layers of their own.
+    assert source["layers"] == ["wind", "waves", "pressure", "clouds", "precipitation"]
+    assert not {"tcc", "lcc", "mcc", "hcc"} & set(source["quantities"])
+    # The cover in %, whether the forecast gives it from 0 to 1 (IFS) or in % (GFS).
+    latitude, _ = grid_coordinates(source)
+    expected = 100.0 * np.clip((latitude - LATITUDE[0]) / (LATITUDE[-1] - LATITUDE[0]), 0.0, 1.0)
+    assert frame_values(source, "clouds", 0)[:, 0] == pytest.approx(expected, abs=0.5)
+    assert (layer["label"], layer["unit"], layer["colormap"]["colors"][0]) == ("Clouds", "%", "#7d704b")
+    assert layer["rain"] == share.CLOUD_RAIN
+    assert layer["rain"]["stops"][1] == [0.6, "#3c74a0"]
+
+
+def test_the_clouds_bring_their_precipitation_when_chosen_alone(reports):
+    scene = share.build_scene(reports, forecasts={"IFS": cloud_dataset()}, fields=["clouds"])
+    (source,) = scene["sources"]
+
+    assert source["layers"] == ["clouds"]
+    assert {"clouds", "precipitation"} <= set(source["quantities"])
+    _, longitude = grid_coordinates(source)
+    assert frame_values(source, "precipitation", 0)[0] == pytest.approx(longitude - LONGITUDE[0], abs=0.2)
+
+
+def test_clouds_without_precipitation_are_the_cover_alone(reports):
+    scene = share.build_scene(reports, forecasts={"IFS": cloud_dataset(rate=False)})
+
+    assert "rain" not in scene["layers"]["clouds"]
+    assert share.forecast_fields({"IFS": cloud_dataset(rate=False)})["clouds"] == "Clouds"
+
+
+def test_the_cloud_colormap_goes_from_a_clear_sky_to_an_overcast_one():
+    from matplotlib.colors import to_hex
+
+    from architeuthis.toolbox import windy_colormaps
+
+    cmap, norm = windy_colormaps.get_field_cmap("clouds")
+
+    assert (norm.vmin, norm.vmax) == (0.0, 100.0)
+    assert to_hex(cmap(0.0)) == "#7d704b"
+    assert to_hex(cmap(1.0)) == "#f2f2f2"

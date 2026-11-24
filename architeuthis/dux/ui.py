@@ -136,8 +136,9 @@ WAVE_FIELDS = [
 ]
 
 # Whether to download, with the forecasts, the nine fields of the cloud plots of the
-# share file (sky.SKY_VARIABLES), for the routes whose reports lack them: a routing
-# that listed "clouds" in its variables already has them, and keeps its own.
+# share file (sky.SKY_VARIABLES), for the routes whose reports lack them (a routing
+# that listed "clouds" in its variables already has them, and keeps its own), and the
+# Clouds layer of the map: the total cover with the precipitation over it, as on Windy.
 INCLUDE_CLOUDS = True
 
 # The search string of each field in the GRIB index of each Herbie model:
@@ -318,23 +319,10 @@ for model in MODELS:
     ATMOS[model].load_data()
     WAVE[model].load_data()
 
-# One dataset per model, the waves on the grid of the wind. share.py reads the GFS names
-# (prmsl, dirpw, perpw) as well as the IFS ones, and shows any other field: add it to
-# ATMOSPHERE_FIELDS or WAVE_FIELDS to share it. The wave slope comes from the height and period.
-DS = {}
-for model in MODELS:
-    atmosphere = ATMOS[model].data
-    DS[model] = xr.merge(
-        [atmosphere, WAVE[model].data.interp_like(atmosphere)],
-        join="exact",
-        compat="no_conflicts",
-    )
-
-FORECASTS = {model.upper(): DS[model] for model in MODELS}
-
-# The cloud fields of each model, apart from the shared forecasts: the plots read them
-# along the routes, never on the map. Always from the deterministic run; GFS has no
-# middle and high covers at step 0.
+# The nine cloud fields of each model (sky.SKY_VARIABLES), always from the deterministic
+# run: the plots read them along the routes, and their total cover and precipitation rate
+# make the Clouds layer of the map (cloud_fields). GFS has no middle and high covers at
+# step 0.
 SKY = {}
 if INCLUDE_CLOUDS:
     for model in MODELS:
@@ -349,8 +337,54 @@ if INCLUDE_CLOUDS:
         SKY[model].load_data()
         sky.add_sky_models(SKY[model], model=model)
 
-# Every layer of the forecasts, which the analyst ticks to share it: {layer: label}.
+
+def cloud_fields(
+    forecast,
+    like: xr.Dataset,
+) -> xr.Dataset:
+    """
+    The cover and precipitation of a sky forecast, on a model's grid.
+
+    share.py draws them as one Clouds layer, the precipitation over the
+    cover; the other fields of the sky stay off the map. A field that
+    `like` already has is left out.
+
+    Args:
+        forecast: A forecast of the sky fields, loaded.
+        like: The dataset of the model, on `valid_time`, `latitude`
+            and `longitude`.
+
+    Returns:
+        `tcc`, and `tprate` or `prate`, interpolated on its grid.
+    """
+    names = [name for name in ("tcc", "tprate", "prate") if name in forecast.data and name not in like]
+    return forecast.data[names].interp(
+        valid_time=like["valid_time"],
+        latitude=like["latitude"],
+        longitude=like["longitude"],
+    )
+
+
+# One dataset per model, the waves on the grid of the wind. share.py reads the GFS names
+# (prmsl, dirpw, perpw) as well as the IFS ones, and shows any other field: add it to
+# ATMOSPHERE_FIELDS or WAVE_FIELDS to share it. The wave slope comes from the height and period.
+DS = {}
+for model in MODELS:
+    atmosphere = ATMOS[model].data
+    DS[model] = xr.merge(
+        [atmosphere, WAVE[model].data.interp_like(atmosphere)]
+        + ([cloud_fields(SKY[model], atmosphere)] if model in SKY else []),
+        join="exact",
+        compat="no_conflicts",
+    )
+
+FORECASTS = {model.upper(): DS[model] for model in MODELS}
+
+# Every layer of the forecasts, which the analyst ticks to share it: {layer: label}. The
+# precipitation of the sky only makes the Clouds layer, unless ATMOSPHERE_FIELDS asks for it.
 FIELDS = forecast_fields(FORECASTS)
+if "precipitation" not in ATMOSPHERE_FIELDS:
+    FIELDS.pop("precipitation", None)
 
 
 #%% ROUTES AND ZONES
@@ -573,6 +607,7 @@ def preview_scene(name: str, member: int) -> dict:
             overlays=overlays(),
             title=default_title(collection),
             member=member,
+            fields=list(FIELDS),
             settings={
                 "routes": default_routes(collection),
                 "hover": default_variables(collection),
@@ -1145,7 +1180,8 @@ def download(
         light: Whether the map opens in the light theme.
         names: Names of the routes, their label when empty.
         name_ids: Identifiers of their boxes.
-        fields: Layers of the forecasts to share, all when None.
+        fields: Layers of the forecasts to share, those of `FIELDS` when
+            None.
         zones: Zones ticked in the preview, `{"z<index>": shown}`, the
             only ones shared and shown at opening; when None, those
             shown at first.
@@ -1166,7 +1202,7 @@ def download(
         note=note or "",
         comments=route_notes(descriptions, description_ids, comments),
         member=int(member if member is not None else DEFAULT_MEMBER),
-        fields=fields,
+        fields=list(FIELDS) if fields is None else fields,
         settings={"theme": "light" if light else "dark"},
     )
     text = viewer_html(scene, library=LIBRARY)

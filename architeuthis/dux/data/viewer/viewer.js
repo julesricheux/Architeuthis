@@ -540,6 +540,14 @@
     return grid(source, info.quantity, t);
   }
 
+  // The precipitation over a layer of clouds at a point, as text, or "".
+  function rainText(source, layer, t, lat, lon) {
+    const rain = scene.layers[layer] && scene.layers[layer].rain;
+    if (!rain) return "";
+    const amount = sampleAt(source, rain.quantity, t, lat, lon) * rain.hours;
+    return amount >= rain.floor ? `${amount.toFixed(1)} ${rain.unit}` : "";
+  }
+
   function layerValueAt(source, layer, t, lat, lon) {
     const info = scene.layers[layer];
     const values = valueGrid(source, layer, t);
@@ -606,6 +614,24 @@
     return (lookupTables[layer] = table);
   }
 
+  // The colours of the precipitation over a layer of clouds, every 0.1 mm
+  // from 0 to its last step, interpolated between the steps of its scale.
+  function rainTable(layer) {
+    const key = `${layer}:rain`;
+    if (lookupTables[key]) return lookupTables[key];
+    const stops = scene.layers[layer].rain.stops.map(([value, hex]) => [value, parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)]);
+    const count = Math.round(stops[stops.length - 1][0] * 10) + 1;
+    const table = new Uint8Array(3 * count);
+    for (let k = 0, s = 0; k < count; k++) {
+      const value = k / 10;
+      while (s < stops.length - 2 && value > stops[s + 1][0]) s++;
+      const [v0, ...c0] = stops[s], [v1, ...c1] = stops[s + 1];
+      const f = Math.max(0, Math.min(1, (value - v0) / (v1 - v0)));
+      for (let c = 0; c < 3; c++) table[3 * k + c] = Math.round(c0[c] + f * (c1[c] - c0[c]));
+    }
+    return (lookupTables[key] = table);
+  }
+
   // The entry of the colour table of a layer for a value, or -1 for none:
   // a category without colour, or a value under the floor of the layer.
   function colourIndex(layer) {
@@ -632,6 +658,11 @@
         const table = lookupTable(layer);
         const indexOf = colourIndex(layer);
         const categorical = !!scene.layers[layer].categories;
+        // Clouds: the precipitation over the cover, as on Windy.
+        const rain = scene.layers[layer].rain;
+        const rainValues = rain ? grid(source, rain.quantity, state.t) : null;
+        const rainColours = rainValues ? rainTable(layer) : null;
+        const rainLast = rainColours ? rainColours.length / 3 - 1 : 0;
         if (rasterCanvas.width !== geometry.width) rasterCanvas.width = geometry.width;
         if (rasterCanvas.height !== geometry.height) rasterCanvas.height = geometry.height;
         const image = rasterContext.createImageData(geometry.width, geometry.height);
@@ -649,6 +680,16 @@
             pixels[p + 1] = table[index + 1];
             pixels[p + 2] = table[index + 2];
             pixels[p + 3] = 255;
+            if (rainValues) {
+              const amount = bilinear(rainValues, source.grid, geometry.columns[c], y) * rain.hours;
+              if (amount >= rain.floor) {
+                const at = 3 * Math.min(rainLast, Math.round(amount * 10));
+                const a = 0.9 * smoothstep(rain.floor, rain.floor + 1, amount);
+                pixels[p] += a * (rainColours[at] - pixels[p]);
+                pixels[p + 1] += a * (rainColours[at + 1] - pixels[p + 1]);
+                pixels[p + 2] += a * (rainColours[at + 2] - pixels[p + 2]);
+              }
+            }
           }
         }
         rasterContext.putImageData(image, 0, 0);
@@ -665,7 +706,7 @@
     if (!layer) { legend.hidden = true; return; }
     const info = scene.layers[layer];
     const source = currentSource();
-    const unit = [info.unit, source ? source.label : ""].filter(Boolean).join(" · ");
+    const unit = [info.unit, info.rain ? info.rain.unit : "", source ? source.label : ""].filter(Boolean).join(" · ");
     let scale;
     if (info.categories) {
       scale = '<div class="categories">' + info.categories.filter((category) => category.color).map((category) =>
@@ -678,6 +719,10 @@
         return `<span style="left:${left.toFixed(1)}%">${tick}</span>`;
       });
       scale = `<div class="bar" style="background:linear-gradient(to right, ${stops.join(", ")})"></div><div class="ticks">${ticks.join("")}</div>`;
+      if (info.rain) {
+        scale += `<div class="steps" title="Precipitation in ${escapeHtml(info.rain.unit)}">` +
+          info.rain.stops.slice(1).map(([value, color]) => `<span style="--step:${color}">${value}</span>`).join("") + "</div>";
+      }
     }
     legend.innerHTML =
       `<div class="legend-title"><b>${escapeHtml(info.label)}</b><span>${escapeHtml(unit)}</span></div>` +
@@ -958,7 +1003,8 @@
       const spacing = latticeSpacing(g, kind);
       // Arrows take the colour of the layer shown under them, else their own.
       const shown = state.layer && includedLayers(source).includes(state.layer) ? state.layer : null;
-      const colours = shown ? valueGrid(source, shown, state.t) : null;
+      // Over the clouds, whose colours are greys, arrows keep their own.
+      const colours = shown && !scene.layers[shown].rain ? valueGrid(source, shown, state.t) : null;
       const categorical = shown && !!scene.layers[shown].categories;
       let south = g.lat0, north = g.lat0 + g.dlat * (g.nlat - 1);
       let west = g.lon0, east = g.lon0 + g.dlon * (g.nlon - 1);
@@ -1665,7 +1711,7 @@
         if (speed === speed) rows.push({ label: "Current", value: `${speed.toFixed(1)} kt`, detail: `to ${formatBearing((Math.atan2(u, v) * 180) / Math.PI)}` });
       } else {
         const value = layerValueAt(source, layer, t, lat, lon);
-        if (value === value) rows.push({ label: info.label, value: formatLayerValue(info, value), detail: "" });
+        if (value === value) rows.push({ label: info.label, value: formatLayerValue(info, value), detail: rainText(source, layer, t, lat, lon) });
       }
     });
     if (!rows.length) return { message: `Outside the ${source.label} forecast`, source };
@@ -1776,7 +1822,7 @@
       if (value === value) {
         const text = formatLayerValue(info, value);
         const unit = info.unit && text.endsWith(" " + info.unit) ? info.unit : "";
-        rows.push({ label: info.label, value: unit ? text.slice(0, -unit.length - 1) : text, unit, detail: "", shown: true });
+        rows.push({ label: info.label, value: unit ? text.slice(0, -unit.length - 1) : text, unit, detail: rainText(source, shown, t, lat, lon), shown: true });
       }
     }
     if (!rows.length) return { message: "Outside the forecast", source };
@@ -3036,6 +3082,7 @@
     precipitation: `<path d="${CLOUD}"/><path d="M8 20.5l-.7 1.5M12 20.5l-.7 1.5M16 20.5l-.7 1.5" transform="translate(0 -1)"/>`,
     ptype: '<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9M10 4.5l2 2 2-2M10 19.5l2-2 2 2"/>',
     cloud: `<path d="${CLOUD}"/>`,
+    clouds: `<path d="${CLOUD}"/><path d="M8 20.5l-.7 1.5M12 20.5l-.7 1.5M16 20.5l-.7 1.5" transform="translate(0 -1)"/>`,
     "cloud-low": smallCloud(8.8),
     "cloud-middle": smallCloud(3.8),
     "cloud-high": smallCloud(-1.2),

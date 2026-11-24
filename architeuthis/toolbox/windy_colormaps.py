@@ -195,8 +195,33 @@ FIELD_COLORMAPS = {
     "temperature": ("RdYlBu_r", -30.0, 40.0),  # degC
     "cape": ("inferno", 0.0, 3000.0),  # J/kg
     "precipitation": ("YlGnBu", 0.0, 10.0),  # mm/h
+    "clouds": ("clouds", 0.0, 100.0),  # %, CLOUD_COVER_STOPS
 }
 DEFAULT_FIELD_COLORMAP = "viridis"
+
+# Windy's Clouds layer, which the share page draws from the total cloud
+# cover and the precipitation rate: the cover from a clear sky in olive
+# brown to an overcast white (%, read on its map), and the precipitation
+# over it in mm per CLOUD_RAIN_HOURS, on the steps of its legend.
+CLOUD_COVER_STOPS = (
+    (0.0, "#7d704b"),
+    (30.0, "#8e8770"),
+    (60.0, "#b0b0ab"),
+    (85.0, "#d8d8d8"),
+    (100.0, "#f2f2f2"),
+)
+CLOUD_RAIN_STOPS = (
+    (0.0, "#6f6f6f"),
+    (0.6, "#3c74a0"),
+    (6.0, "#3ba1a1"),
+    (8.0, "#3ba13d"),
+    (10.0, "#82a13b"),
+    (15.0, "#a1a13b"),
+    (20.0, "#a13b3b"),
+    (31.0, "#a13ba1"),
+    (50.0, "#a8a8a8"),
+)
+CLOUD_RAIN_HOURS = 3.0
 
 # Precipitation types, WMO GRIB2 code table 4.201, as IFS gives them in
 # `ptype`: label and colour, None for no precipitation.
@@ -241,4 +266,28 @@ def get_field_cmap(name, low=None, high=None):
     high = last if high is None else high
     if low is None or high is None:
         raise ValueError(f"{name} has no colour scale of its own: give low and high.")
-    return colormaps[colormap], mcolors.Normalize(vmin=low, vmax=high)
+    return named_cmap(colormap), mcolors.Normalize(vmin=low, vmax=high)
+
+
+def named_cmap(name):
+    """
+    A colormap by name: one of matplotlib, or "clouds".
+
+    Args:
+        name: A matplotlib colormap, or "clouds", the cloud cover
+            of `CLOUD_COVER_STOPS` from 0 to 1.
+
+    Returns:
+        The colormap.
+
+    Example:
+        cmap = named_cmap("clouds")
+    """
+    from matplotlib import colormaps
+
+    if name == "clouds":
+        top = CLOUD_COVER_STOPS[-1][0]
+        return mcolors.LinearSegmentedColormap.from_list(
+            "clouds", [(value / top, colour) for value, colour in CLOUD_COVER_STOPS]
+        )
+    return colormaps[name]

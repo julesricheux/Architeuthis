@@ -52,8 +52,8 @@ SKY_VARIABLES = {
     "ifs": {"tcc": 0.9, "lcc": 0.8, "mcc": 0.3, "hcc": 0.2, "mucape": 400.0, "tprate": 2.0 / 3600.0, "t2m": 285.0, "d2m": 284.0, "t": 275.0},
     "gfs": {"tcc": 50.0, "lcc": 10.0, "mcc": 40.0, "hcc": 60.0, "cape": 0.0, "prate": 0.0, "t2m": 290.0, "d2m": 280.0, "t": 280.0},
 }
-IFS_LAYERS = ["wind", "gust", "waves", "pressure", "cape", "ptype", "period", "slope"]
-GFS_LAYERS = ["wind", "gust", "waves", "pressure", "cape", "period", "slope"]
+IFS_LAYERS = ["wind", "gust", "waves", "pressure", "cape", "ptype", "period", "slope", "clouds"]
+GFS_LAYERS = ["wind", "gust", "waves", "pressure", "cape", "period", "slope", "clouds"]
 
 
 def load_forecast(self):
@@ -360,8 +360,8 @@ def test_the_preview_holds_both_models(scene):
 def test_every_field_of_the_forecasts_is_offered_and_ticked(layout):
     offered = layout["fields-select"]["data"]
 
-    assert [option["value"] for option in offered] == ["wind", "gust", "waves", "pressure", "cape", "ptype", "period", "slope"]
-    assert [option["label"] for option in offered][-2:] == ["Wave period", "Wave slope"]
+    assert [option["value"] for option in offered] == IFS_LAYERS
+    assert [option["label"] for option in offered][-3:] == ["Wave period", "Wave slope", "Clouds"]
     assert layout["fields-select"]["value"] == [option["value"] for option in offered]
 
 
@@ -648,6 +648,19 @@ def test_the_ui_downloads_the_clouds_of_the_routes_that_lack_them(ui, scene, tag
         expected = covers["lcc"] / (100.0 if report["model"] == "gfs" else 1.0)
         assert route["sky"]["lcc"] == pytest.approx([expected] * len(route["sky"]["lcc"]), abs=0.02)
     assert scene["cloud_genera"]
+
+
+def test_the_clouds_are_one_layer_of_the_map(ui, scene):
+    # The cover and precipitation rate of the sky, on the grid of each model.
+    assert {"tcc", "tprate"} <= set(ui["DS"]["ifs"].data_vars)
+    assert {"tcc", "prate"} <= set(ui["DS"]["gfs"].data_vars)
+    # Neither the covers by étage nor the precipitation alone are offered.
+    assert "clouds" in ui["FIELDS"]
+    assert not {"precipitation", "tcc", "lcc", "mcc", "hcc", "t2m", "d2m", "t"} & set(ui["FIELDS"])
+    for source in scene["sources"]:
+        assert source["layers"][-1] == "clouds"
+        assert {"clouds", "precipitation"} <= set(source["quantities"])
+    assert scene["layers"]["clouds"]["rain"]["quantity"] == "precipitation"
 
 
 def test_the_clouds_of_a_routing_are_kept(ui):

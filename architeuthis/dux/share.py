@@ -51,6 +51,8 @@ from PIL import Image
 from architeuthis import sky
 from architeuthis.common import _HOME, status
 from architeuthis.toolbox.windy_colormaps import (
+    CLOUD_RAIN_HOURS,
+    CLOUD_RAIN_STOPS,
     DEFAULT_FIELD_COLORMAP,
     FIELD_COLORMAPS,
     PRECIPITATION_TYPES,
@@ -234,6 +236,14 @@ def _rate_to_mm_per_hour(values):
     return values * 3600.0  # kg m-2 s-1 > mm/h
 
 
+def _cover_to_percent(values):
+    # IFS gives covers from 0 to 1, GFS in %.
+    units = str(values.attrs.get("units", values.attrs.get("GRIB_units", ""))).strip()
+    if units == "%" or float(values.max(skipna=True).fillna(0.0)) > 1.0 + 1e-6:
+        return values
+    return values * 100.0
+
+
 # Fields shown besides the built-in layers, by layer, found under the
 # first of `names` that a forecast has: label, unit, conversion to that
 # unit, colour scale (`windy_colormaps.FIELD_COLORMAPS`) or categories,
@@ -306,6 +316,30 @@ FIELDS = {
         "digits": 0,
         "arrows": "wind",
     },
+    "clouds": {
+        "names": ("tcc",),
+        "label": "Clouds",
+        "unit": "%",
+        "description": "Total cloud cover, with the precipitation over it",
+        "convert": _cover_to_percent,
+        "colormap": FIELD_COLORMAPS["clouds"],
+        "ticks": [0, 25, 50, 75, 100],
+        "digits": 0,
+        "arrows": "wind",
+    },
+}
+
+# The Clouds layer of a forecast with a total cloud cover: the covers by
+# étage are part of it, never layers of their own, and the precipitation
+# rate, when the forecast has one, is drawn over it as on Windy, in mm per
+# `CLOUD_RAIN_HOURS` on the steps of `CLOUD_RAIN_STOPS`, from `floor`.
+CLOUD_NAMES = ("tcc", "lcc", "mcc", "hcc")
+CLOUD_RAIN = {
+    "quantity": "precipitation",
+    "hours": CLOUD_RAIN_HOURS,
+    "unit": f"mm/{CLOUD_RAIN_HOURS:g}h",
+    "floor": 0.2,
+    "stops": [[value, colour] for value, colour in CLOUD_RAIN_STOPS],
 }
 
 # Names of forecast variables that the built-in layers may read.
@@ -1015,7 +1049,8 @@ def _forecast_source(
     needed = []
     for layer in layers:
         arrows = _BUILT_IN_LAYERS[layer][1] if layer in _BUILT_IN_LAYERS else extras[layer]["arrows"]
-        for name in (*LAYER_QUANTITIES.get(layer, (layer,)), *ARROW_QUANTITIES.get(arrows, ())):
+        rain = (extras[layer]["rain"]["quantity"],) if "rain" in extras.get(layer, {}) else ()
+        for name in (*LAYER_QUANTITIES.get(layer, (layer,)), *rain, *ARROW_QUANTITIES.get(arrows, ())):
             if name in quantities and name not in needed:
                 needed.append(name)
     needed.sort(key=lambda name: QUANTITIES.index(name) if name in QUANTITIES else len(QUANTITIES))
@@ -1230,6 +1265,10 @@ def _fields(dataset: xr.Dataset) -> tuple:
         extras[layer] = _field_info(info)
         position[layer] = order[name]
         used.add(name)
+    if "clouds" in extras:
+        used |= set(CLOUD_NAMES)
+        if "precipitation" in found:
+            extras["clouds"]["rain"] = dict(CLOUD_RAIN)
     period = first(FIELDS["period"]["names"])
     if "swh" in names and period:
         # The steepness of the waves: their height over their deep water length.
@@ -1290,6 +1329,8 @@ def _merge_ranges(first: Optional[dict], second: dict) -> dict:
     if first is None:
         return dict(second)
     merged = dict(first)
+    if "rain" in second and "rain" not in merged:
+        merged["rain"] = second["rain"]
     if "data_range" in second:
         low, high = second["data_range"]
         if "data_range" in first:
@@ -1415,10 +1456,9 @@ def _layers(extras: Optional[Mapping] = None) -> dict:
     (`extras`): on the scale of `FIELDS`, or on one over most values of
     the sources, or in categories.
     """
-    from matplotlib import colormaps
     from matplotlib.ticker import MaxNLocator
 
-    from architeuthis.toolbox.windy_colormaps import get_wave_cmap, get_wind_cmap
+    from architeuthis.toolbox.windy_colormaps import get_wave_cmap, get_wind_cmap, named_cmap
 
     wind, wind_norm = get_wind_cmap()
     wave, wave_norm = get_wave_cmap()
@@ -1488,6 +1528,8 @@ def _layers(extras: Optional[Mapping] = None) -> dict:
         }
         if info.get("floor") is not None:
             entry["floor"] = info["floor"]
+        if "rain" in info:
+            entry["rain"] = info["rain"]
         if "categories" in info:
             entry["digits"] = 0
             entry["categories"] = [
@@ -1507,7 +1549,7 @@ def _layers(extras: Optional[Mapping] = None) -> dict:
         if digits is None:
             span = high - low
             digits = 0 if span >= 50 else 1 if span >= 5 else 2 if span >= 0.5 else 3
-        colour = colormaps[info["colormap"]]
+        colour = named_cmap(info["colormap"])
         entry.update(
             colormap={
                 "min": round(float(low), 6),
