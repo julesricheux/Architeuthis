@@ -147,6 +147,10 @@
     // first shown when null).
     plotsOpen: window.innerWidth > 1100 && scene.routes.length > 0,
     plotRoute: null,
+    // Widths of the left panel and of the plots dragged by the user, in
+    // pixels, or null for those of the stylesheet.
+    panelWidth: null,
+    plotsWidth: null,
     noteOpen: true,
     settings: Object.assign({ routes: null, sources: null, overlays: null, hover: null, fields: null }, scene.settings || {}),
     theme: (scene.settings && scene.settings.theme) === "light" ? "light" : "dark",
@@ -168,7 +172,7 @@
   scene.zones.forEach((zone) => { state.zones[zone.id] = zone.visible; });
   scene.overlays.forEach((overlay) => { state.overlays[overlay.id] = overlay.visible; });
   if (stored) {
-    ["speed", "source", "layer", "arrowKind", "isobars", "isobarLabels", "isobarStep", "centres", "opacity", "basemap", "seamarks", "graticule", "panelOpen", "plotsOpen", "plotRoute", "noteOpen", "theme", "picker"]
+    ["speed", "source", "layer", "arrowKind", "isobars", "isobarLabels", "isobarStep", "centres", "opacity", "basemap", "seamarks", "graticule", "panelOpen", "plotsOpen", "plotRoute", "panelWidth", "plotsWidth", "noteOpen", "theme", "picker"]
       .forEach((key) => { if (key in stored) state[key] = stored[key]; });
     ["hidden", "zones", "overlays"].forEach((key) => { Object.assign(state[key], stored[key] || {}); });
   }
@@ -195,6 +199,7 @@
           isobars: state.isobars, isobarLabels: state.isobarLabels, isobarStep: state.isobarStep, centres: state.centres, opacity: state.opacity, basemap: state.basemap,
           seamarks: state.seamarks, graticule: state.graticule, hidden: state.hidden, zones: state.zones,
           overlays: state.overlays, panelOpen: state.panelOpen, plotsOpen: state.plotsOpen, plotRoute: state.plotRoute,
+          panelWidth: state.panelWidth, plotsWidth: state.plotsWidth,
           noteOpen: state.noteOpen, theme: state.theme,
           picker: state.picker,
         };
@@ -1460,11 +1465,7 @@
     }
     if (state.editing) closeEditor();
     // A route clicked is the route of the plots.
-    if (target && target.id !== state.plotRoute) {
-      state.plotRoute = target.id;
-      rebuildPlots();
-      persist();
-    }
+    if (target && target.id !== state.plotRoute) selectPlotRoute(target.id);
     if (!target && state.picker) setPicker({ lat: event.lngLat.lat, lon: wrapLongitude(event.lngLat.lng) });
     onPointer(event);
   }
@@ -2485,9 +2486,24 @@
     persist();
   }
 
+  function selectPlotRoute(id) {
+    state.plotRoute = id;
+    rebuildPlots();
+    persist();
+  }
+
+  // Marks the route of the plots in the list of routes.
+  function markPlotRoute() {
+    const route = plotRoute();
+    document.querySelectorAll(".route-row").forEach((row) => {
+      row.classList.toggle("plotted", !!route && row.dataset.route === route.id);
+    });
+  }
+
   // Draws the plots again when what they show changes: the route, the
   // theme, the names or the width. The time alone only moves their cursor.
   function rebuildPlots(force) {
+    markPlotRoute();
     if (!state.plotsOpen) { plotsKey = null; plotCursors = []; return; }
     const route = plotRoute();
     const routes = shownRoutes().map((item) => `${item.id}:${routeLabel(item)}`).join(",");
@@ -2518,7 +2534,7 @@
         option.selected = item.id === route.id;
         select.append(option);
       });
-      select.addEventListener("change", () => { state.plotRoute = select.value; rebuildPlots(); persist(); });
+      select.addEventListener("change", () => selectPlotRoute(select.value));
       head.append(swatch, select);
     } else {
       head.append(element("span", "muted", "No route"));
@@ -2790,6 +2806,9 @@
     routes.forEach((route) => {
       const off = !!state.hidden[route.id];
       const row = element("div", "route-row" + (off ? " off" : ""));
+      row.dataset.route = route.id;
+      // A route clicked in the list is the route of the plots.
+      row.addEventListener("click", (event) => { if (event.target !== input) selectPlotRoute(route.id); });
       const input = element("input");
       input.type = "checkbox";
       input.checked = !off;
@@ -2817,6 +2836,7 @@
       routeSection.append(row);
     });
     panel.append(routeSection);
+    markPlotRoute();
 
     if (scene.zones.length) {
       const zones = section("Exclusion zones");
@@ -2886,6 +2906,90 @@
   }
 
   function narrow() { return window.innerWidth <= 720; }
+
+  // --------------------------------------------------------------------
+  // Widths of the panels, dragged by their inner edge
+  // --------------------------------------------------------------------
+
+  const PANEL_WIDTHS = { panel: [240, 640], plots: [260, 800] };
+
+  function clampWidth(kind, width) {
+    const [low, high] = PANEL_WIDTHS[kind];
+    const room = kind === "panel" ? window.innerWidth - 120 : window.innerWidth * 0.7;
+    return Math.round(Math.max(low, Math.min(high, room, width)));
+  }
+
+  // The widths chosen, through variables that the stylesheet falls back
+  // from, so that a phone keeps its own.
+  function applyWidths() {
+    const root = document.documentElement.style;
+    ["panel", "plots"].forEach((kind) => {
+      const width = state[kind + "Width"];
+      if (width) root.setProperty(`--${kind}-width-user`, `${clampWidth(kind, width)}px`);
+      else root.removeProperty(`--${kind}-width-user`);
+    });
+    placePanelHandle();
+  }
+
+  // The handle of the left panel follows its edge, below the header and
+  // the note.
+  function placePanelHandle() {
+    const handle = document.querySelector(".panel-handle");
+    if (!handle) return;
+    const panel = $("panel");
+    handle.style.top = `${panel.offsetTop}px`;
+    handle.style.height = `${panel.offsetHeight}px`;
+    handle.style.left = `${panel.offsetLeft + panel.offsetWidth - 4}px`;
+  }
+
+  function setupResizers() {
+    const panelHandle = element("div", "resize-handle panel-handle");
+    const plotsHandle = element("div", "resize-handle plots-handle");
+    panelHandle.title = "Drag to resize the panel, double-click for its first width";
+    plotsHandle.title = "Drag to resize the plots, double-click for their first width";
+    $("left").append(panelHandle);
+    document.body.append(plotsHandle);
+    resizer(panelHandle, "panel", (x) => x - $("panel").getBoundingClientRect().left);
+    resizer(plotsHandle, "plots", (x) => $("plots").getBoundingClientRect().right - x);
+    if (window.ResizeObserver) {
+      const observer = new ResizeObserver(placePanelHandle);
+      observer.observe($("panel"));
+      observer.observe($("left"));
+    }
+    window.addEventListener("resize", applyWidths);
+    applyWidths();
+  }
+
+  // Drags the width of a panel. The plots are stretched meanwhile and
+  // drawn again once it is released.
+  function resizer(handle, kind, measure) {
+    let frame = null;
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      handle.setPointerCapture(event.pointerId);
+      document.body.classList.add("resizing");
+    });
+    handle.addEventListener("pointermove", (event) => {
+      if (!handle.hasPointerCapture(event.pointerId)) return;
+      const width = measure(event.clientX);
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        state[kind + "Width"] = clampWidth(kind, width);
+        applyWidths();
+      });
+    });
+    handle.addEventListener("lostpointercapture", () => {
+      document.body.classList.remove("resizing");
+      rebuildPlots();
+      persist();
+    });
+    handle.addEventListener("dblclick", () => {
+      state[kind + "Width"] = null;
+      applyWidths();
+      persist();
+    });
+  }
 
   // --------------------------------------------------------------------
   // Header
@@ -3561,8 +3665,11 @@
     setupTimeline();
     buildPanel();
     buildTimeline();
+    setupResizers();
     setPlots(state.plotsOpen);
-    if (window.ResizeObserver) new ResizeObserver(() => rebuildPlots()).observe($("plots"));
+    if (window.ResizeObserver) {
+      new ResizeObserver(() => { if (!document.body.classList.contains("resizing")) rebuildPlots(); }).observe($("plots"));
+    }
 
     const view = stored && stored.view;
     try {

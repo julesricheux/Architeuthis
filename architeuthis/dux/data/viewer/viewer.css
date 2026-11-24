@@ -20,8 +20,9 @@
   --radius: 10px;
   --gap: 12px;
   --tl-height: 120px;
-  --panel-width: 300px;
-  --plots-width: 340px;
+  /* Widths dragged by the user, set by the page, else these. */
+  --panel-width: var(--panel-width-user, 300px);
+  --plots-width: var(--plots-width-user, 340px);
   color-scheme: dark;
 }
 
@@ -102,7 +103,7 @@ button { cursor: pointer; }
   top: var(--gap);
   left: var(--gap);
   bottom: calc(var(--tl-height) + 2 * var(--gap));
-  width: min(480px, calc(100% - 70px));
+  width: min(max(480px, calc(var(--panel-width) + 8px)), calc(100% - 70px));
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -254,6 +255,7 @@ button { cursor: pointer; }
   border-radius: 8px;
 }
 .route-row:hover { background: var(--hover); }
+body.plots-open .route-row.plotted { box-shadow: inset 2px 0 0 var(--accent); }
 .route-row input { accent-color: var(--accent); margin: 2px 0 0; width: 15px; height: 15px; }
 .route-name {
   display: flex;
@@ -628,10 +630,33 @@ body.plots-open #readout {
   max-width: calc(100% - 3 * var(--gap) - 220px - var(--plots-width));
 }
 
+/* Handles that resize the left panel and the plots */
+
+.resize-handle { position: absolute; width: 8px; cursor: ew-resize; touch-action: none; display: none; z-index: 5; }
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  width: 2px;
+  height: 36px;
+  margin-top: -18px;
+  border-radius: 1px;
+  background: var(--muted);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.resize-handle:hover::after, body.resizing .resize-handle::after { opacity: 0.7; }
+body.panel-open .panel-handle { display: block; }
+.plots-handle { top: var(--gap); bottom: calc(var(--tl-height) + 2 * var(--gap)); right: calc(var(--plots-width) + var(--gap) - 4px); }
+body.plots-open .plots-handle { display: block; }
+body.resizing, body.resizing * { cursor: ew-resize !important; user-select: none; }
+
 /* Narrow screens: phones and small tablets */
 
 @media (max-width: 720px) {
   #plots { left: var(--gap); width: auto; z-index: 4; background: var(--panel-strong); }
+  body.panel-open .panel-handle, body.plots-open .plots-handle { display: none; }
   body.plots-open #legend, body.plots-open #readout { display: none; }
   body.plots-open .maplibregl-ctrl-top-right, body.plots-open .maplibregl-ctrl-bottom-right { right: 4px; }
   :root { --gap: 8px; --panel-width: calc(100vw - 16px); }
