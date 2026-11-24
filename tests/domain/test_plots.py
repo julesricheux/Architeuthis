@@ -152,7 +152,7 @@ class TestPlotReport:
 
     @pytest.mark.parametrize("key", ["tws", "aws"])
     def test_wind_panels_work_without_gust(self, routing, key):
-        report = routing(solve=False, analysis_options={"options": {}})
+        report = routing(solve=False, analysis_options={"variables": ["max_bhp", "sails_contribution"]})
         assert f"{key}_gust" not in report
 
         ax = plot_report(report, show=False).axes[REPORT_PANELS.index(key)]

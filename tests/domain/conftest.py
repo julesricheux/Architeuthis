@@ -159,7 +159,7 @@ def routing(vessel, atmosphere, wave, current, open_sea):
             current,
             open_sea,
             verbose=False,
-            **({"variables": ["max_bhp", "sails_contribution"]} | (analysis_options or {})),
+            **({"variables": ["max_bhp", "sails_contribution", "gust"]} | (analysis_options or {})),
         )
         return analysis.run(
             max_iter=30,

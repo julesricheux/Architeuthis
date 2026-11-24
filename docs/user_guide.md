@@ -233,7 +233,7 @@ report.table(["tws", "tws_gust", "slope"])
 
 Forecasts are queried at the time and position of each segment, with the ensemble member of the analysis, and vessel models with the inputs they name, found as for the polars. A model of a variable may thus be an interpolator or a function, of any data object. Write functions with `architeuthis.numpy`, and keep them smooth when a constraint uses them: the period above is kept away from zero, its value on land and past the forecast horizon.
 
-`run(variables=...)` and `evaluate(variables=...)` add variables for one run or one evaluation to those of the analysis. `options={"include_gusts": ...}` is deprecated, with a `DeprecationWarning`, and will be removed in 0.4.0: list `"gust"` instead. Until then, an analysis without `options` still computes the gusts, and `options={}` leaves them out unless they are listed; from 0.4.0, they are computed only when listed. A variable cannot take the name of a routing quantity or of a report entry such as `status`, and an unknown key raises a `KeyError` that names it. The variables are recorded in the metadata of the passage plan, callables by their name.
+`run(variables=...)` and `evaluate(variables=...)` add variables for one run or one evaluation to those of the analysis. The gusts are computed only when `"gust"` (or `tws_gust`, `aws_gust`) is listed; `options={"include_gusts": ...}`, removed in 0.4.0, raises a `ValueError` that says so. A variable cannot take the name of a routing quantity or of a report entry such as `status`, and an unknown key raises a `KeyError` that names it. The variables are recorded in the metadata of the passage plan, callables by their name.
 
 `examples/function_polar_routing.py` computes the IFS gusts, the wave slope and the wind at 100 m this way.
 
@@ -443,7 +443,7 @@ Six stacked panels share a time axis in UTC, which runs from the first to the la
 | 5 | `tws` | `tws`, `tws_gust` | True wind, kt: average, and gust as a dashed line with a band | From 0 |
 | 6 | `aws` | `aws`, `aws_gust` | Apparent wind, kt: average, and gust as a dashed line with a band | From 0 |
 
-The gust lines are left out when the report has no gust, which happens with `RoutingAnalysis(..., options={})` unless `variables` lists `"gust"`. Likewise, `sails_contribution` and `max_bhp` are in the report only when `variables` lists them (or, until 0.4.0, when the vessel has them).
+The gust lines are left out when the report has no gust, which happens unless `variables` lists `"gust"`. Likewise, `sails_contribution` and `max_bhp` are in the report only when `variables` lists them (or, until 0.4.0, when the vessel has them).
 
 | Argument | Default | Meaning |
 | --- | --- | --- |

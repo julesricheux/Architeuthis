@@ -715,7 +715,6 @@ for solve, tf, model, vessel, fac, m, tpg in (
         # tws_gust and aws_gust in kt, and vessel models that the fuel does not need
         variables=["gust", "max_bhp", "sails_contribution"],
         # verbose=False,
-        # options=dict(include_gusts=True),
         # verbose=True,
         verbose=False,
     )

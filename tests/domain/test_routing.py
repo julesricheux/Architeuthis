@@ -133,7 +133,7 @@ def test_voyage_past_the_forecast_horizon_is_reported(analyse, open_sea, capsys)
 class TestBaseline:
     @pytest.fixture
     def report(self, route, open_sea):
-        return route(open_sea, solve=False)
+        return route(open_sea, solve=False, analysis_options={"variables": ["gust"]})
 
     def test_time_grid_follows_the_atmospheric_forecast(self, report):
         assert len(report["tim"]) == EXPECTED_NODES
@@ -201,12 +201,6 @@ class TestBaseline:
 
     def test_gusts_default_to_the_standard_ratio(self, report):
         assert report["tws_gust"] == pytest.approx(report["tws"] * GUST_DEFAULT_RATIO)
-
-    def test_gusts_can_be_disabled(self, route, open_sea):
-        report = route(open_sea, solve=False, analysis_options={"options": {}})
-
-        assert "tws_gust" not in report
-        assert "aws_gust" not in report
 
     def test_deviation_factor_selects_the_reference_route(self, route, open_sea):
         def deviated(divergence):
@@ -302,7 +296,7 @@ class TestOptimization:
 class TestEvaluation:
     @pytest.fixture
     def optimized(self, analyse, island):
-        analysis = analyse(island)
+        analysis = analyse(island, variables=["gust"])
         report = analysis.run(max_iter=500, solver_options=MUMPS)
         return analysis, report
 
@@ -469,9 +463,9 @@ def test_analysis_options_are_not_shared(analyse, open_sea):
     first = analyse(open_sea)
     second = analyse(open_sea)
 
-    first.options["include_gusts"] = False
+    first.options["key"] = "value"
 
-    assert second.options["include_gusts"] is True
+    assert "key" not in second.options
 
 
 def test_analysis_describes_its_exclusion_zones(analyse, open_sea):
@@ -696,14 +690,14 @@ def test_variables_take_names_lists_and_dicts():
 
 class TestAdditionalVariables:
     def test_gusts_can_be_asked_without_the_option(self, route, open_sea):
-        report = route(open_sea, solve=False, analysis_options={"options": {}, "variables": ["tws_gust"]})
+        report = route(open_sea, solve=False, analysis_options={"variables": ["tws_gust"]})
 
         assert report["tws_gust"] == pytest.approx(report["tws"] * GUST_DEFAULT_RATIO)
         assert "aws_gust" not in report
 
     def test_apparent_gusts_alone_still_come_from_the_gust(self, route, open_sea):
-        report = route(open_sea, solve=False, analysis_options={"options": {}, "variables": ["aws_gust"]})
-        reference = route(open_sea, solve=False)
+        report = route(open_sea, solve=False, analysis_options={"variables": ["aws_gust"]})
+        reference = route(open_sea, solve=False, analysis_options={"variables": ["gust"]})
 
         assert "tws_gust" not in report
         assert report["aws_gust"] == pytest.approx(reference["aws_gust"])
@@ -711,7 +705,7 @@ class TestAdditionalVariables:
     def test_gust_of_the_forecast_is_read_in_knots(self, analyse, open_sea):
         from .conftest import uniform_forecast
 
-        analysis = analyse(open_sea, options={}, variables=["tws_gust", {"gust_ms": "atmosphere.gust"}])
+        analysis = analyse(open_sea, variables=["tws_gust", {"gust_ms": "atmosphere.gust"}])
         analysis.atmosphere = uniform_forecast("atmosphere", u10=5.0, v10=2.0, gust=10.0)
         report = analysis.run(solve=False, solver_options=MUMPS)
 
@@ -720,15 +714,15 @@ class TestAdditionalVariables:
         assert np.ravel(report["gust_ms"]) == pytest.approx(10.0)
 
     def test_gust_asks_for_the_true_and_apparent_gusts(self, route, open_sea):
-        report = route(open_sea, solve=False, analysis_options={"options": {}, "variables": ["gust"]})
-        reference = route(open_sea, solve=False)
+        report = route(open_sea, solve=False, analysis_options={"variables": ["gust"]})
+        reference = route(open_sea, solve=False, analysis_options={"variables": ["gust"]})
 
         assert "gust" not in report
         assert report["tws_gust"] == pytest.approx(reference["tws_gust"])
         assert report["aws_gust"] == pytest.approx(reference["aws_gust"])
 
     def test_clouds_asks_for_the_nine_fields_of_the_sky(self, analyse, open_sea):
-        analysis = analyse(open_sea, options={}, variables=["clouds"])
+        analysis = analyse(open_sea, variables=["clouds"])
         analysis.atmosphere = ifs_sky_atmosphere()
         report = analysis.run(solve=False, solver_options=MUMPS)
 
@@ -746,7 +740,7 @@ class TestAdditionalVariables:
         from architeuthis.dux import share
         from architeuthis.report import ReportCollection
 
-        analysis = analyse(open_sea, options={}, variables=["clouds"])
+        analysis = analyse(open_sea, variables=["clouds"])
         analysis.atmosphere = ifs_sky_atmosphere()
         report = analysis.run(solve=False, solver_options=MUMPS)
         path = tmp_path / "reports.json"
@@ -766,24 +760,21 @@ class TestAdditionalVariables:
         assert sky.from_report({"tcc": [0.5]}) is None
 
     def test_clouds_need_the_fields_of_the_sky(self, analyse, open_sea):
-        analysis = analyse(open_sea, options={}, variables=["clouds"])
+        analysis = analyse(open_sea, variables=["clouds"])
         analysis.atmosphere = ifs_sky_atmosphere(without="mucape")
 
         with pytest.raises(KeyError, match="IFS_SKY_REGEX"):
             analysis.run(solve=False, solver_options=MUMPS)
 
     @pytest.mark.parametrize("include_gusts", [True, False])
-    def test_the_gust_option_is_deprecated(self, analyse, open_sea, include_gusts):
-        with pytest.warns(DeprecationWarning, match=r"variables=\['gust'\]"):
+    def test_the_gust_option_was_removed(self, analyse, open_sea, include_gusts):
+        with pytest.raises(ValueError, match=r"variables=\['gust'\]"):
             analyse(open_sea, options={"include_gusts": include_gusts})
 
-    def test_without_the_gust_option_nothing_is_deprecated(self, analyse, open_sea):
-        import warnings
+    def test_gusts_are_computed_only_when_listed(self, route, open_sea):
+        report = route(open_sea, solve=False)
 
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", DeprecationWarning)
-            analyse(open_sea)
-            analyse(open_sea, options={}, variables=["gust"])
+        assert "tws_gust" not in report and "aws_gust" not in report
 
     def test_a_forecast_function_is_computed_and_reported(self, analyse, open_sea):
         analysis = analyse(open_sea, variables=["slope", {"period": "wave.mwp"}])
@@ -793,8 +784,8 @@ class TestAdditionalVariables:
         assert np.ravel(report["slope"]) == pytest.approx(1.5 / 6.0)
         assert np.ravel(report["period"]) == pytest.approx(6.0)
         assert len(np.ravel(report["slope"])) == len(np.ravel(report["ctim"]))
-        # The gusts of the default options are still there
-        assert "tws_gust" in report and "aws_gust" in report
+        # The gusts are not listed
+        assert "tws_gust" not in report and "aws_gust" not in report
 
     def test_a_callable_sees_the_variables_before_it(self, route, open_sea):
         report = route(open_sea, solve=False, analysis_options={
@@ -852,7 +843,7 @@ class TestAdditionalVariables:
         assert report["awa100"] == pytest.approx(report["awa"])
 
     def test_run_and_evaluate_add_their_own_variables(self, analyse, open_sea):
-        analysis = analyse(open_sea, options={}, variables=["tws_gust"])
+        analysis = analyse(open_sea, variables=["tws_gust"])
         report = analysis.run(solve=False, solver_options=MUMPS, variables={"wind": "tws"})
         evaluation = analysis.evaluate(report, variables=["aws_gust"])
 

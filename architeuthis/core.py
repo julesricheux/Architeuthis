@@ -469,9 +469,9 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
     - A callable `ctx -> expression`, given the quantities of the
       passage and the variables listed before it, with `vessel`.
 
-    `options={"include_gusts": True}` is deprecated, and will be
-    removed in 0.4.0: give `variables=["gust"]`. Until then, the gusts
-    are still computed by default, without `options`.
+    The gusts are computed only when listed: `variables=["gust"]`.
+    `options={"include_gusts": ...}`, removed in 0.4.0, raises a
+    `ValueError`.
 
     Example:
         >>> wave.add_function(
@@ -527,14 +527,11 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         self.wave_member = wave_member
         self.constraints = constraints
         if options is not None and "include_gusts" in options:
-            warnings.warn(
-                "RoutingAnalysis(options={'include_gusts': ...}) is deprecated and will "
-                "be removed in 0.4.0. Give variables=['gust'] to compute tws_gust and "
-                "aws_gust; from 0.4.0, they are computed only then.",
-                DeprecationWarning,
-                stacklevel=2,
+            raise ValueError(
+                "RoutingAnalysis(options={'include_gusts': ...}) was removed in 0.4.0: "
+                "give variables=['gust'] to compute tws_gust and aws_gust."
             )
-        self.options = options if options is not None else {"include_gusts": True}
+        self.options = dict(options) if options is not None else {}
         self.variables = normalize_variables(variables)
 
         self.report = None
@@ -593,12 +590,10 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         """
         Additional variables of a run or an evaluation.
 
-        These are the gusts of `options["include_gusts"]` (deprecated),
-        the vessel models of `IMPLICIT_VESSEL_VARIABLES` that are not
-        listed (deprecated), then the variables of this analysis, then
-        `variables`.
+        These are the vessel models of `IMPLICIT_VESSEL_VARIABLES`
+        that are not listed (deprecated), then the variables of this
+        analysis, then `variables`.
         """
-        gusts = {key: key for key in _GUST_QUANTITIES} if self.options.get("include_gusts", False) else {}
         listed = normalize_variables(self.variables) | normalize_variables(variables)
         implicit = {
             key: key for key in IMPLICIT_VESSEL_VARIABLES
@@ -614,7 +609,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
                 DeprecationWarning,
                 stacklevel=3,
             )
-        return gusts | implicit | listed
+        return implicit | listed
 
     def _add_sky_models(self, name: str) -> None:
         """
