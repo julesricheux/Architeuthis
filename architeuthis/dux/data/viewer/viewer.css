@@ -21,6 +21,7 @@
   --gap: 12px;
   --tl-height: 120px;
   --panel-width: 300px;
+  --plots-width: 340px;
   color-scheme: dark;
 }
 
@@ -520,12 +521,124 @@ button { cursor: pointer; }
 .pk-row.shown .pk-label { color: var(--accent); }
 .pk-message { color: var(--muted); }
 
+/* Plots of a route, on the right */
+
+#plots {
+  position: absolute;
+  top: var(--gap);
+  right: var(--gap);
+  bottom: calc(var(--tl-height) + 2 * var(--gap));
+  width: var(--plots-width);
+  display: flex;
+  flex-direction: column;
+  z-index: 3;
+  user-select: none;
+}
+.plots-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 4px 5px 10px;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.plots-head .swatch.line { width: 14px; height: 4px; border-radius: 2px; flex: none; }
+.plots-head select {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel-strong);
+  border: 0;
+  border-radius: 6px;
+  padding: 3px 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.icon-button.small { width: 26px; height: 26px; border-radius: 6px; }
+.icon-button.small svg { width: 15px; height: 15px; }
+.plots-body { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 8px 6px; }
+.plot { padding: 4px 0 2px; border-bottom: 1px solid var(--line); }
+.plot-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-left: 2px;
+  line-height: 16px;
+}
+.plot-title {
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.plot-values {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.plot-values b { color: var(--fg); font-weight: 650; margin-right: 6px; }
+.plot-values i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin: 0 3px 0 2px;
+  border-radius: 2px;
+  background: var(--chip);
+}
+.plot-values i.dashed { width: 10px; height: 0; border-radius: 0; background: none; border-top: 2px dashed var(--chip); vertical-align: middle; }
+.plot-wrap { position: relative; cursor: crosshair; touch-action: none; }
+.plot-wrap canvas { display: block; width: 100%; }
+.plot-cursor {
+  position: absolute;
+  top: 2px;
+  bottom: 0;
+  width: 0;
+  border-left: 2px solid var(--accent);
+  margin-left: -1px;
+  pointer-events: none;
+}
+.plots-axis { position: relative; height: 16px; margin-top: 2px; }
+.plots-axis span {
+  position: absolute;
+  top: 1px;
+  padding-left: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.plots-body .empty { padding: 10px 2px; }
+.maplibregl-ctrl-group button.plots-control { color: var(--fg); display: flex; align-items: center; justify-content: center; }
+.maplibregl-ctrl-group button.plots-control svg { width: 18px; height: 18px; fill: currentColor; }
+.maplibregl-ctrl-group button.plots-control.active { background: var(--accent); color: var(--accent-fg); }
+
+/* The map's own corners move left of the plots. */
+body.plots-open .maplibregl-ctrl-top-right { right: calc(var(--plots-width) + var(--gap) + 4px); }
+body.plots-open .maplibregl-ctrl-bottom-right { right: calc(var(--plots-width) + var(--gap) + 240px); }
+body.plots-open #legend { right: calc(var(--plots-width) + 2 * var(--gap)); }
+body.plots-open #readout {
+  left: calc((100% - var(--plots-width) - var(--gap)) / 2);
+  max-width: calc(100% - 3 * var(--gap) - 220px - var(--plots-width));
+}
+
 /* Narrow screens: phones and small tablets */
 
 @media (max-width: 720px) {
+  #plots { left: var(--gap); width: auto; z-index: 4; background: var(--panel-strong); }
+  body.plots-open #legend, body.plots-open #readout { display: none; }
+  body.plots-open .maplibregl-ctrl-top-right, body.plots-open .maplibregl-ctrl-bottom-right { right: 4px; }
   :root { --gap: 8px; --panel-width: calc(100vw - 16px); }
   .tl-body { grid-template-columns: 64px 1fr; column-gap: 6px; }
   .tl-speed span { display: none; }
+  #tl-time { min-width: 0; overflow: hidden; text-overflow: ellipsis; margin-left: 2px; }
+  #tl-time .muted { display: none; }
   #legend { width: 160px; }
   #readout { max-width: calc(100% - 2 * var(--gap)); font-size: 12px; left: var(--gap); transform: none; bottom: calc(var(--tl-height) + 2 * var(--gap) + 52px); }
   .maplibregl-ctrl-bottom-right { right: 170px; }

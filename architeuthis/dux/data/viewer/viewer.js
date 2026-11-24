@@ -103,6 +103,7 @@
     sun: "M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM2 13h2a1 1 0 0 0 0-2H2a1 1 0 0 0 0 2zm18 0h2a1 1 0 0 0 0-2h-2a1 1 0 0 0 0 2zM11 2v2a1 1 0 0 0 2 0V2a1 1 0 0 0-2 0zm0 18v2a1 1 0 0 0 2 0v-2a1 1 0 0 0-2 0zM5.99 4.58a1 1 0 0 0-1.41 1.41l1.06 1.06a1 1 0 0 0 1.41-1.41L5.99 4.58zm12.37 12.37a1 1 0 0 0-1.41 1.41l1.06 1.06a1 1 0 0 0 1.41-1.41l-1.06-1.06zm1.06-10.96a1 1 0 0 0-1.41-1.41l-1.06 1.06a1 1 0 0 0 1.41 1.41l1.06-1.06zM7.05 18.36a1 1 0 0 0-1.41-1.41l-1.06 1.06a1 1 0 0 0 1.41 1.41l1.06-1.06z",
     moon: "M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1z",
     close: "M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z",
+    plots: "M3.5 18.49 9.5 12.48l4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z",
   };
 
   // --------------------------------------------------------------------
@@ -133,6 +134,10 @@
     zones: {},
     overlays: {},
     panelOpen: window.innerWidth > 720,
+    // The plots of a route beside the map, and the route they show (the
+    // first shown when null).
+    plotsOpen: window.innerWidth > 1100 && scene.routes.length > 0,
+    plotRoute: null,
     noteOpen: true,
     settings: Object.assign({ routes: null, sources: null, overlays: null, hover: null, fields: null }, scene.settings || {}),
     theme: (scene.settings && scene.settings.theme) === "light" ? "light" : "dark",
@@ -154,7 +159,7 @@
   scene.zones.forEach((zone) => { state.zones[zone.id] = zone.visible; });
   scene.overlays.forEach((overlay) => { state.overlays[overlay.id] = overlay.visible; });
   if (stored) {
-    ["speed", "source", "layer", "arrowKind", "isobars", "isobarLabels", "isobarStep", "centres", "opacity", "basemap", "seamarks", "graticule", "panelOpen", "noteOpen", "theme", "picker"]
+    ["speed", "source", "layer", "arrowKind", "isobars", "isobarLabels", "isobarStep", "centres", "opacity", "basemap", "seamarks", "graticule", "panelOpen", "plotsOpen", "plotRoute", "noteOpen", "theme", "picker"]
       .forEach((key) => { if (key in stored) state[key] = stored[key]; });
     ["hidden", "zones", "overlays"].forEach((key) => { Object.assign(state[key], stored[key] || {}); });
   }
@@ -180,7 +185,8 @@
           t: state.t, view, speed: state.speed, source: state.source, layer: state.layer, arrowKind: state.arrowKind,
           isobars: state.isobars, isobarLabels: state.isobarLabels, isobarStep: state.isobarStep, centres: state.centres, opacity: state.opacity, basemap: state.basemap,
           seamarks: state.seamarks, graticule: state.graticule, hidden: state.hidden, zones: state.zones,
-          overlays: state.overlays, panelOpen: state.panelOpen, noteOpen: state.noteOpen, theme: state.theme,
+          overlays: state.overlays, panelOpen: state.panelOpen, plotsOpen: state.plotsOpen, plotRoute: state.plotRoute,
+          noteOpen: state.noteOpen, theme: state.theme,
           picker: state.picker,
         };
         window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(keep));
@@ -1276,7 +1282,7 @@
       top: Math.min(90, height / 4),
       bottom: Math.min(timeline + 50, height / 3),
       left: Math.min(left, width / 3),
-      right: Math.min(70, width / 4),
+      right: Math.min(state.plotsOpen && width > 720 ? $("plots").offsetWidth + 30 : 70, width / 3),
     };
     map.fitBounds(bounds, { padding, duration: 600, maxZoom: 7 });
   }
@@ -1413,6 +1419,12 @@
       return;
     }
     if (state.editing) closeEditor();
+    // A route clicked is the route of the plots.
+    if (target && target.id !== state.plotRoute) {
+      state.plotRoute = target.id;
+      rebuildPlots();
+      persist();
+    }
     if (!target && state.picker) setPicker({ lat: event.lngLat.lat, lon: wrapLongitude(event.lngLat.lng) });
     onPointer(event);
   }
@@ -1665,6 +1677,925 @@
       `<div class="pk-sub">${found.source ? `<span class="pk-model">${escapeHtml(found.source.label)}</span>` : ""}${escapeHtml(formatShort(state.t))}</div></div>` +
       `<button class="picker-close" type="button" title="Remove the picker">${icon("close")}</button></div>` +
       `<div class="pk-rows">${rows}</div>`;
+  }
+
+  // --------------------------------------------------------------------
+  // Plots of a route, beside the map
+  // --------------------------------------------------------------------
+
+  // Width of the axis labels on the left of the plots, and the colours of
+  // the curves, vivid enough for both themes.
+  const PLOT_GUTTER = 34;
+  const PLOT_COLORS = {
+    sog: "#4cc9f0",
+    stw: "#f8961e",
+    sails: "#2ec4b6",
+    hotel: "#f9c74f",
+    propulsion: "#9b5de5",
+    fluctuation: "#f15bb5",
+    wind: "#90e0ef",
+    waves: "#48bfe3",
+    pressure: "#c77dff",
+  };
+  // The sky of the cloud plot: by day and by night, horizon and top, and the
+  // clouds lit and in shade, as plot_utils.plot_sky draws it.
+  const DAY_SKY = [[0.74, 0.87, 0.96], [0.18, 0.44, 0.73]];
+  const NIGHT_SKY = [[0.24, 0.32, 0.48], [0.07, 0.13, 0.27]];
+  const CLOUD_LIT = [1, 1, 1];
+  const CLOUD_SHADE = [0.33, 0.36, 0.42];
+  const ROW_KM = [0, 2, 6, 12];
+  // Per genus: bottom and top in km ("base" for the cloud base, "cape" for a
+  // depth growing with the CAPE), opacity, darkness and texture.
+  const SKY_LAYERS = {
+    St: ["base", 0.45, 0.95, 0.45, "flat"],
+    Sc: ["base", 0.9, 0.9, 0.35, "rolls"],
+    Cu: ["base", "cape", 0.95, 0.2, "puffs"],
+    Cb: ["base", 11.0, 1.0, 0.75, "tower"],
+    Ns: [0.6, 6.5, 1.0, 0.8, "flat"],
+    As: [3.0, 6.0, 0.85, 0.5, "flat"],
+    Ac: [3.2, 4.6, 0.8, 0.15, "rolls"],
+    Cs: [7.0, 10.0, 0.6, 0.05, "veil"],
+    Ci: [8.0, 10.5, 0.75, 0.0, "fibres"],
+  };
+  const RAIN_RATE = 0.1; // mm/h
+  const RAIN_COLOR = "rgba(30, 136, 229, 0.9)";
+  const SNOW_COLOR = "#e3f2fd";
+  const LIGHTNING_COLOR = "#ffd54f";
+  const FOG_COLOR = [0.86, 0.87, 0.88];
+  const SNOW_TEMPERATURE = 274.15; // K
+
+  // The route of the plots: the one chosen while it is shown, else the
+  // first shown, else the first of the file.
+  function plotRoute() {
+    const shown = shownRoutes();
+    return shown.find((route) => route.id === state.plotRoute) || shown[0] || includedRoutes()[0] || null;
+  }
+
+  function series(route, name) {
+    const values = (route.series && route.series[name]) || route.values[name];
+    return values && values.some((value) => value !== null) ? values : null;
+  }
+
+  // A value of a forecast at a point and time, from the frames themselves:
+  // faster than the grids of the map for a few points at many times.
+  function pointValue(source, name, t, lat, lon) {
+    const frame = frameAt(source, t);
+    const info = source.quantities[name];
+    if (!frame || !info || !source.data[name]) return NaN;
+    const g = source.grid;
+    const x = (wrapLongitude(lon) - g.lon0) / g.dlon, y = (lat - g.lat0) / g.dlat;
+    const first = byteBilinear(source.data[name][frame.i0], g, x, y);
+    const second = byteBilinear(source.data[name][frame.i1], g, x, y);
+    if (!(first === first && second === second)) return NaN;
+    return info.offset + info.scale * (first + frame.a * (second - first));
+  }
+
+  // Bilinear value of the bytes of a frame, the missing ones left out.
+  function byteBilinear(values, g, x, y) {
+    if (!(x >= 0 && y >= 0 && x <= g.nlon - 1 && y <= g.nlat - 1)) return NaN;
+    const i = Math.min(Math.floor(x), g.nlon - 2), j = Math.min(Math.floor(y), g.nlat - 2);
+    const fx = x - i, fy = y - j, n = g.nlon;
+    const corners = [values[j * n + i], values[j * n + i + 1], values[(j + 1) * n + i], values[(j + 1) * n + i + 1]];
+    const weights = [(1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy];
+    let sum = 0, weight = 0;
+    for (let c = 0; c < 4; c++) {
+      if (corners[c] !== NO_DATA) { sum += weights[c] * corners[c]; weight += weights[c]; }
+    }
+    return weight >= 0.5 ? sum / weight : NaN;
+  }
+
+  // The pressure along a route, from the source shown, kept until either
+  // changes.
+  const pressureCache = {};
+  function routePressure(route, source) {
+    if (!source || !source.ready || !source.quantities.pressure) return null;
+    const key = `${route.id}@${source.id}`;
+    if (!(key in pressureCache)) {
+      const values = route.ctim.map((t, k) => pointValue(source, "pressure", t, route.clat[k], route.clon[k]));
+      pressureCache[key] = values.some((value) => value === value) ? values.map((value) => (value === value ? value : null)) : null;
+    }
+    return pressureCache[key];
+  }
+
+  // The sky along a route: that of the source shown, else of another one.
+  function routeSky(route, source) {
+    if (!route.sky) return null;
+    const id = source && route.sky[source.id] ? source.id : Object.keys(route.sky)[0];
+    const found = scene.sources.find((item) => item.id === id);
+    return id ? { sky: route.sky[id], label: found ? found.label : id } : null;
+  }
+
+  function niceStep(span, count) {
+    const raw = span / Math.max(count, 1);
+    const power = Math.pow(10, Math.floor(Math.log10(raw)));
+    const unit = raw / power;
+    return (unit <= 1 ? 1 : unit <= 2 ? 2 : unit <= 2.5 ? 2.5 : unit <= 5 ? 5 : 10) * power;
+  }
+
+  // The range of a plot over some series, from zero unless `free`, with
+  // round ticks.
+  function plotRange(lists, free, bounds) {
+    if (bounds) return { low: bounds[0], high: bounds[1], ticks: [bounds[0], (bounds[0] + bounds[1]) / 2, bounds[1]] };
+    let low = Infinity, high = -Infinity;
+    lists.forEach((values) => (values || []).forEach((value) => {
+      if (value !== null && value === value) { low = Math.min(low, value); high = Math.max(high, value); }
+    }));
+    if (!(high >= low)) { low = 0; high = 1; }
+    if (!free) low = Math.min(0, low);
+    if (high - low < 1e-6) high = low + 1;
+    const step = niceStep(high - low, 2);
+    low = Math.floor(low / step) * step;
+    high = Math.ceil(high / step) * step;
+    const ticks = [];
+    for (let tick = low; tick <= high + step / 2; tick += step) ticks.push(Math.round(tick * 1e6) / 1e6);
+    return { low, high, ticks };
+  }
+
+  function cssColor(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#888";
+  }
+
+  function rgba(hex, alpha) {
+    const value = parseInt(hex.slice(1), 16);
+    return `rgba(${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}, ${alpha})`;
+  }
+
+  // The colour of a value on the scale of a layer, or null without it.
+  function scaleColor(layer, value) {
+    const info = scene.layers[layer];
+    if (!info || !info.colormap) return null;
+    const colors = info.colormap.colors;
+    const index = Math.round(((value - info.colormap.min) / (info.colormap.max - info.colormap.min)) * (colors.length - 1));
+    return colors[Math.max(0, Math.min(colors.length - 1, index))];
+  }
+
+  // A canvas of a plot with its geometry: time and value to pixels.
+  function plotFrame(canvas, route, range) {
+    const ratio = window.devicePixelRatio || 1;
+    const width = canvas.clientWidth, height = canvas.clientHeight;
+    if (canvas.width !== Math.round(width * ratio)) canvas.width = Math.round(width * ratio);
+    if (canvas.height !== Math.round(height * ratio)) canvas.height = Math.round(height * ratio);
+    const context = canvas.getContext("2d");
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    context.clearRect(0, 0, width, height);
+    const t0 = route.tim[0], t1 = route.tim[route.tim.length - 1];
+    const left = PLOT_GUTTER, right = width - 4, top = 4, bottom = height - 3;
+    return {
+      context, width, height, left, right, top, bottom, t0, t1,
+      x: (t) => left + ((t - t0) / (t1 - t0)) * (right - left),
+      y: range ? (value) => bottom - ((value - range.low) / (range.high - range.low)) * (bottom - top) : null,
+    };
+  }
+
+  // Horizontal lines at the ticks, their values in the gutter, and a line
+  // at each midnight UTC.
+  function drawGrid(frame, range, format) {
+    const c = frame.context;
+    c.save();
+    c.strokeStyle = cssColor("--line");
+    c.fillStyle = cssColor("--muted");
+    c.lineWidth = 1;
+    c.font = "10px system-ui, sans-serif";
+    c.textAlign = "right";
+    c.textBaseline = "middle";
+    if (range) {
+      range.ticks.forEach((tick) => {
+        const y = Math.round(frame.y(tick)) + 0.5;
+        c.beginPath(); c.moveTo(frame.left, y); c.lineTo(frame.right, y); c.stroke();
+        c.fillText(format ? format(tick) : String(tick), frame.left - 5, Math.max(6, Math.min(frame.height - 5, y)));
+      });
+    }
+    c.setLineDash([2, 3]);
+    for (let t = Math.ceil(frame.t0 / DAY) * DAY; t < frame.t1; t += DAY) {
+      const x = Math.round(frame.x(t)) + 0.5;
+      c.beginPath(); c.moveTo(x, frame.top); c.lineTo(x, frame.bottom); c.stroke();
+    }
+    c.restore();
+  }
+
+  // The path of a series per segment, as steps from node to node, broken
+  // where values are missing. `base` closes it into an area down to it.
+  function stepPath(frame, route, values, base) {
+    const c = frame.context;
+    const parts = [];
+    let part = null;
+    values.forEach((value, k) => {
+      if (value === null || value !== value) { part = null; return; }
+      if (!part) parts.push((part = []));
+      part.push([frame.x(route.tim[k]), frame.y(value)], [frame.x(route.tim[k + 1]), frame.y(value)]);
+    });
+    c.beginPath();
+    parts.forEach((points) => {
+      points.forEach(([x, y], index) => (index ? c.lineTo(x, y) : c.moveTo(x, y)));
+      if (base) {
+        for (let index = points.length - 1; index >= 0; index--) {
+          const k = Math.floor(index / 2);
+          const b = typeof base === "function" ? base(k, points[index]) : base;
+          c.lineTo(points[index][0], b);
+        }
+        c.closePath();
+      }
+    });
+  }
+
+  // The segment of the route at the time shown, or -1 off the route.
+  function plotSegment(route) {
+    if (state.t < route.tim[0] || state.t > route.tim[route.tim.length - 1]) return -1;
+    return routePosition(route, state.t).k;
+  }
+
+  // A vertical gradient along the scale of a layer, from `low` to `high`,
+  // or a plain colour without that layer.
+  function scaleFill(frame, layer, low, high, alpha, fallback) {
+    if (!scene.layers[layer] || !scene.layers[layer].colormap) return rgba(fallback, alpha);
+    const gradient = frame.context.createLinearGradient(0, frame.y(low), 0, frame.y(high));
+    for (let s = 0; s <= 8; s++) {
+      const color = scaleColor(layer, low + (s / 8) * (high - low));
+      gradient.addColorStop(s / 8, rgba(color, alpha));
+    }
+    return gradient;
+  }
+
+  function strokeSeries(frame, route, values, color, width, dash) {
+    const c = frame.context;
+    stepPath(frame, route, values);
+    c.save();
+    c.strokeStyle = color;
+    c.lineWidth = width;
+    c.lineJoin = "round";
+    if (dash) c.setLineDash(dash);
+    c.stroke();
+    c.restore();
+  }
+
+  function fillSeries(frame, route, values, fill, base) {
+    stepPath(frame, route, values, base === undefined ? frame.bottom : base);
+    frame.context.fillStyle = fill;
+    frame.context.fill();
+  }
+
+  function formatFixed(value, digits) {
+    return value === null || value === undefined || value !== value ? "–" : value.toFixed(digits);
+  }
+
+  function chip(color, dashed) {
+    return `<i class="${dashed ? "dashed" : ""}" style="--chip:${color}"></i>`;
+  }
+
+  // A speed and its gust, its area coloured by the wind scale.
+  function windPlot(id, title, speed, gust) {
+    return {
+      id, title, unit: "kt", height: 64,
+      available: (route) => !!series(route, speed),
+      draw(canvas, route) {
+        const values = series(route, speed), gusts = series(route, gust);
+        const range = plotRange([values, gusts]);
+        const frame = plotFrame(canvas, route, range);
+        drawGrid(frame, range);
+        fillSeries(frame, route, values, scaleFill(frame, "wind", range.low, range.high, 0.8, PLOT_COLORS.wind));
+        if (gusts) strokeSeries(frame, route, gusts, cssColor("--fg"), 1, [4, 3]);
+        strokeSeries(frame, route, values, cssColor("--fg"), 1.4);
+        return frame;
+      },
+      readout(route, k) {
+        const values = series(route, speed), gusts = series(route, gust);
+        return `${chip(scaleColor("wind", values[k] || 0) || PLOT_COLORS.wind)}<b>${formatFixed(values[k], 1)}</b>` +
+          (gusts ? `${chip(cssColor("--fg"), true)}gust <b>${formatFixed(gusts[k], 1)}</b>` : "") + " kt";
+      },
+    };
+  }
+
+  // Propulsion and hotel load stacked, from the brake power, else the total.
+  function powerParts(route) {
+    const hotel = series(route, "hotel_load");
+    const bhp = series(route, "bhp"), total = series(route, "total_power");
+    let propulsion = bhp;
+    if (!propulsion && total) propulsion = hotel ? total.map((value, k) => (value === null || hotel[k] === null ? null : value - hotel[k])) : total;
+    if (!propulsion && !hotel) return null;
+    const zero = (propulsion || hotel).map(() => 0);
+    const max = series(route, "max_bhp");
+    return { hotel: hotel || zero, propulsion: propulsion || zero, fluctuation: max && bhp ? max.map((value, k) => (value === null || bhp[k] === null ? null : value - bhp[k])) : null, hasHotel: !!hotel, hasPropulsion: !!propulsion };
+  }
+
+  const PLOTS = [
+    {
+      id: "speed", title: "Speed", unit: "kt", height: 60,
+      available: (route) => !!(series(route, "sog") || series(route, "stw")),
+      draw(canvas, route) {
+        const sog = series(route, "sog"), stw = series(route, "stw");
+        const range = plotRange([sog, stw], true);
+        const frame = plotFrame(canvas, route, range);
+        drawGrid(frame, range);
+        if (sog) {
+          const fill = frame.context.createLinearGradient(0, frame.top, 0, frame.bottom);
+          fill.addColorStop(0, rgba(PLOT_COLORS.sog, 0.35));
+          fill.addColorStop(1, rgba(PLOT_COLORS.sog, 0.02));
+          fillSeries(frame, route, sog, fill);
+        }
+        if (stw) strokeSeries(frame, route, stw, PLOT_COLORS.stw, 1.6);
+        if (sog) strokeSeries(frame, route, sog, PLOT_COLORS.sog, 1.8);
+        return frame;
+      },
+      readout(route, k) {
+        const sog = series(route, "sog"), stw = series(route, "stw");
+        return (sog ? `${chip(PLOT_COLORS.sog)}SOG <b>${formatFixed(sog[k], 1)}</b>` : "") +
+          (stw ? `${chip(PLOT_COLORS.stw)}STW <b>${formatFixed(stw[k], 1)}</b>` : "") + " kt";
+      },
+    },
+    {
+      id: "sails", title: "Sails", unit: "%", height: 46,
+      available: (route) => !!series(route, "sails_contribution"),
+      draw(canvas, route) {
+        const values = series(route, "sails_contribution");
+        const range = plotRange([], false, [0, 100]);
+        const frame = plotFrame(canvas, route, range);
+        drawGrid(frame, range);
+        const fill = frame.context.createLinearGradient(0, frame.top, 0, frame.bottom);
+        fill.addColorStop(0, rgba(PLOT_COLORS.sails, 0.75));
+        fill.addColorStop(1, rgba(PLOT_COLORS.sails, 0.12));
+        fillSeries(frame, route, values, fill);
+        strokeSeries(frame, route, values, PLOT_COLORS.sails, 1.6);
+        return frame;
+      },
+      readout(route, k) {
+        return `${chip(PLOT_COLORS.sails)}<b>${formatFixed(series(route, "sails_contribution")[k], 0)}</b> % of the thrust`;
+      },
+    },
+    {
+      id: "power", title: "Power", unit: "kW", height: 72,
+      available: (route) => !!powerParts(route),
+      draw(canvas, route) {
+        const parts = powerParts(route);
+        const total = parts.propulsion.map((value, k) => (value === null || parts.hotel[k] === null ? null : value + parts.hotel[k]));
+        const upper = parts.fluctuation ? total.map((value, k) => (value === null || parts.fluctuation[k] === null ? null : value + parts.fluctuation[k])) : null;
+        const lower = upper ? total.map((value, k) => (value === null || parts.fluctuation[k] === null ? null : value - parts.fluctuation[k])) : null;
+        const range = plotRange([total, upper]);
+        const frame = plotFrame(canvas, route, range);
+        drawGrid(frame, range, (tick) => (tick >= 1000 ? `${tick / 1000}k` : String(tick)));
+        // Hotel load at the bottom, propulsion stacked on it.
+        fillSeries(frame, route, parts.hotel, rgba(PLOT_COLORS.hotel, 0.8));
+        fillSeries(frame, route, total, rgba(PLOT_COLORS.propulsion, 0.75), (k) => frame.y(parts.hotel[k] || 0));
+        if (upper) {
+          stepPath(frame, route, upper, (k) => frame.y(lower[k] === null ? 0 : lower[k]));
+          frame.context.fillStyle = rgba(PLOT_COLORS.fluctuation, 0.12);
+          frame.context.fill();
+          strokeSeries(frame, route, upper, PLOT_COLORS.fluctuation, 1, [4, 3]);
+          strokeSeries(frame, route, lower, PLOT_COLORS.fluctuation, 1, [4, 3]);
+        }
+        strokeSeries(frame, route, total, cssColor("--fg"), 1.2);
+        return frame;
+      },
+      readout(route, k) {
+        const parts = powerParts(route);
+        let text = "";
+        if (parts.hasPropulsion) text += `${chip(PLOT_COLORS.propulsion)}prop. <b>${formatFixed(parts.propulsion[k], 0)}</b>`;
+        if (parts.hasHotel) text += `${chip(PLOT_COLORS.hotel)}hotel <b>${formatFixed(parts.hotel[k], 0)}</b>`;
+        if (parts.fluctuation) text += `${chip(PLOT_COLORS.fluctuation, true)}± <b>${formatFixed(parts.fluctuation[k], 0)}</b>`;
+        return text + " kW";
+      },
+    },
+    windPlot("tws", "True wind", "tws", "tws_gust"),
+    windPlot("aws", "Apparent wind", "aws", "aws_gust"),
+    {
+      id: "swh", title: "Waves", unit: "m", height: 52,
+      available: (route) => !!series(route, "swh"),
+      draw(canvas, route) {
+        const values = series(route, "swh");
+        const range = plotRange([values]);
+        const frame = plotFrame(canvas, route, range);
+        drawGrid(frame, range);
+        fillSeries(frame, route, values, scaleFill(frame, "waves", range.low, range.high, 0.85, PLOT_COLORS.waves));
+        strokeSeries(frame, route, values, cssColor("--fg"), 1.4);
+        return frame;
+      },
+      readout(route, k) {
+        const values = series(route, "swh");
+        return `${chip(scaleColor("waves", values[k] || 0) || PLOT_COLORS.waves)}Hs <b>${formatFixed(values[k], 1)}</b> m`;
+      },
+    },
+    {
+      id: "pressure", title: "Pressure", unit: "hPa", height: 52,
+      available: (route, source) => !!routePressure(route, source),
+      draw(canvas, route, source) {
+        const values = routePressure(route, source);
+        const range = plotRange([values], true);
+        const frame = plotFrame(canvas, route, range);
+        drawGrid(frame, range);
+        fillSeries(frame, route, values, scaleFill(frame, "pressure", range.low, range.high, 0.55, PLOT_COLORS.pressure));
+        strokeSeries(frame, route, values, cssColor("--fg"), 1.4);
+        return frame;
+      },
+      readout(route, k, source) {
+        const value = routePressure(route, source)[k];
+        return `${chip(scaleColor("pressure", value || 1013) || PLOT_COLORS.pressure)}<b>${formatFixed(value, 1)}</b> hPa · ${escapeHtml(source.label)}`;
+      },
+    },
+    {
+      id: "clouds", title: "Clouds", unit: "km", height: 116,
+      available: (route, source) => !!routeSky(route, source),
+      draw(canvas, route, source) {
+        const frame = plotFrame(canvas, route, null);
+        frame.y = (km) => frame.bottom - (kmToRow(km) / 3) * (frame.bottom - frame.top);
+        drawSky(frame, route, routeSky(route, source).sky);
+        drawGrid(frame, { ticks: [0, 2, 6, 12] });
+        return frame;
+      },
+      readout(route, k, source) {
+        const found = routeSky(route, source);
+        return skyText(found.sky, k) + ` · ${escapeHtml(found.label)}`;
+      },
+    },
+  ];
+
+  // ---- The sky of the cloud plot ----
+
+  function kmToRow(km) {
+    for (let i = 1; i < ROW_KM.length; i++) {
+      if (km <= ROW_KM[i]) return i - 1 + (km - ROW_KM[i - 1]) / (ROW_KM[i] - ROW_KM[i - 1]);
+    }
+    return ROW_KM.length - 1;
+  }
+
+  function smoothstep(edge0, edge1, x) {
+    const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+    return t * t * (3 - 2 * t);
+  }
+
+  // A smooth noise in [-1, 1] along the route, the same at each drawing.
+  function noise(phase, seed, scale) {
+    let value = 0;
+    [0.7, 1.9, 4.3].forEach((frequency, index) => {
+      value += Math.sin((2 * Math.PI * frequency * phase) / scale + 1.7 * seed + 2.3 * index) / frequency;
+    });
+    return value / 1.9;
+  }
+
+  function seeded(seed) {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6d2b79f5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // Elevation of the Sun in degrees, within a few tenths: by day or night.
+  function sunElevation(t, lat, lon) {
+    const days = t / DAY - 10957.5;
+    const rad = Math.PI / 180;
+    const anomaly = (357.529 + 0.98560028 * days) * rad;
+    const ecliptic = (280.459 + 0.98564736 * days + 1.915 * Math.sin(anomaly) + 0.02 * Math.sin(2 * anomaly)) * rad;
+    const obliquity = (23.439 - 0.00000036 * days) * rad;
+    const ascension = Math.atan2(Math.cos(obliquity) * Math.sin(ecliptic), Math.cos(ecliptic)) / rad;
+    const declination = Math.asin(Math.sin(obliquity) * Math.sin(ecliptic));
+    const sidereal = (18.697374558 + 24.06570982441908 * days) * 15;
+    const hour = (sidereal + lon - ascension) * rad;
+    return Math.asin(Math.sin(lat * rad) * Math.sin(declination) + Math.cos(lat * rad) * Math.cos(declination) * Math.cos(hour)) / rad;
+  }
+
+  function genusPresent(sky, etage, k) {
+    const mask = sky[`${etage}_genera`][k];
+    const present = [];
+    if (mask === null) return present;
+    (scene.cloud_genera || []).forEach((genus, index) => { if ((mask >> index) & 1) present.push(genus.abbreviation); });
+    return present;
+  }
+
+  function skyText(sky, k) {
+    if (sky.oktas[k] === null) return "<b>–</b>";
+    const genera = scene.cloud_genera || [];
+    const seen = ["low", "middle", "high"].map((etage) => sky[etage][k]).filter((code) => code >= 0).map((code) => genera[code].abbreviation);
+    const oktas = sky.oktas[k] === 9 ? "fog" : `${sky.oktas[k]}/8`;
+    const base = sky.base[k] !== null && seen.length ? ` · base ${Math.round(sky.base[k] / 100) * 100} m` : "";
+    const rain = sky.prate[k] >= RAIN_RATE ? ` · ${sky.t2m[k] < SNOW_TEMPERATURE ? "snow" : "rain"} ${sky.prate[k].toFixed(1)} mm/h` : "";
+    return `<b>${oktas}</b> ${escapeHtml(seen.join(" ") || "clear")}${base}${rain}`;
+  }
+
+  // A [1 2 1] blur of a field of W x H values, along both directions,
+  // `passes` times: about a Gaussian of half a pixel per pass.
+  function blurField(values, W, H, passes) {
+    const temporary = new Float32Array(values.length);
+    for (let pass = 0; pass < passes; pass++) {
+      for (let y = 0; y < H; y++) {
+        const row = y * W;
+        for (let x = 0; x < W; x++) {
+          const left = values[row + Math.max(0, x - 1)], right = values[row + Math.min(W - 1, x + 1)];
+          temporary[row + x] = 0.25 * left + 0.5 * values[row + x] + 0.25 * right;
+        }
+      }
+      for (let y = 0; y < H; y++) {
+        const above = Math.max(0, y - 1) * W, here = y * W, below = Math.min(H - 1, y + 1) * W;
+        for (let x = 0; x < W; x++) values[here + x] = 0.25 * temporary[above + x] + 0.5 * temporary[here + x] + 0.25 * temporary[below + x];
+      }
+    }
+    return values;
+  }
+
+  // A moving mean of `radius` values on each side.
+  function smoothLine(values, radius) {
+    if (radius < 1) return values;
+    const out = new Float32Array(values.length);
+    for (let i = 0; i < values.length; i++) {
+      let sum = 0, n = 0;
+      for (let d = -radius; d <= radius; d++) {
+        const j = i + d;
+        if (j >= 0 && j < values.length) { sum += values[j]; n++; }
+      }
+      out[i] = sum / n;
+    }
+    return out;
+  }
+
+  // The sky along the route, painted pixel by pixel then smoothed, as the
+  // smooth style of plot_utils.plot_sky: the sky by day or night,
+  // stratiform layers with ragged edges, Cu as domes, Cb as towers with an
+  // anvil, Ci as hooked strokes, then rain, snow, lightning and fog.
+  function drawSky(frame, route, sky) {
+    const ratio = window.devicePixelRatio || 1;
+    const left = frame.left, width = frame.right - frame.left;
+    const top = frame.top, height = frame.bottom - frame.top;
+    const W = Math.max(60, Math.min(1600, Math.round(width * ratio))), H = Math.max(40, Math.round(height * ratio));
+    const count = route.ctim.length;
+    const nodes = route.tim;
+    // Each pixel column: its segment, its position in segments, its light.
+    const column = new Int32Array(W), phase = new Float32Array(W);
+    let daylight = new Float32Array(W);
+    for (let px = 0, k = 0; px < W; px++) {
+      const t = frame.t0 + ((px + 0.5) / W) * (frame.t1 - frame.t0);
+      while (k < count - 1 && t > nodes[k + 1]) k++;
+      const f = Math.max(0, Math.min(1, (t - nodes[k]) / (nodes[k + 1] - nodes[k])));
+      column[px] = k;
+      phase[px] = k + f;
+      const lat = route.lat[k] + f * (route.lat[k + 1] - route.lat[k]);
+      const lon = route.lon[k] + f * (route.lon[k + 1] - route.lon[k]);
+      daylight[px] = smoothstep(-12, 6, sunElevation(t, lat, lon));
+    }
+    const perColumn = W / count;
+    daylight = smoothLine(daylight, Math.round(0.8 * perColumn));
+    const rowOf = (py) => 3 * (1 - (py + 0.5) / H);
+    const shade = new Float32Array(W * H), weightSum = new Float32Array(W * H), transmitted = new Float32Array(W * H).fill(1);
+    const over = (index, opacity, darkness) => {
+      if (opacity <= 0.002) return;
+      shade[index] += opacity * darkness;
+      weightSum[index] += opacity;
+      transmitted[index] *= 1 - Math.min(1, opacity);
+    };
+    const genera = scene.cloud_genera || [];
+    const etageOf = {};
+    genera.forEach((genus) => { etageOf[genus.abbreviation] = genus.etage; });
+    const covers = { low: sky.lcc, middle: sky.mcc, high: sky.hcc };
+    const present = { low: [], middle: [], high: [] };
+    for (let k = 0; k < count; k++) ["low", "middle", "high"].forEach((etage) => present[etage].push(genusPresent(sky, etage, k)));
+    const baseKm = sky.base.map((value) => Math.max(0.05, Math.min(2.5, value === null ? 0.6 : value / 1000)));
+    const random = seeded(7);
+    const strokes = [];
+    // One heaped cloud: flat base, rounded top of three lobes, darker under.
+    const dome = (center, half, base, summit, opacity, darkness) => {
+      const depth = Math.max(summit - base, 1e-3);
+      for (let px = 0; px < W; px++) {
+        const dx = (phase[px] - center) / half;
+        if (Math.abs(dx) > 1.4) continue;
+        for (let py = 0; py < H; py++) {
+          const rel = (rowOf(py) - base) / depth;
+          if (rel < -0.05 || rel > 1.3) continue;
+          const up = Math.max(rel, 0);
+          const distance = Math.min(Math.hypot(dx, up), Math.hypot((dx + 0.55) / 0.6, up / 0.75), Math.hypot((dx - 0.5) / 0.65, up / 0.8));
+          const inside = (1 - smoothstep(0.88, 1, distance)) * smoothstep(-0.02, 0.01, rel);
+          over(py * W + px, opacity * inside, darkness + 0.4 * (1 - Math.min(1, up)));
+        }
+      }
+    };
+    let seed = 0;
+    Object.entries(SKY_LAYERS).forEach(([genus, [bottom, topKm, opacity, darkness, texture]]) => {
+      seed++;
+      const etage = etageOf[genus];
+      if (!etage) return;
+      const here = present[etage].map((list) => list.includes(genus));
+      if (!here.some(Boolean)) return;
+      const cover = (k) => Math.max(0, Math.min(1, genus === "Cb" ? Math.max(covers[etage][k] || 0, 0.6) : covers[etage][k] || 0));
+      const bottomOf = (k) => (bottom === "base" ? baseKm[k] : bottom);
+      const topOf = (k) => {
+        if (topKm === "cape") return bottomOf(k) + Math.max(0.5, Math.min(5, 0.5 + (sky.cape[k] || 0) / 600));
+        if (genus === "St" || genus === "Sc") return bottomOf(k) + topKm;
+        return topKm;
+      };
+      if (texture === "puffs") {
+        here.forEach((on, k) => {
+          if (!on) return;
+          for (let n = 0; n < 1 + Math.round(2 * cover(k)); n++) {
+            const depth = (topOf(k) - bottomOf(k)) * (0.55 + 0.45 * random());
+            dome(k + 0.5 + (random() - 0.5) * 0.8, (0.35 + 0.2 * random()) * (0.75 + 0.5 * cover(k)), kmToRow(bottomOf(k)), kmToRow(bottomOf(k) + depth), opacity, 0.08);
+          }
+        });
+        return;
+      }
+      if (texture === "tower") {
+        here.forEach((on, k) => {
+          if (!on) return;
+          for (let lobe = 0; lobe < 4; lobe++) dome(k + 0.5 + (random() - 0.5) * 0.3, 0.7 - 0.08 * lobe, kmToRow(bottomOf(k)), kmToRow(9 + 0.4 * lobe), opacity, 0.35);
+          // The anvil, spreading downwind at the top of the tower.
+          const anvil = kmToRow(10.3), ceiling = kmToRow(11);
+          for (let px = 0; px < W; px++) {
+            const dx = (phase[px] - (k + 1)) / 1.5;
+            if (Math.abs(dx) > 1) continue;
+            for (let py = 0; py < H; py++) {
+              const row = rowOf(py);
+              const inside = (1 - smoothstep(0.85, 1, Math.hypot(dx, (row - anvil) / 0.13))) * (1 - smoothstep(ceiling - 0.02, ceiling, row));
+              over(py * W + px, 0.95 * inside, 0.15);
+            }
+          }
+        });
+        return;
+      }
+      if (texture === "fibres") {
+        // As many strokes per segment as its width allows.
+        const scale = Math.min(1, perColumn / ratio / 14);
+        here.forEach((on, k) => {
+          if (!on) return;
+          const wanted = (1 + 4 * cover(k)) * scale;
+          const strokesHere = Math.floor(wanted) + (random() < wanted % 1 ? 1 : 0);
+          for (let s = 0; s < strokesHere; s++) {
+            const x = k + 0.5 + (random() - 0.5) * 0.8;
+            strokes.push({ x, row: kmToRow(bottomOf(k) + (topOf(k) - 0.5 - bottomOf(k)) * random()), light: daylight[Math.min(W - 1, Math.max(0, Math.floor((x / count) * W)))] });
+          }
+        });
+        return;
+      }
+      // Stratiform layers: weights spread along the route, ragged edges,
+      // heights carried over the gaps from the nearest segment with them.
+      const nearest = here.map((_, k) => {
+        for (let d = 0; d < count; d++) {
+          if (here[k - d]) return k - d;
+          if (here[k + d]) return k + d;
+        }
+        return k;
+      });
+      const raw = new Float32Array(W);
+      for (let px = 0; px < W; px++) raw[px] = here[column[px]] ? cover(column[px]) : 0;
+      const spread = smoothLine(raw, Math.max(1, Math.round(0.35 * perColumn)));
+      const crisp = texture !== "veil";
+      const edge = crisp ? 0.02 : 0.12;
+      for (let px = 0; px < W; px++) {
+        const weight = raw[px];
+        const presentHere = smoothstep(0.15, 0.5, spread[px] + 0.15 * noise(phase[px], seed + 30, 2.0));
+        if (presentHere <= 0.002) continue;
+        const k = nearest[column[px]];
+        let low = kmToRow(bottomOf(k)), high = kmToRow(Math.max(topOf(k), bottomOf(k) + 0.2));
+        let presence = presentHere;
+        if (texture === "rolls") {
+          presence *= smoothstep(1 - 1.5 * weight - 0.1, 1 - 1.5 * weight + 0.1, 0.5 + 0.5 * noise(phase[px], seed, 2.5));
+          high += 0.035 * noise(phase[px], seed + 10, 1.5);
+          low += 0.01 * noise(phase[px], seed + 20, 2.0);
+        } else {
+          high += (crisp ? 0.025 : 0.01) * noise(phase[px], seed + 10, 2.0);
+          low += (genus === "Ns" ? 0.035 : 0.008) * noise(phase[px], seed + 20, 1.0);
+        }
+        high = low + (high - low) * (0.35 + 0.65 * presentHere);
+        const depth = Math.max(high - low, 1e-3);
+        for (let py = 0; py < H; py++) {
+          const rel = (rowOf(py) - low) / depth;
+          if (rel < -0.05 || rel > 1.05) continue;
+          const profile = smoothstep(0, edge / depth, rel) * (1 - smoothstep(1 - edge / depth, 1, rel));
+          over(py * W + px, opacity * (0.55 + 0.45 * weight) * presence * profile, darkness + 0.3 * (1 - Math.max(0, Math.min(1, rel))));
+        }
+      }
+    });
+
+    // Opacity and darkness smoothed, then the clouds over the sky, lit by
+    // day, and the haze of fog rising from the sea.
+    const alpha = new Float32Array(W * H), dark = new Float32Array(W * H);
+    for (let index = 0; index < W * H; index++) {
+      alpha[index] = 1 - transmitted[index];
+      dark[index] = (weightSum[index] > 1e-6 ? Math.min(1, shade[index] / weightSum[index]) : 0) * alpha[index];
+    }
+    const passes = Math.max(1, Math.round(2 * ratio));
+    blurField(alpha, W, H, passes);
+    blurField(dark, W, H, passes);
+    const fog = new Float32Array(W);
+    for (let px = 0; px < W; px++) fog[px] = sky.fog[column[px]] ? 1 : 0;
+    const haze = smoothLine(fog, Math.round(0.3 * perColumn));
+    const image = new ImageData(W, H);
+    const pixels = image.data;
+    for (let py = 0; py < H; py++) {
+      const level = 1 - (py + 0.5) / H;
+      const near = 1 - smoothstep(0, 0.25, 3 * level);
+      for (let px = 0; px < W; px++) {
+        const light = daylight[px], index = py * W + px;
+        const a = Math.min(1, alpha[index]);
+        const opacity = Math.pow(a, 0.85);
+        const darkness = a > 1e-6 ? Math.min(1, dark[index] / a) : 0;
+        const mist = 0.85 * haze[px] * near;
+        for (let c = 0; c < 3; c++) {
+          const day = DAY_SKY[0][c] * (1 - level) + DAY_SKY[1][c] * level;
+          const night = NIGHT_SKY[0][c] * (1 - level) + NIGHT_SKY[1][c] * level;
+          const background = night * (1 - light) + day * light;
+          const cloud = (CLOUD_LIT[c] * (1 - darkness) + CLOUD_SHADE[c] * darkness) * (0.5 + 0.5 * light);
+          const value = background * (1 - opacity) + cloud * opacity;
+          pixels[4 * index + c] = Math.round(255 * Math.max(0, Math.min(1, value * (1 - mist) + FOG_COLOR[c] * (0.5 + 0.5 * light) * mist)));
+        }
+        pixels[4 * index + 3] = 255;
+      }
+    }
+    const painted = document.createElement("canvas");
+    painted.width = W;
+    painted.height = H;
+    painted.getContext("2d").putImageData(image, 0, 0);
+    const c = frame.context;
+    c.save();
+    c.beginPath();
+    c.rect(left, top, width, height);
+    c.clip();
+    c.imageSmoothingEnabled = true;
+    c.drawImage(painted, left, top, width, height);
+    const xAt = (position) => {
+      const k = Math.max(0, Math.min(count - 1, Math.floor(position)));
+      return frame.x(nodes[k] + (position - k) * (nodes[k + 1] - nodes[k]));
+    };
+    const yOf = (row) => frame.bottom - (row / 3) * height;
+    const segment = width / count;
+    // Cirrus: thin slanted filaments ending in a hook.
+    c.lineCap = "round";
+    c.lineWidth = 0.9;
+    strokes.forEach((stroke) => {
+      const x0 = xAt(stroke.x - 0.25), y0 = yOf(stroke.row), length = Math.max(5, 0.55 * segment);
+      c.strokeStyle = `rgba(255, 255, 255, ${(0.5 * (0.5 + 0.5 * stroke.light)).toFixed(2)})`;
+      c.beginPath();
+      c.moveTo(x0, y0);
+      c.quadraticCurveTo(x0 + 0.75 * length, y0 - 1.5, x0 + length, y0 - 4);
+      c.stroke();
+    });
+    // Rain or snow under the clouds, lightning under the Cb.
+    const cb = genera.findIndex((genus) => genus.abbreviation === "Cb");
+    for (let k = 0; k < count; k++) {
+      if (sky.oktas[k] === null) continue;
+      const clouded = present.low[k].length || present.middle[k].length || present.high[k].length;
+      const base = yOf(kmToRow(Math.max(0.1, baseKm[k])));
+      const x0 = xAt(k), x1 = xAt(k + 1);
+      if (clouded && sky.prate[k] >= RAIN_RATE) {
+        const snow = sky.t2m[k] !== null && sky.t2m[k] < SNOW_TEMPERATURE;
+        const drops = Math.min(16, Math.round((1 + 2 * sky.prate[k]) * Math.max(0.5, (x1 - x0) / 6)));
+        c.strokeStyle = RAIN_COLOR;
+        c.fillStyle = SNOW_COLOR;
+        c.lineWidth = 0.9;
+        for (let d = 0; d < drops; d++) {
+          const x = x0 + (x1 - x0) * random();
+          const y = base + (frame.bottom - base) * (0.05 + 0.85 * random());
+          if (snow) { c.beginPath(); c.arc(x, y, 0.9, 0, 2 * Math.PI); c.fill(); }
+          else { c.beginPath(); c.moveTo(x, y); c.lineTo(x - 0.8, y + 3); c.stroke(); }
+        }
+      }
+      if (cb >= 0 && sky.low[k] === cb) {
+        const x = (x0 + x1) / 2, drop = frame.bottom - base;
+        c.strokeStyle = LIGHTNING_COLOR;
+        c.lineWidth = 1.3;
+        c.beginPath();
+        c.moveTo(x + 1, base);
+        c.lineTo(x - 2, base + drop * 0.45);
+        c.lineTo(x + 1.5, base + drop * 0.55);
+        c.lineTo(x - 1, frame.bottom);
+        c.stroke();
+      }
+    }
+    c.restore();
+  }
+
+  // ---- The panel ----
+
+  let plotCursors = [];
+  let plotsKey = null;
+
+  function setPlots(open) {
+    state.plotsOpen = open;
+    if (open && state.panelOpen && narrow()) setPanel(false);
+    $("plots").hidden = !open;
+    document.body.classList.toggle("plots-open", open);
+    const button = document.querySelector(".plots-control");
+    if (button) {
+      button.classList.toggle("active", open);
+      button.title = open ? "Hide the plots of the route (G)" : "Plots of a route (G)";
+    }
+    rebuildPlots(true);
+    persist();
+  }
+
+  // Draws the plots again when what they show changes: the route, the
+  // forecast, its decoding, the theme, the names or the width. The time
+  // alone only moves their cursor.
+  function rebuildPlots(force) {
+    if (!state.plotsOpen) { plotsKey = null; plotCursors = []; return; }
+    const route = plotRoute(), source = currentSource();
+    const routes = shownRoutes().map((item) => `${item.id}:${routeLabel(item)}`).join(",");
+    const key = [route && route.id, source && source.id, source && source.ready, state.theme, $("plots").clientWidth, routes].join("|");
+    if (!force && key === plotsKey) return;
+    plotsKey = key;
+    buildPlots();
+  }
+
+  // Builds the plots of the route: drawn once for a route and a source,
+  // the time only moves their cursor and changes their values.
+  function buildPlots() {
+    const box = $("plots");
+    plotCursors = [];
+    if (!state.plotsOpen) return;
+    const route = plotRoute();
+    const source = currentSource();
+    box.innerHTML = "";
+    const head = element("div", "plots-head");
+    const routes = shownRoutes().length ? shownRoutes() : includedRoutes();
+    if (route) {
+      const swatch = element("i", "swatch line");
+      swatch.style.background = route.color;
+      const select = element("select");
+      select.title = "Route of the plots, or click a route on the map";
+      routes.forEach((item) => {
+        const option = element("option", "", escapeHtml(routeLabel(item)));
+        option.value = item.id;
+        option.selected = item.id === route.id;
+        select.append(option);
+      });
+      select.addEventListener("change", () => { state.plotRoute = select.value; rebuildPlots(); persist(); });
+      head.append(swatch, select);
+    } else {
+      head.append(element("span", "muted", "No route"));
+    }
+    const close = element("button", "icon-button small", icon("close"));
+    close.type = "button";
+    close.title = "Hide the plots (G)";
+    close.addEventListener("click", () => setPlots(false));
+    head.append(close);
+    box.append(head);
+    const body = element("div", "plots-body");
+    box.append(body);
+    if (!route) return;
+    const shown = PLOTS.filter((plot) => plot.available(route, source));
+    if (!shown.length) body.append(element("div", "empty", "No values along this route"));
+    const drawn = [];
+    shown.forEach((plot) => {
+      const node = element("div", "plot");
+      node.innerHTML = `<div class="plot-head"><span class="plot-title">${escapeHtml(plot.title)}</span><span class="plot-values"></span></div>`;
+      const wrap = element("div", "plot-wrap");
+      const canvas = element("canvas");
+      canvas.style.height = `${plot.height}px`;
+      const cursor = element("div", "plot-cursor");
+      wrap.append(canvas, cursor);
+      node.append(wrap);
+      body.append(node);
+      drawn.push({ plot, canvas, cursor, values: node.querySelector(".plot-values") });
+      scrubbing(canvas, route);
+    });
+    const axis = element("div", "plots-axis");
+    body.append(axis);
+    // Drawn once laid out, so that the canvases have their size.
+    drawn.forEach((item) => { item.frame = item.plot.draw(item.canvas, route, source); });
+    const frame = drawn.length ? drawn[0].frame : null;
+    if (frame) {
+      const every = Math.max(1, Math.ceil(56 / ((frame.right - frame.left) / Math.max(1, (frame.t1 - frame.t0) / DAY))));
+      let index = 0;
+      for (let t = Math.ceil(frame.t0 / DAY) * DAY; t <= frame.t1; t += DAY, index++) {
+        if (index % every) continue;
+        const date = new Date(t * 1000);
+        const label = element("span", "", `${DAYS[date.getUTCDay()]} ${date.getUTCDate()}`);
+        label.style.left = `${frame.x(t)}px`;
+        axis.append(label);
+      }
+    }
+    plotCursors = drawn.map((item) => ({ ...item, route, source }));
+    updatePlotCursors();
+  }
+
+  // Clicking or dragging on a plot moves the time there.
+  function scrubbing(canvas, route) {
+    let dragging = false;
+    const timeAt = (event) => {
+      const box = canvas.getBoundingClientRect();
+      const fraction = (event.clientX - box.left - PLOT_GUTTER) / Math.max(1, box.width - PLOT_GUTTER - 4);
+      const t0 = route.tim[0], t1 = route.tim[route.tim.length - 1];
+      return Math.round((t0 + Math.max(0, Math.min(1, fraction)) * (t1 - t0)) / 900) * 900;
+    };
+    canvas.addEventListener("pointerdown", (event) => {
+      dragging = true;
+      canvas.setPointerCapture(event.pointerId);
+      pause();
+      setTime(timeAt(event));
+    });
+    canvas.addEventListener("pointermove", (event) => { if (dragging) setTime(timeAt(event)); });
+    const stop = () => { dragging = false; };
+    canvas.addEventListener("pointerup", stop);
+    canvas.addEventListener("pointercancel", stop);
+  }
+
+  function updatePlotCursors() {
+    if (!plotCursors.length) return;
+    const route = plotCursors[0].route;
+    const k = plotSegment(route);
+    plotCursors.forEach((item) => {
+      const on = k >= 0 && item.frame;
+      item.cursor.hidden = !on;
+      if (on) item.cursor.style.left = `${item.frame.x(state.t)}px`;
+      item.values.innerHTML = on ? item.plot.readout(route, k, item.source) : '<span class="muted">off the route at this time</span>';
+    });
   }
 
   // --------------------------------------------------------------------
@@ -1946,8 +2877,12 @@
     $("panel").hidden = !open;
     $("panel-toggle").setAttribute("aria-expanded", open ? "true" : "false");
     document.body.classList.toggle("panel-open", open);
+    // On a phone, the panel and the plots take the same place.
+    if (open && state.plotsOpen && narrow()) setPlots(false);
     persist();
   }
+
+  function narrow() { return window.innerWidth <= 720; }
 
   // --------------------------------------------------------------------
   // Header
@@ -2236,6 +3171,7 @@
     showPopup();
     updateReadout();
     updatePicker();
+    updatePlotCursors();
     if (fieldsPending) {
       const wait = (state.playing ? 100 : 40) - (performance.now() - lastFields);
       clearTimeout(fieldsTimer);
@@ -2257,6 +3193,7 @@
     ensureSelection();
     buildPanel();
     buildTimeline();
+    rebuildPlots();
     scheduleRender(true);
     persist();
   }
@@ -2266,6 +3203,7 @@
     buildTimeline();
     updateRoutes();
     showPopup();
+    rebuildPlots();
     persist();
   }
 
@@ -2276,6 +3214,7 @@
     updateHeader();
     buildPanel();
     buildTimeline();
+    rebuildPlots();
     if (!state.ready) return;
     updateRoutes();
     updateZones();
@@ -2325,6 +3264,7 @@
         });
       });
     }
+    rebuildPlots();
     persist();
   }
 
@@ -2618,6 +3558,8 @@
     setupTimeline();
     buildPanel();
     buildTimeline();
+    setPlots(state.plotsOpen);
+    if (window.ResizeObserver) new ResizeObserver(() => rebuildPlots()).observe($("plots"));
 
     const view = stored && stored.view;
     try {
@@ -2645,7 +3587,12 @@
         button.title = "Weather at a point: drag the pin, or click the map (P)";
         button.setAttribute("aria-label", "Weather at a point");
         button.addEventListener("click", togglePicker);
-        this.box.append(button);
+        const plots = element("button", "plots-control" + (state.plotsOpen ? " active" : ""), icon("plots"));
+        plots.type = "button";
+        plots.title = state.plotsOpen ? "Hide the plots of the route (G)" : "Plots of a route (G)";
+        plots.setAttribute("aria-label", "Plots of a route");
+        plots.addEventListener("click", () => setPlots(!state.plotsOpen));
+        this.box.append(button, plots);
         return this.box;
       },
       onRemove() { this.box.remove(); },
@@ -2664,6 +3611,7 @@
         .then(() => {
           $("loading").hidden = true;
           buildTimeline();
+          rebuildPlots();
           scheduleRender(true);
         })
         .catch((error) => fail(`The forecast could not be read: ${error && error.message ? error.message : error}`));
@@ -2684,8 +3632,9 @@
       else if (event.key === "ArrowUp" || event.key === "ArrowDown") { stepLayer(event.key === "ArrowUp" ? -1 : 1); event.preventDefault(); }
       else if (event.key === "l" || event.key === "L") setPanel(!state.panelOpen);
       else if (event.key === "p" || event.key === "P") togglePicker();
+      else if (event.key === "g" || event.key === "G") setPlots(!state.plotsOpen);
       else if (event.key === "t" || event.key === "T") toggleTheme();
-      else if (event.key === "Escape") { state.popup = null; showPopup(); closeEditor(); if (window.innerWidth <= 720) setPanel(false); }
+      else if (event.key === "Escape") { state.popup = null; showPopup(); closeEditor(); if (window.innerWidth <= 720) { setPanel(false); if (state.plotsOpen) setPlots(false); } }
     });
 
     // For the browser console and automated checks.

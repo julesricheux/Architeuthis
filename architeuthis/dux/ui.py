@@ -79,6 +79,7 @@ from architeuthis.forecast import (
     EnsembleHerbieForecast,
 )
 from architeuthis.report import ReportCollection, latest_report_file
+from architeuthis.sky import GFS_SKY_REGEX, IFS_SKY_REGEX
 from architeuthis.dux.share import (
     ROUTE_COLORS,
     build_scene,
@@ -127,6 +128,7 @@ ATMOSPHERE_FIELDS = [
     "precipitation_type",
     # "precipitation",
     # "temperature",
+    # "clouds",  # the nine fields of architeuthis.sky, for the cloud plot of the routes: heavy
 ]
 WAVE_FIELDS = [
     "wave_height",
@@ -146,6 +148,7 @@ GRIB_SEARCH = {
         "precipitation_type": ":ptype:",
         "precipitation": ":tprate:",
         "temperature": ":2t:",
+        "clouds": IFS_SKY_REGEX,
         "wave_height": ":swh:",
         "wave_direction": ":mwd:",
         "wave_period": ":mwp:",
@@ -157,6 +160,7 @@ GRIB_SEARCH = {
         "cape": ":CAPE:255-0 mb above ground",
         "precipitation": ":PRATE:surface:[0-9]+ hour fcst",  # not the average
         "temperature": ":TMP:2 m above ground",
+        "clouds": GFS_SKY_REGEX,
     },
     "gfs_wave": {
         "wave_height": ":HTSGW:",

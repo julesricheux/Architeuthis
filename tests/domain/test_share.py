@@ -473,6 +473,108 @@ def test_layers_have_a_colour_scale_and_a_legend(scene):
 
 
 # ----------------------------------------------------------------------
+# Plots of the routes and their sky
+# ----------------------------------------------------------------------
+
+
+def test_routes_keep_the_series_of_their_plots_whatever_the_tooltips(reports):
+    scene = share.build_scene(reports, variables=["sog"])
+    route = scene["routes"][0]
+    expected = [name for name in share.PLOT_VARIABLES if share.segment_values(reports[0], name) is not None]
+
+    assert {"sog", "stw", "bhp", "max_bhp", "tws", "tws_gust", "aws", "aws_gust", "swh"} <= set(expected)
+    assert list(route["series"]) == expected
+    assert list(route["values"]) == ["sog"]
+    for name in expected:
+        # Rounded to a decimal more than the tooltips.
+        assert route["series"][name] == pytest.approx(share.segment_values(reports[0], name), rel=1e-4, abs=0.01)
+
+
+SKY_CONSTANTS = {"tcc": 0.9, "lcc": 0.8, "mcc": 0.6, "hcc": 0.3, "cape": 50.0, "prate": 2.0, "t2m": 285.0, "d2m": 284.0, "t700": 268.0}
+
+
+def sky_dataset(percent=False, **overrides):
+    """A forecast with the nine sky fields, constant, under IFS names."""
+    shape = (TIME.size, LATITUDE.size, LONGITUDE.size)
+    values = dict(SKY_CONSTANTS, **overrides)
+    covers = {name: np.full(shape, 100.0 * values[name] if percent else values[name]) for name in ("tcc", "lcc", "mcc", "hcc")}
+    data = forecast_dataset(
+        **covers,
+        mucape=np.full(shape, values["cape"]),
+        tprate=np.full(shape, values["prate"] / 3600.0),  # kg m-2 s-1
+        t2m=np.full(shape, values["t2m"]),
+        d2m=np.full(shape, values["d2m"]),
+        t=np.full(shape, values["t700"]),
+    )
+    if percent:
+        for name in covers:
+            data[name].attrs["GRIB_units"] = "%"
+    return data
+
+
+def test_the_sky_is_diagnosed_at_the_centre_of_each_segment(reports):
+    from architeuthis import sky
+
+    scene = share.build_scene(reports, forecasts={"IFS": sky_dataset()})
+    route = scene["routes"][1]
+    count = len(route["ctim"])
+    expected = sky.diagnose({key: np.full(count, value) for key, value in SKY_CONSTANTS.items()})
+
+    assert list(route["sky"]) == ["ifs"]
+    found = route["sky"]["ifs"]
+    assert list(found) == [entry for entry, _, _ in share.SKY_ENTRIES]
+    assert all(len(values) == count for values in found.values())
+    assert found["lcc"] == pytest.approx([0.8] * count)
+    assert found["prate"] == pytest.approx([2.0] * count)
+    for entry, key, _ in share.SKY_ENTRIES:
+        if key in expected:
+            assert found[entry] == pytest.approx(np.ravel(expected[key]).astype(float).tolist(), abs=0.5), entry
+    assert found["low"][0] >= 0 and found["oktas"][0] == expected["cloud_oktas"][0]
+
+
+def test_the_genera_of_the_sky_are_listed_once_for_the_page(reports):
+    from architeuthis import sky
+
+    scene = share.build_scene(reports, forecasts={"IFS": sky_dataset()})
+
+    assert [genus["abbreviation"] for genus in scene["cloud_genera"]] == [genus["abbreviation"] for genus in sky.load_genera()["genera"]]
+    assert {genus["etage"] for genus in scene["cloud_genera"]} == {"low", "middle", "high"}
+    assert all(genus["name"] for genus in scene["cloud_genera"])
+
+
+def test_covers_in_percent_give_the_same_sky(reports):
+    fractions = share.route_sky(sky_dataset(), reports[0])
+    percents = share.route_sky(sky_dataset(percent=True), reports[0])
+
+    assert percents == fractions
+
+
+def test_the_sky_is_missing_outside_the_forecast(reports):
+    # The routes go from 35W to 15W: the forecast stops at 25W.
+    data = sky_dataset().sel(longitude=slice(None, -25.0))
+    found = share.route_sky(data, reports[0])
+    clon = np.ravel(reports[0]["clon"])
+
+    assert all(value is None for value, lon in zip(found["oktas"], clon) if lon > -24.5)
+    assert all(value is not None for value, lon in zip(found["oktas"], clon) if lon < -25.5)
+
+
+def test_without_the_sky_fields_routes_have_no_sky(scene, reports, dataset):
+    assert all("sky" not in route for route in scene["routes"])
+    assert "cloud_genera" not in scene
+    assert share.route_sky(dataset, reports[0]) is None
+    assert share.route_sky(sky_dataset().drop_vars("d2m"), reports[0]) is None
+
+
+def test_fields_read_for_the_sky_only_are_not_layers(reports):
+    scene = share.build_scene(reports, forecasts={"IFS": sky_dataset()})
+    (source,) = scene["sources"]
+
+    assert {"tcc", "lcc", "mcc", "hcc", "cape", "precipitation", "temperature"} <= set(source["layers"])
+    assert not {"d2m", "t", "t700"} & set(source["layers"])
+
+
+# ----------------------------------------------------------------------
 # Zones, overlays and land
 # ----------------------------------------------------------------------
 

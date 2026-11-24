@@ -31,6 +31,7 @@ from architeuthis.common import _HOME
 from architeuthis.exclusion import ExclusionZone, ExclusionZoneLibrary
 from architeuthis.forecast import DeterministicHerbieForecast
 from architeuthis.report import ROUTES_DIRECTORY, ReportCollection
+from architeuthis.sky import GFS_SKY_REGEX, IFS_SKY_REGEX
 
 UI_SOURCE = os.path.join(os.path.dirname(architeuthis.__file__), "dux", "ui.py")
 
@@ -378,6 +379,9 @@ def test_the_downloaded_fields_are_options_translated_for_each_model(ui):
     assert ui["WAVE"]["gfs"].regex == regex("gfs_wave", ui["WAVE_FIELDS"])
     assert regex("ifs", ["wind", "gust"]) == ":10[uv]:|:10fg:"
     assert re.search(regex("gfs", ["wind"]), ":UGRD:10 m above ground:6 hour fcst")
+    # The sky of the cloud plot: the nine fields of architeuthis.sky.
+    assert regex("ifs", ["clouds"]) == IFS_SKY_REGEX
+    assert regex("gfs", ["clouds"]) == GFS_SKY_REGEX
     assert not re.search(regex("gfs", ["wind"]), ":UGRD:10 mb:6 hour fcst")
 
     # GFS has no precipitation type: it is left out with a warning.

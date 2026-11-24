@@ -48,6 +48,7 @@ import requests
 import xarray as xr
 from PIL import Image
 
+from architeuthis import sky
 from architeuthis.common import _HOME, status
 from architeuthis.toolbox.windy_colormaps import (
     DEFAULT_FIELD_COLORMAP,
@@ -130,6 +131,62 @@ DEFAULT_VARIABLES = (
     "bhp",
     "hourly_consumption",
     "sails_contribution",
+)
+
+# Drawn in the plots of the page, beside the map, when a report has them:
+# speeds, sails, power and consumption, wind and waves along the route.
+PLOT_VARIABLES = (
+    "sog",
+    "stw",
+    "sails_contribution",
+    "hotel_load",
+    "bhp",
+    "total_power",
+    "max_bhp",
+    "hourly_consumption",
+    "tws",
+    "tws_gust",
+    "aws",
+    "aws_gust",
+    "swh",
+)
+
+# The nine fields of `sky.diagnose` in a forecast: the names each one may
+# have, the first found being read. The covers are fractions, or percents
+# (GFS); the precipitation rate is in kg m-2 s-1, as in the GRIB files.
+SKY_NAMES = {
+    "tcc": ("tcc",),
+    "lcc": ("lcc",),
+    "mcc": ("mcc",),
+    "hcc": ("hcc",),
+    "cape": ("mucape", "cape"),
+    "prate": ("tprate", "prate"),
+    "t2m": ("t2m",),
+    "d2m": ("d2m",),
+    "t700": ("t700", "t"),
+}
+# Fields read for the sky only, left out of the layers when the sky is read.
+_SKY_ONLY = ("d2m", "t700", "t")
+_COVERS = ("tcc", "lcc", "mcc", "hcc")
+
+# The sky along a route, as stored in the scene: entry of the scene, entry
+# of `sky.diagnose` or its fields, and decimals.
+SKY_ENTRIES = (
+    ("lcc", "lcc", 2),
+    ("mcc", "mcc", 2),
+    ("hcc", "hcc", 2),
+    ("cape", "cape", 0),
+    ("prate", "prate", 2),
+    ("t2m", "t2m", 1),
+    ("base", "cloud_base", 0),
+    ("oktas", "cloud_oktas", 0),
+    ("low", "cloud_low", 0),
+    ("middle", "cloud_middle", 0),
+    ("high", "cloud_high", 0),
+    ("low_genera", "cloud_low_genera", 0),
+    ("middle_genera", "cloud_middle_genera", 0),
+    ("high_genera", "cloud_high_genera", 0),
+    ("fog", "fog", 0),
 )
 
 # Route colours, chosen to stand out on the wind and wave scales.
@@ -441,13 +498,16 @@ def build_scene(
             `msl` (or `prmsl`), `swh` with `mwd` (or `dirpw`), `uo` and
             `vo`; `FIELDS` gives other known fields, and any other
             field, or `add_function` model of a `Forecast`, is a layer
-            of its own (`forecast_fields`).
+            of its own (`forecast_fields`). A forecast with the nine
+            fields of `architeuthis.sky` (`SKY_NAMES`) also gives the
+            sky along each route (`route_sky`), drawn in the plots.
         routes: Indices of the reports to include, all by default. A
             route keeps its index as identifier, `r<index>`, and its
             colour.
         variables: Per-segment entries shown in the tooltips, in this
             order; `default_variables` by default. Only these are
-            stored, with `cog`.
+            stored, with `cog` and, for the plots beside the map, the
+            `PLOT_VARIABLES` that the reports have.
         labels: One name per report, `route_label` by default.
         comments: The analyst's notes on the routes, by report index:
             `{index: {"description": text, "points": {segment: text}}}`,
@@ -525,9 +585,21 @@ def build_scene(
             for layer, info in source.pop("fields").items():
                 extra_layers[layer] = _merge_ranges(extra_layers.get(layer), info)
             sources.append(source)
+            # The sky along each route, when the forecast has its fields.
+            sampler = _sky_sampler(forecast, member)
+            if sampler is not None:
+                for index, scene_route in zip(indices, scene_routes):
+                    scene_route.setdefault("sky", {})[source["id"]] = sampler(reports[index])
 
     if title is None:
         title = f"Routes of {datetime.now(timezone.utc):%d %b %Y}"
+
+    extra = {}
+    if any("sky" in scene_route for scene_route in scene_routes):
+        extra["cloud_genera"] = [
+            {"abbreviation": genus["abbreviation"], "name": genus["name"], "etage": genus["etage"]}
+            for genus in sky.load_genera()["genera"]
+        ]
 
     return {
         "version": 1,
@@ -550,6 +622,7 @@ def build_scene(
         "overlays": [_overlay(overlay, index) for index, overlay in enumerate(overlays)],
         "land": land(),
         "credits": ", ".join(source["label"] for source in sources),
+        **extra,
     }
 
 
@@ -702,6 +775,11 @@ def _route(
         segments = segment_values(report, name)
         if segments is not None:
             values[name] = _numbers(segments, variable_info(name)["digits"] + 1)
+    series = {}
+    for name in PLOT_VARIABLES:
+        segments = segment_values(report, name)
+        if segments is not None:
+            series[name] = _numbers(segments, variable_info(name)["digits"] + 1)
     z = report.get("z")
     summary = {
         "model": _plain(report.get("model")),
@@ -730,6 +808,7 @@ def _route(
         "clon": _numbers(report["clon"], 4),
         "cog": _numbers(report["cog"], 1),
         "values": values,
+        "series": series,
         "description": comments["description"],
         "comments": [
             {"k": k, "text": text}
@@ -846,6 +925,106 @@ def forecast_fields(forecasts: Mapping, member: Optional[int] = None) -> dict:
             found.setdefault(layer, label)
     built_in = [layer for layer in _BUILT_IN_LAYERS if layer in found]
     return {layer: found[layer] for layer in built_in + [layer for layer in found if layer not in built_in]}
+
+
+def route_sky(forecast, report: Mapping, member: Optional[int] = None) -> Optional[dict]:
+    """
+    The sky along a route, from the nine fields of `architeuthis.sky`.
+
+    The fields are read at the centre of each segment and diagnosed by
+    `sky.diagnose`: cloud covers, genera, base and oktas, CAPE,
+    precipitation and temperature, as the plots of the page draw them.
+
+    Args:
+        forecast: A `Forecast`, a dataset or a list of them, as for
+            `build_scene`, with the fields of `SKY_NAMES`: those of
+            `sky.IFS_SKY_REGEX` or `sky.GFS_SKY_REGEX`.
+        report: A routing report.
+        member: Ensemble member, the first by default.
+
+    Returns:
+        Lists keyed as `SKY_ENTRIES`, one value per segment, None
+        outside the forecast; or None when a field is missing.
+    """
+    sampler = _sky_sampler(forecast, member)
+    return None if sampler is None else sampler(report)
+
+
+def _sky_sampler(forecast, member: Optional[int] = None):
+    """
+    A function giving the sky along a report, None without its fields.
+
+    The forecast is read once; each route is then interpolated in a box
+    around it only, which keeps it fast.
+    """
+    dataset = _dataset(forecast, member)
+    fields = _sky_fields(dataset)
+    if fields is None:
+        return None
+    times = _times(dataset)
+    fields = {key: array.isel(valid_time=slice(0, times.size)) for key, array in fields.items()}
+    step = float(np.max(np.diff(times))) if times.size > 1 else 0.0
+    spacing = max(
+        abs(float(np.diff(dataset[name].to_numpy()[:2])[0])) if dataset[name].size > 1 else 0.0
+        for name in ("latitude", "longitude")
+    )
+
+    def sample(report: Mapping) -> dict:
+        ctim = np.ravel(report["ctim"]).astype(float)
+        clat = np.ravel(report["clat"]).astype(float)
+        clon = (np.ravel(report["clon"]).astype(float) + 180.0) % 360.0 - 180.0
+        box = {
+            "valid_time": slice(ctim.min() - step, ctim.max() + step),
+            "latitude": slice(clat.min() - 2.0 * spacing, clat.max() + 2.0 * spacing),
+            "longitude": slice(clon.min() - 2.0 * spacing, clon.max() + 2.0 * spacing),
+        }
+        points = {
+            "valid_time": xr.DataArray(ctim, dims="point"),
+            "latitude": xr.DataArray(clat, dims="point"),
+            "longitude": xr.DataArray(clon, dims="point"),
+        }
+        sampled = {}
+        for key, array in fields.items():
+            near = array.sel(box)
+            if min(near.sizes.values()) < 2:
+                near = array
+            sampled[key] = near.interp(points).to_numpy().astype(float)
+        inside = np.logical_and.reduce([np.isfinite(values) for values in sampled.values()])
+        found = sampled | sky.diagnose({key: np.nan_to_num(values) for key, values in sampled.items()})
+        return {
+            entry: [
+                _number(value, digits) if ok else None
+                for value, ok in zip(np.ravel(np.asarray(found[key], dtype=float)), inside)
+            ]
+            for entry, key, digits in SKY_ENTRIES
+        }
+
+    return sample
+
+
+def _sky_fields(dataset: xr.Dataset) -> Optional[dict]:
+    """
+    The fields of `sky.diagnose` in a dataset, in its units, or None.
+
+    Covers in percent are turned into fractions, and precipitation
+    rates into mm/h.
+    """
+    names = {key: next((name for name in candidates if name in dataset.data_vars), None) for key, candidates in SKY_NAMES.items()}
+    if None in names.values():
+        return None
+    fields = {}
+    for key, name in names.items():
+        array = dataset[name]
+        if set(array.dims) != {"valid_time", "latitude", "longitude"}:
+            return None
+        if key in _COVERS:
+            units = str(array.attrs.get("GRIB_units") or array.attrs.get("units") or "")
+            if units == "%" or (units == "" and float(array.max(skipna=True)) > 1.5):
+                array = array / 100.0
+        elif key == "prate":
+            array = _rate_to_mm_per_hour(array)
+        fields[key] = array
+    return fields
 
 
 def _forecast_source(
@@ -1057,6 +1236,9 @@ def _fields(dataset: xr.Dataset) -> tuple:
     """
     names = [name for name in dataset.data_vars if set(dataset[name].dims) == {"valid_time", "latitude", "longitude"}]
     used = set(_WAVE_COMPONENTS)
+    # The dewpoint and the temperature at 700 hPa of the sky are no layers.
+    if all(any(name in names for name in candidates) for candidates in SKY_NAMES.values()):
+        used |= set(_SKY_ONLY)
     found = {}
 
     def first(candidates):
