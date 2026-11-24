@@ -37,6 +37,9 @@ No graph, no grid search: the waypoints are continuous variables of a single non
 - 🛰️ **Satellite observations**: ASCAT winds to check the forecasts, and one seamless cloud layer from Meteosat and GOES-East
 - 📊 **Ready-to-use outputs**: A4 reports, maps, tables, GPX tracks, and a 3D globe of routes and forecasts to send aboard as one file
 
+![The share page of Architeuthis: six routes across the North Atlantic on the IFS wind, with the iceberg limit, and the power, wind, waves and clouds along the chosen route](media/share-page.webp)
+<sub>The page sent aboard: optimized routes on the forecast wind, the iceberg limit, and the weather along the chosen route, all in one offline HTML file.</sub>
+
 **Architeuthis** provides the **onshore weather routing support** of [Neoliner Origin](https://www.neoline.eu/) 🌬️⛵⚓
 
 **Keywords:** weather routing, voyage optimization, fuel saving, wind-assisted ship propulsion, hybrid vessel, passage planning, nonlinear optimization, CasADi, IPOPT, GRIB2, xarray, python
