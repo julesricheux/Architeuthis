@@ -641,6 +641,20 @@ def test_wind_at_a_height_without_its_components_is_reported(atmosphere, wave, c
 KNOTS = 3600.0 / 1852.0
 
 
+def ifs_sky_atmosphere(without=None):
+    """The wind of the atmosphere fixture plus the nine IFS sky fields, by their IFS names."""
+    from .conftest import uniform_forecast
+
+    fields = {
+        "u10": 5.0, "v10": 2.0, "tcc": 0.9, "lcc": 0.8, "mcc": 0.3, "hcc": 0.2,
+        "mucape": 400.0, "tprate": 2.0 / 3600.0, "t2m": 285.0, "d2m": 284.0, "t": 275.0,
+    }
+    fields.pop(without, None)
+    forecast = uniform_forecast("ifs", **fields)
+    forecast.model = "ifs"
+    return forecast
+
+
 def wave_with_period(period):
     """The wave fixture plus a mean wave period, and a wave slope computed from it."""
     from .conftest import uniform_forecast
@@ -712,6 +726,51 @@ class TestAdditionalVariables:
         assert "gust" not in report
         assert report["tws_gust"] == pytest.approx(reference["tws_gust"])
         assert report["aws_gust"] == pytest.approx(reference["aws_gust"])
+
+    def test_clouds_asks_for_the_nine_fields_of_the_sky(self, analyse, open_sea):
+        analysis = analyse(open_sea, options={}, variables=["clouds"])
+        analysis.atmosphere = ifs_sky_atmosphere()
+        report = analysis.run(solve=False, solver_options=MUMPS)
+
+        assert "clouds" not in report
+        expected = {
+            "tcc": 0.9, "lcc": 0.8, "mcc": 0.3, "hcc": 0.2, "cape": 400.0,
+            "prate": 2.0, "t2m": 285.0, "d2m": 284.0, "t700": 275.0,
+        }
+        for key, value in expected.items():
+            assert np.ravel(report[key]) == pytest.approx(value), key
+            assert len(np.ravel(report[key])) == len(np.ravel(report["ctim"]))
+
+    def test_the_clouds_of_a_report_are_those_of_the_share_file(self, analyse, open_sea, tmp_path):
+        from architeuthis import sky
+        from architeuthis.dux import share
+        from architeuthis.report import ReportCollection
+
+        analysis = analyse(open_sea, options={}, variables=["clouds"])
+        analysis.atmosphere = ifs_sky_atmosphere()
+        report = analysis.run(solve=False, solver_options=MUMPS)
+        path = tmp_path / "reports.json"
+        ReportCollection([report]).save(path)
+
+        scene = share.build_scene(ReportCollection.load(path))
+        diagnosis = sky.diagnose({key: np.ravel(report[key]) for key in sky.SKY_VARIABLES})
+
+        route_sky = scene["routes"][0]["sky"]
+        assert route_sky["oktas"] == list(diagnosis["cloud_oktas"])
+        assert route_sky["low"] == list(diagnosis["cloud_low"])
+        assert route_sky["prate"] == pytest.approx([2.0] * len(route_sky["prate"]))
+        assert scene["cloud_genera"]
+        # The same sky, for plot_sky and describe
+        found = sky.from_report(report)
+        assert list(found["cloud_oktas"]) == route_sky["oktas"]
+        assert sky.from_report({"tcc": [0.5]}) is None
+
+    def test_clouds_need_the_fields_of_the_sky(self, analyse, open_sea):
+        analysis = analyse(open_sea, options={}, variables=["clouds"])
+        analysis.atmosphere = ifs_sky_atmosphere(without="mucape")
+
+        with pytest.raises(KeyError, match="IFS_SKY_REGEX"):
+            analysis.run(solve=False, solver_options=MUMPS)
 
     @pytest.mark.parametrize("include_gusts", [True, False])
     def test_the_gust_option_is_deprecated(self, analyse, open_sea, include_gusts):

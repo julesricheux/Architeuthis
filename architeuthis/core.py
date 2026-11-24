@@ -25,6 +25,7 @@ from typing import Callable, Mapping, Optional, Sequence, Union
 from architeuthis.vessel import CONSUMPTION_QUANTITIES, Vessel
 from architeuthis.common import _banner, status
 from architeuthis.optimization import Opti
+from architeuthis import sky
 from architeuthis.forecast import ENVIRONMENT_FIELDS, Forecast, Topography, calm_forecast
 from architeuthis.report import RoutingReport, _RenamedEntries
 from architeuthis.common import ArchiteuthisObject, GUST_DEFAULT_RATIO, WAVE_COMPONENTS_OFFSET
@@ -204,6 +205,11 @@ _WIND_AT_HEIGHT = re.compile(r"^(tws|twd|twa|aws|awa)(\d+)$")
 # The variable that asks for the gusts, in kt: the true and apparent wind gusts.
 GUST_VARIABLE = "gust"
 
+# The variable that asks for the sky: the nine fields of `sky.SKY_VARIABLES`
+# from the atmosphere, from which `sky.diagnose` tells the clouds and the
+# plots of `architeuthis.dux.share` paint them.
+CLOUDS_VARIABLE = "clouds"
+
 # Step of the time grid when no forecast has data, in seconds.
 DEFAULT_TIME_STEP = 3. * 3600.
 
@@ -243,6 +249,8 @@ def normalize_variables(variables: Variables) -> dict:
     `{"slope": "wave.slope"}`. `"gust"` alone asks for the gusts, and
     becomes `tws_gust` and `aws_gust`; the gust model itself, in m/s,
     is named otherwise, as in `{"gust_ms": "atmosphere.gust"}`.
+    `"clouds"` alone asks for the sky, and becomes the nine fields of
+    `sky.SKY_VARIABLES`, read from the atmosphere.
 
     Args:
         variables: None, a name, a dict of names and specifications,
@@ -288,6 +296,9 @@ def normalize_variables(variables: Variables) -> dict:
                 name = key
         if name == GUST_VARIABLE and specification == GUST_VARIABLE:
             normalized |= {key: key for key in _GUST_QUANTITIES}
+            continue
+        if name == CLOUDS_VARIABLE and specification == CLOUDS_VARIABLE:
+            normalized |= {key: f"atmosphere.{key}" for key in sky.SKY_VARIABLES}
             continue
         if not (isinstance(specification, str) or callable(specification)):
             raise TypeError(
@@ -440,6 +451,11 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
     - `"gust"`: the gusts, `tws_gust` and `aws_gust` (kt), from the
       atmospheric model `gust` in m/s, or `tws * GUST_DEFAULT_RATIO`
       without it.
+    - `"clouds"`: the nine fields of `sky.SKY_VARIABLES` from the
+      atmosphere, in the units of `sky.diagnose`, all that the cloud
+      plots of `architeuthis.dux` need. An IFS or GFS atmosphere
+      downloaded with `sky.IFS_SKY_REGEX` or `sky.GFS_SKY_REGEX`
+      gets their models from `sky.add_sky_models` when it has none.
     - A model key, such as `"slope"` or `"pres"`: the first of
       `atmosphere`, `wave`, `current` and `vessel` with a model of that
       key is queried, in the units of the model. A prefix picks the
@@ -600,6 +616,37 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             )
         return gusts | implicit | listed
 
+    def _add_sky_models(self, name: str) -> None:
+        """
+        Register the sky fields on the atmosphere, from its data.
+
+        Only an IFS or GFS atmosphere holding the nine fields of its
+        model in `sky.SKY_FIELDS` can be completed so.
+
+        Args:
+            name: The variable that needs them, for the error.
+
+        Raises:
+            KeyError: When the atmosphere cannot give the sky.
+        """
+        atmosphere = self.atmosphere
+        model = str(getattr(atmosphere, "model", "") or "").lower()
+        data = getattr(atmosphere, "data", None)
+        names = [field for field, _ in sky.SKY_FIELDS.get(model, {}).values()]
+        missing = [field for field in names if data is None or field not in data]
+        if not names or missing:
+            reason = (
+                f"lacks {', '.join(missing)}" if names
+                else f"is not one of the models of sky.SKY_FIELDS ({', '.join(sky.SKY_FIELDS)})"
+            )
+            raise KeyError(
+                f"Variable {name!r}: {atmosphere.name} (atmosphere) has no sky model, "
+                f"and its data {reason}. Download it with sky.IFS_SKY_REGEX or "
+                "sky.GFS_SKY_REGEX, or register the fields with sky.add_sky_models."
+            )
+        sky.add_sky_models(atmosphere, model=model)
+        self.info(f"➕ Sky fields of {atmosphere.name} registered for {name!r}.")
+
     def _resolve_variable(self, name: str, specification, quantities=_PASSAGE_QUANTITIES) -> tuple:
         """
         How a variable is computed: `(kind, source, key)`.
@@ -617,6 +664,8 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
             prefix, dot, rest = specification.partition(".")
             source, key = (prefix, rest) if dot and prefix in VARIABLE_SOURCES else (None, specification)
             if source is not None:
+                if source == "atmosphere" and key in sky.SKY_VARIABLES and key not in self.atmosphere.models:
+                    self._add_sky_models(name)
                 if key not in getattr(self, source).models:
                     raise KeyError(
                         f"Variable {name!r}: {getattr(self, source).name} ({source}) has no "

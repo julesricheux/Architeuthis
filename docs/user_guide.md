@@ -221,6 +221,7 @@ report.table(["tws", "tws_gust", "slope"])
 | Specification | Gives | Units |
 | --- | --- | --- |
 | `"gust"` | `tws_gust` and `aws_gust`, below | kt |
+| `"clouds"` | the nine fields of `sky.SKY_VARIABLES` from the atmosphere, all that the cloud plots need (`sky.from_report`, the plots of the share file); an IFS or GFS atmosphere downloaded with `sky.IFS_SKY_REGEX` or `GFS_SKY_REGEX` gets their models from `sky.add_sky_models` when it has none, else a `KeyError` names the fields missing | those of `sky.diagnose` |
 | a model key, such as `"slope"` or `"pres"` | the model of the first of `atmosphere`, `wave`, `current` and `vessel` that has this key | those of the model |
 | a model key with its source, such as `"wave.slope"` or `"vessel.leeway"` | the model of that source; in a list, the variable is named without the prefix, `slope` | those of the model |
 | `"tws_gust"` | the atmospheric model `gust` (m/s) converted to kt, or `tws * GUST_DEFAULT_RATIO` (1.23) when there is none | kt |
@@ -257,6 +258,7 @@ print(sky.describe(fields | diagnosis))           # ["6/8 · Sc 600 m · As · l
 | `IFS_SKY_REGEX`, `GFS_SKY_REGEX` | Select the nine fields with Herbie. For GFS, only the instantaneous covers and rate, not the averages of the same names; GFS has no middle and high covers at step 0, so start at 3 h. |
 | `add_sky_models(forecast, model=None)` | Registers the fields under the keys of `SKY_VARIABLES`, in 0-1 covers, J/kg, mm/h and K, whatever their names and units in the model (`SKY_FIELDS`). |
 | `sample(forecast, valid_time, latitude, longitude)` | The nine fields at these points, as NumPy arrays. |
+| `from_report(report)` | The nine fields of a routing report and their `diagnose`, one value per segment, NaN read as 0; None when a field is missing. |
 | `diagnose(fields, thresholds=None)` | Per point: `cloud_oktas` (9 for fog), `cloud_base` in m, one genus per étage in `cloud_low`, `cloud_middle` and `cloud_high` (index in `load_genera()["genera"]`, `NONE` or `HIDDEN`), every genus present in the column in `cloud_low_genera`, `cloud_middle_genera` and `cloud_high_genera` (bit masks, whether hidden from deck or not), `fog` and the lower-tropospheric `stability` in K. |
 | `describe(sky, thresholds=None)` | One line per point: cover, low genera and their base, middle and high genera seen from deck, several genera of an étage joined by "+" (`Cb+Cu`), precipitation. |
 | `load_genera()`, `genus_index`, `genus_abbreviation` | The table of genera, and the codes of `diagnose`. |
@@ -264,6 +266,14 @@ print(sky.describe(fields | diagnosis))           # ["6/8 · Sc 600 m · As · l
 | `draw(sky, valid_time, **kwargs)` | The meteogram of `plot_sky`, described with the figures below. |
 
 The rules take, in each étage, the first genus that applies. Low: Cb with a strong CAPE and precipitation rate, St with a low cover over air near its dewpoint, Cu with a broken cover in unstable air, else Sc. Middle: Ns with thick middle and low covers and steady rain, As with a thick middle cover, else Ac. High: Cs with a wide cover, else Ci. Other genera present beside the main one are kept: Cu around a Cb or beside Sc, Sc beside St, Ac beside As, Ci beside Cs or from the anvil of a Cb. An étage is `HIDDEN` where the étages below leave at most `visible_cover` (10%) of the sky open, coded "/" as in the WMO codes. The cloud base is the condensation level, 125 m per kelvin of dewpoint spread. Cirrocumulus would need the upper air and is reported as Cirrus. The thresholds, in `THRESHOLDS`, are first values that have not been calibrated against observations: replace some with `thresholds={...}`.
+
+A routing keeps the sky of its passage when its `variables` list `"clouds"`: the nine fields at the centre of each segment, in the report under their keys. `sky.from_report(report)` reads them back as `fields | diagnose(fields)`, or None without them, and the share file draws them in its cloud plot.
+
+```python
+analysis = RoutingAnalysis(..., atmosphere=forecast, variables=["clouds", "msl"])
+report = analysis.run()
+plot_sky(sky.from_report(report), report["ctim"], style="smooth", latitude=report["clat"], longitude=report["clon"])
+```
 
 `examples/sky_along_route.py` puts the skies of IFS and GFS side by side along a great circle.
 
@@ -643,7 +653,7 @@ reports.share(
 
 The forecasts are kept around the routes only, and their fake final steps are left out. Each frame is a PNG of 8-bit values, so that a crossing with two models over a week weighs about 3 to 5 MB. Speeds are in knots and pressures in hPa. `library="inline"` puts MapLibre GL JS in the file, downloaded once to `~/data/viewer/`; when it cannot be downloaded, the file loads it from a CDN, and then needs a connection when it is opened, with a ⚠️ status. `library="cdn"` does that on purpose, for a lighter file. `build_scene` and `viewer_html(scene, library)` give the content and the page without writing a file.
 
-Each route also keeps, whatever the tooltip variables, the entries of `share.PLOT_VARIABLES` that its report has (speeds, sails, power, wind with gusts and waves), for the plots beside the globe, with its pressure and its sky when the routing computed them, never from the forecasts of the file. The pressure is the first entry of `share.PRESSURE_NAMES` (`pressure`, `msl`, `prmsl`, `mslp`) in the report, in Pa or hPa (`share.route_pressure`): list the `msl` of the atmosphere in the routing `variables`. The sky needs the nine fields of `sky.SKY_VARIABLES` in the report: register them with `sky.add_sky_models(atmosphere)` on a forecast downloaded with `sky.IFS_SKY_REGEX` or `GFS_SKY_REGEX`, and list them in `variables`. `share.route_sky(report)` then gives the sky as the file stores it: the fields of `sky.diagnose` and the covers, CAPE, precipitation and temperature at the centre of each segment (`share.SKY_ENTRIES`), None where a field is missing, or None without the nine fields.
+Each route also keeps, whatever the tooltip variables, the entries of `share.PLOT_VARIABLES` that its report has (speeds, sails, power, wind with gusts and waves), for the plots beside the globe, with its pressure and its sky when the routing computed them, never from the forecasts of the file. The pressure is the first entry of `share.PRESSURE_NAMES` (`pressure`, `msl`, `prmsl`, `mslp`) in the report, in Pa or hPa (`share.route_pressure`): list the `msl` of the atmosphere in the routing `variables`. The sky needs the nine fields of `sky.SKY_VARIABLES` in the report: list `"clouds"` in the routing `variables`, with an atmosphere downloaded with `sky.IFS_SKY_REGEX` or `GFS_SKY_REGEX`. `share.route_sky(report)` then gives the sky as the file stores it: the fields of `sky.diagnose` and the covers, CAPE, precipitation and temperature at the centre of each segment (`share.SKY_ENTRIES`), None where a field is missing, or None without the nine fields.
 
 In the page:
 

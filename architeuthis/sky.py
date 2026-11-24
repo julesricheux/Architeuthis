@@ -10,6 +10,9 @@ and dewpoint, and the temperature at 700 hPa. `SKY_FIELDS` gives their
 names in IFS and GFS, `IFS_SKY_REGEX` and `GFS_SKY_REGEX` select them
 with Herbie.
 
+A routing gives these fields along its passage when its `variables`
+list "clouds", and `from_report` reads them back.
+
 `diagnose` gives, for each point, the cover in oktas, the cloud base,
 and one genus per étage as an observer on deck would code it, hidden
 when the clouds below cover the sky. `describe` writes one line per
@@ -251,6 +254,32 @@ def sample(forecast, valid_time, latitude, longitude) -> dict:
     """
     query = {"valid_time": valid_time, "latitude": latitude, "longitude": longitude}
     return {key: onp.asarray(forecast(key, query), dtype=float).ravel() for key in SKY_VARIABLES}
+
+
+def from_report(report: Mapping) -> Optional[dict]:
+    """
+    The sky along a routed passage, from the nine fields of its report.
+
+    A routing that lists "clouds" in its `variables` stores the fields
+    of `SKY_VARIABLES` at the centre of each segment. Missing values
+    (NaN) are read as zero, as the interpolators of the forecasts do.
+
+    Args:
+        report: A routing report, or any mapping of these fields.
+
+    Returns:
+        The fields and their `diagnose`, as `fields | diagnose(fields)`,
+        one NumPy value per segment; None when a field is missing.
+
+    Example:
+        >>> report = analysis.run(variables="clouds")  # doctest: +SKIP
+        >>> plot_sky(from_report(report), report["ctim"],
+        ...          style="smooth")  # doctest: +SKIP
+    """
+    if any(key not in report for key in SKY_VARIABLES):
+        return None
+    fields = {key: onp.nan_to_num(onp.ravel(onp.asarray(report[key], dtype=float))) for key in SKY_VARIABLES}
+    return fields | diagnose(fields)
 
 
 def lower_tropospheric_stability(t2m, t700):

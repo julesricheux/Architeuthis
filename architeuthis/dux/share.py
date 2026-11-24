@@ -916,8 +916,8 @@ def route_sky(report: Mapping) -> Optional[dict]:
     """
     The sky along a route, from the nine fields of its report.
 
-    A routing gives them when its atmosphere has the models of
-    `sky.add_sky_models` and its `variables` list `sky.SKY_VARIABLES`.
+    A routing gives them when its `variables` list "clouds" (the
+    nine `sky.SKY_VARIABLES` of its atmosphere).
     They are diagnosed by `sky.diagnose` at the centre of each segment:
     cloud covers, genera, base and oktas, with the CAPE, precipitation
     and temperature, as the cloud plot of the page draws them.
@@ -930,8 +930,7 @@ def route_sky(report: Mapping) -> Optional[dict]:
         a field is missing; or None when the report lacks a field.
 
     Example:
-        >>> variables = list(sky.SKY_VARIABLES)
-        >>> analysis.run(variables=variables)  # doctest: +SKIP
+        >>> analysis.run(variables=["clouds"])  # doctest: +SKIP
         >>> route_sky(analysis.report)["oktas"]  # doctest: +SKIP
     """
     fields = {}
