@@ -7,6 +7,7 @@ temporary folder. ui.py runs from a temporary folder too, so that nothing it mig
 in the checkout.
 """
 
+import copy
 import io
 import json
 import os
@@ -26,6 +27,7 @@ from dash import no_update
 from PIL import Image
 
 import architeuthis
+from architeuthis import sky
 from architeuthis.dux import share
 from architeuthis.common import _HOME
 from architeuthis.exclusion import ExclusionZone, ExclusionZoneLibrary
@@ -45,6 +47,11 @@ VARIABLES = {
     ("ifs", "wave"): {"swh": 2.0, "mwd": 250.0, "mwp": 8.0},
     ("gfs_wave", "global.0p25"): {"swh": 3.0, "dirpw": 240.0, "perpw": 9.0},
 }
+# The cloud fields of INCLUDE_CLOUDS, by the names of each model (GFS covers in %).
+SKY_VARIABLES = {
+    "ifs": {"tcc": 0.9, "lcc": 0.8, "mcc": 0.3, "hcc": 0.2, "mucape": 400.0, "tprate": 2.0 / 3600.0, "t2m": 285.0, "d2m": 284.0, "t": 275.0},
+    "gfs": {"tcc": 50.0, "lcc": 10.0, "mcc": 40.0, "hcc": 60.0, "cape": 0.0, "prate": 0.0, "t2m": 290.0, "d2m": 280.0, "t": 280.0},
+}
 IFS_LAYERS = ["wind", "gust", "waves", "pressure", "cape", "ptype", "period", "slope"]
 GFS_LAYERS = ["wind", "gust", "waves", "pressure", "cape", "period", "slope"]
 
@@ -57,7 +64,10 @@ def load_forecast(self):
     self.data = xr.Dataset(
         {
             key: (("valid_time", "latitude", "longitude"), value * (1.0 + 0.01 * variation))
-            for key, value in VARIABLES[(self.model, self.product)].items()
+            for key, value in (
+                SKY_VARIABLES[self.model] if self.regex in (sky.IFS_SKY_REGEX, sky.GFS_SKY_REGEX)
+                else VARIABLES[(self.model, self.product)]
+            ).items()
         },
         coords={
             "valid_time": TIME,
@@ -625,3 +635,36 @@ def test_style_of_the_labels_is_in_the_assets():
 
     with open(style, encoding="utf-8") as file:
         assert ".exclusion-zone-label" in file.read()
+
+
+def test_the_ui_downloads_the_clouds_of_the_routes_that_lack_them(ui, scene, tagged_reports):
+    assert ui["INCLUDE_CLOUDS"] is True
+    assert sorted(ui["SKY"]) == ["gfs", "ifs"]
+    assert not any(key in report for report in tagged_reports for key in sky.SKY_VARIABLES)
+
+    # Each route is diagnosed from the clouds of its model (its "model" tag).
+    for route, report in zip(scene["routes"], tagged_reports):
+        covers = SKY_VARIABLES[report["model"]]
+        expected = covers["lcc"] / (100.0 if report["model"] == "gfs" else 1.0)
+        assert route["sky"]["lcc"] == pytest.approx([expected] * len(route["sky"]["lcc"]), abs=0.02)
+    assert scene["cloud_genera"]
+
+
+def test_the_clouds_of_a_routing_are_kept(ui):
+    report = copy.deepcopy(ui["reports"][0])
+    report.update({key: np.full(np.size(report["ctim"]), 0.5) for key in sky.SKY_VARIABLES})
+    untouched = ui["reports"][1]
+
+    shared = ui["with_sky"](ReportCollection([report, untouched]))
+
+    assert np.ravel(shared[0]["lcc"]) == pytest.approx(0.5)
+    assert all(key in shared[1] for key in sky.SKY_VARIABLES)
+    assert not any(key in untouched for key in sky.SKY_VARIABLES)
+
+
+def test_without_clouds_the_reports_are_left_as_they_are(ui, monkeypatch):
+    monkeypatch.setitem(ui, "SKY", {})
+    monkeypatch.setitem(ui["with_sky"].__globals__, "SKY", {})
+    collection = ReportCollection(list(ui["reports"]))
+
+    assert ui["with_sky"](collection) is collection

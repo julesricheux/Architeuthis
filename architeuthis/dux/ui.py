@@ -68,6 +68,7 @@ with require_extra():
 # load by default. This must run before the page is first served.
 _dash_renderer._set_react_version("19.2.4")
 
+from architeuthis import sky
 from architeuthis.common import _HOME, status
 from architeuthis.exclusion import (
     ExclusionZoneLibrary,
@@ -133,6 +134,11 @@ WAVE_FIELDS = [
     "wave_direction",
     "wave_period",
 ]
+
+# Whether to download, with the forecasts, the nine fields of the cloud plots of the
+# share file (sky.SKY_VARIABLES), for the routes whose reports lack them: a routing
+# that listed "clouds" in its variables already has them, and keeps its own.
+INCLUDE_CLOUDS = True
 
 # The search string of each field in the GRIB index of each Herbie model:
 # IFS names hold for oper and enfo, wave and waef. Add a field here to
@@ -326,6 +332,23 @@ for model in MODELS:
 
 FORECASTS = {model.upper(): DS[model] for model in MODELS}
 
+# The cloud fields of each model, apart from the shared forecasts: the plots read them
+# along the routes, never on the map. Always from the deterministic run; GFS has no
+# middle and high covers at step 0.
+SKY = {}
+if INCLUDE_CLOUDS:
+    for model in MODELS:
+        SKY[model] = DeterministicHerbieForecast(
+            f"sky_{model}",
+            model=model,
+            product="oper" if model == "ifs" else "pgrb2.0p25",
+            regex=sky.IFS_SKY_REGEX if model == "ifs" else sky.GFS_SKY_REGEX,
+            fxx=[step for step in steps_00_12 if model == "ifs" or step >= 3],
+            **domain,
+        )
+        SKY[model].load_data()
+        sky.add_sky_models(SKY[model], model=model)
+
 # Every layer of the forecasts, which the analyst ticks to share it: {layer: label}.
 FIELDS = forecast_fields(FORECASTS)
 
@@ -423,6 +446,38 @@ def report_path(name: str) -> Path:
     raise FileNotFoundError(name)
 
 
+def with_sky(collection) -> ReportCollection:
+    """
+    The reports, with the sky along the routes that lack it.
+
+    With `INCLUDE_CLOUDS`, the nine fields of `sky.SKY_VARIABLES` are
+    read at the centre of each segment from the cloud fields of the
+    model of the report (its `model` tag), else of the first model.
+    A report that has them keeps its own.
+
+    Args:
+        collection: The reports of a file.
+
+    Returns:
+        A new collection, of copies where the sky was added.
+    """
+    if not SKY:
+        return collection
+    reports = []
+    for report in collection:
+        if not all(key in report for key in sky.SKY_VARIABLES):
+            forecast = SKY.get(str(report.get("model", "")).lower(), next(iter(SKY.values())))
+            report = copy.copy(report)
+            report.update(sky.sample(
+                forecast,
+                np.ravel(report["ctim"]),
+                np.ravel(report["clat"]),
+                np.ravel(report["clon"]),
+            ))
+        reports.append(report)
+    return ReportCollection(reports)
+
+
 def load_reports(name: str) -> ReportCollection:
     """
     The reports of a file of `~/data/routes/`.
@@ -508,7 +563,7 @@ def preview_scene(name: str, member: int) -> dict:
     path = report_path(name)
     key = (path.name, path.stat().st_mtime, member)
     if key not in _preview:
-        collection = ReportCollection.load(path)
+        collection = with_sky(ReportCollection.load(path))
         _preview.clear()
         _preview[key] = build_scene(
             collection,
@@ -1097,7 +1152,7 @@ def download(
     """
     if not clicks:
         return no_update, no_update
-    collection = load_reports(name)
+    collection = with_sky(load_reports(name))
     title = title or default_title(collection)
     scene = build_scene(
         collection,
