@@ -56,6 +56,11 @@ IFS_LAYERS = ["wind", "gust", "waves", "pressure", "cape", "ptype", "period", "s
 GFS_LAYERS = ["wind", "gust", "waves", "pressure", "cape", "period", "slope", "clouds"]
 
 
+def offered_layers(ui, layers):
+    """The layers of a model, with the precipitation of the sky when ATMOSPHERE_FIELDS lists it."""
+    return layers + (["precipitation"] if "precipitation" in ui["ATMOSPHERE_FIELDS"] else [])
+
+
 def load_forecast(self):
     variation = np.broadcast_to(
         (LATITUDE - LATITUDE.mean())[None, :, None] / np.ptp(LATITUDE),
@@ -350,18 +355,19 @@ def test_the_preview_shows_every_route_with_the_defaults_chosen(scene, tagged_re
     assert scene["title"].startswith("Routes departing ")
 
 
-def test_the_preview_holds_both_models(scene):
+def test_the_preview_holds_both_models(ui, scene):
     assert [source["id"] for source in scene["sources"]] == ["ifs", "gfs"]
-    assert [source["layers"] for source in scene["sources"]] == [IFS_LAYERS, GFS_LAYERS]
+    assert [source["layers"] for source in scene["sources"]] == [offered_layers(ui, IFS_LAYERS), offered_layers(ui, GFS_LAYERS)]
     for source in scene["sources"]:
         assert len(source["times"]) == len(TIME)
 
 
-def test_every_field_of_the_forecasts_is_offered_and_ticked(layout):
+def test_every_field_of_the_forecasts_is_offered_and_ticked(ui, layout):
     offered = layout["fields-select"]["data"]
 
-    assert [option["value"] for option in offered] == IFS_LAYERS
-    assert [option["label"] for option in offered][-3:] == ["Wave period", "Wave slope", "Clouds"]
+    assert [option["value"] for option in offered] == offered_layers(ui, IFS_LAYERS)
+    labels = {option["value"]: option["label"] for option in offered}
+    assert [labels[layer] for layer in ("period", "slope", "clouds")] == ["Wave period", "Wave slope", "Clouds"]
     assert layout["fields-select"]["value"] == [option["value"] for option in offered]
 
 
@@ -526,7 +532,7 @@ def test_the_download_holds_the_chosen_fields(ui):
     assert gfs["layers"] == ["period"]
     # The wave arrows come with the period.
     assert set(gfs["quantities"]) == {"swh", "wave_x", "wave_y", "period"}
-    assert [source["layers"] for source in scene_of(ui["download"](*args)[0]["content"])["sources"]] == [IFS_LAYERS, GFS_LAYERS]
+    assert [source["layers"] for source in scene_of(ui["download"](*args)[0]["content"])["sources"]] == [offered_layers(ui, IFS_LAYERS), offered_layers(ui, GFS_LAYERS)]
 
 
 def test_the_download_holds_the_names_of_the_routes(ui, tagged_reports):
@@ -654,11 +660,13 @@ def test_the_clouds_are_one_layer_of_the_map(ui, scene):
     # The cover and precipitation rate of the sky, on the grid of each model.
     assert {"tcc", "tprate"} <= set(ui["DS"]["ifs"].data_vars)
     assert {"tcc", "prate"} <= set(ui["DS"]["gfs"].data_vars)
-    # Neither the covers by étage nor the precipitation alone are offered.
+    # The covers by étage are never offered alone, the precipitation only
+    # when ATMOSPHERE_FIELDS lists it.
     assert "clouds" in ui["FIELDS"]
-    assert not {"precipitation", "tcc", "lcc", "mcc", "hcc", "t2m", "d2m", "t"} & set(ui["FIELDS"])
+    assert not {"tcc", "lcc", "mcc", "hcc", "t2m", "d2m", "t"} & set(ui["FIELDS"])
+    assert ("precipitation" in ui["FIELDS"]) == ("precipitation" in ui["ATMOSPHERE_FIELDS"])
     for source in scene["sources"]:
-        assert source["layers"][-1] == "clouds"
+        assert "clouds" in source["layers"]
         assert {"clouds", "precipitation"} <= set(source["quantities"])
     assert scene["layers"]["clouds"]["rain"]["quantity"] == "precipitation"
 
