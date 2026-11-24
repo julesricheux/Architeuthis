@@ -969,44 +969,27 @@ class TestConsumption:
         assert np.ravel(listed["sails_contribution"]) == pytest.approx(0.0)
         assert not {"max_bhp", "sails_contribution"} & set(other)
 
-    def test_unlisted_max_bhp_and_sails_are_still_computed_until_0_4(self, vessel, baseline):
-        with pytest.warns(DeprecationWarning, match="from 0.4.0") as record:
-            default = baseline(vessel, variables=["max_bhp"])
+    def test_unlisted_vessel_models_are_not_computed(self, vessel, baseline):
+        default = baseline(vessel, variables=["max_bhp"])
 
-        assert "sails_contribution" in str(record[0].message)
-        assert "max_bhp," not in str(record[0].message)
-        assert {"max_bhp", "sails_contribution"} <= set(default)
+        assert "max_bhp" in default
+        assert "sails_contribution" not in default
 
-    def test_avg_bhp_is_the_deprecated_name_of_bhp(self, reference, baseline):
+    def test_avg_bhp_is_no_longer_an_alias_of_bhp(self, reference):
         import json
 
         from architeuthis.report import ReportCollection, RoutingReport
         from architeuthis.toolbox.json_utils import CustomEncoder
 
-        assert "avg_bhp" not in dict(reference)
-        with pytest.warns(DeprecationWarning, match="use 'bhp'"):
-            assert np.ravel(reference["avg_bhp"]) == pytest.approx(np.ravel(reference["bhp"]))
-        with pytest.warns(DeprecationWarning, match="use 'bhp'"):
-            assert "avg_bhp" in reference
-        with pytest.warns(DeprecationWarning, match="use 'bhp'"):
-            assert reference.get("avg_bhp") is reference["bhp"]
+        assert "avg_bhp" not in reference
+        with pytest.raises(KeyError):
+            reference["avg_bhp"]
 
         # Reports saved under the former name are read under the current one
         saved = {("avg_bhp" if key == "bhp" else key): value for key, value in reference.items()}
         loaded = ReportCollection(json.loads(json.dumps([saved], cls=CustomEncoder)))[0]
         assert isinstance(loaded, RoutingReport)
-        assert "bhp" in dict(loaded) and "avg_bhp" not in dict(loaded)
-
-        # Constraints written with the former name still work
-        seen = {}
-
-        def constraints(ctx):
-            with pytest.warns(DeprecationWarning, match="use 'bhp'"):
-                seen["avg_bhp"] = ctx["avg_bhp"]
-            return [ctx["z"] < 0.0]
-
-        baseline(consumption_vessel("bhp", hotel_load=HOTEL_LOAD, sfoc=SFC), constraints=constraints)
-        assert "avg_bhp" in seen
+        assert "bhp" in loaded and "avg_bhp" not in loaded
 
     def test_a_constant_brake_power(self, baseline):
         from architeuthis.vessel import Vessel

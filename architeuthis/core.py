@@ -12,7 +12,6 @@ Created on Mon Jan 19 15:54:06 2026
 
 import json
 import re
-import warnings
 
 import casadi as ca
 import numpy as onp
@@ -27,7 +26,7 @@ from architeuthis.common import _banner, status
 from architeuthis.optimization import Opti
 from architeuthis import sky
 from architeuthis.forecast import ENVIRONMENT_FIELDS, Forecast, Topography, calm_forecast
-from architeuthis.report import RoutingReport, _RenamedEntries
+from architeuthis.report import RoutingReport
 from architeuthis.common import ArchiteuthisObject, GUST_DEFAULT_RATIO, WAVE_COMPONENTS_OFFSET
 # Route and voyage classes live in their own modules, which work without network
 # access; they are re-exported here for compatibility.
@@ -83,10 +82,6 @@ def transform(x, delta):
     # return x
     # return 2 * (np.sigmoid(x) - 0.5) * delta
     return (sigmoid(x)) * tall(delta)
-
-# Vessel models still computed when the vessel has them and they are not listed
-# in the variables, with a DeprecationWarning: only when listed from 0.4.0.
-IMPLICIT_VESSEL_VARIABLES = ("max_bhp", "sails_contribution")
 
 # Powers that the default constraints keep below `Vessel.max_power`: the first
 # of them in the context.
@@ -425,9 +420,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
     under the keys of the vessel models (`bhp` for the brake power,
     `hourly_consumption` in L/h). Other
     vessel models, such as `max_bhp` or `sails_contribution`, are
-    computed only when listed in `variables`. Until 0.4.0, `max_bhp`
-    and `sails_contribution` are still computed when the vessel has
-    them, with a `DeprecationWarning`: list them.
+    computed only when listed in `variables`.
 
     Each vessel model is queried with the inputs it names among
     `stw`, `sog`, `tws`, `twa`, `hs` or `swh`, `wa` or `mwa`, `aws` and
@@ -590,26 +583,9 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         """
         Additional variables of a run or an evaluation.
 
-        These are the vessel models of `IMPLICIT_VESSEL_VARIABLES`
-        that are not listed (deprecated), then the variables of this
-        analysis, then `variables`.
+        These are the variables of this analysis, then `variables`.
         """
-        listed = normalize_variables(self.variables) | normalize_variables(variables)
-        implicit = {
-            key: key for key in IMPLICIT_VESSEL_VARIABLES
-            if key in self.vessel.models and key not in listed
-        }
-        if implicit:
-            names = ", ".join(implicit)
-            warnings.warn(
-                f"RoutingAnalysis computes {names} because the vessel has these "
-                "models. This is deprecated: from 0.4.0, vessel models other than "
-                f"the consumption are computed only when listed, as in "
-                f"variables={list(implicit)}.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-        return implicit | listed
+        return normalize_variables(self.variables) | normalize_variables(variables)
 
     def _add_sky_models(self, name: str) -> None:
         """
@@ -1207,7 +1183,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
         passage = self._passage(tim, ctim, lat, lon, run_variables)
 
         # --- Dynamic Constraints Context ---
-        ctx = _RenamedEntries({"vessel": self.vessel, "opti": opti} | passage)
+        ctx = {"vessel": self.vessel, "opti": opti} | passage
         cons = self._resolve_constraints(constraints, ctx)
 
         if solve:
@@ -1326,7 +1302,7 @@ class RoutingAnalysis(ArchiteuthisAnalysis):
 
         passage = self._passage(tim, ctim, lat, lon, evaluation_variables)
 
-        ctx = _RenamedEntries({"vessel": self.vessel, "opti": None} | passage)
+        ctx = {"vessel": self.vessel, "opti": None} | passage
         violations = [
             violation
             for violation in map(_constraint_violation, self._resolve_constraints(constraints, ctx))

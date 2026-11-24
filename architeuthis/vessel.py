@@ -78,9 +78,8 @@ class Vessel(ArchiteuthisData):
     models of this key, which take precedence and may name `bhp` or
     `total_power` among their inputs. Any other model, such as
     `max_bhp` or `sails_contribution`, is computed only when the
-    routing lists it in its `variables` (until 0.4.0, these two are
-    still computed by default, with a `DeprecationWarning`). Each
-    model is given the inputs it names: see `RoutingAnalysis`.
+    routing lists it in its `variables`. Each model is given the
+    inputs it names: see `RoutingAnalysis`.
 
     `label` is a short identifier that tags the reports of this vessel
     and appears in the UI, `eff45` for example. By default it is taken

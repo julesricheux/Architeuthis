@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import os
-import warnings
 
 from datetime import datetime
 from pathlib import Path
@@ -81,70 +80,24 @@ def routes_to_table(
     return table
 
 
-# Former names of report entries and context keys, still read until 0.4.0
-# with a DeprecationWarning: the brake power was `avg_bhp`.
-RENAMED_ENTRIES = {"avg_bhp": "bhp"}
+# Former names of report entries, renamed when a saved report is read: the
+# brake power was `avg_bhp` before 0.3.2.
+SAVED_ENTRY_NAMES = {"avg_bhp": "bhp"}
 
 
-def _renamed(key, stacklevel: int = 3):
-    """
-    The current name of a former entry name, with a warning, else None.
-    """
-    name = RENAMED_ENTRIES.get(key) if isinstance(key, str) else None
-    if name is not None:
-        warnings.warn(
-            f"'{key}' is deprecated and will be removed in 0.4.0: use '{name}'.",
-            DeprecationWarning,
-            stacklevel=stacklevel,
-        )
-    return name
-
-
-class _RenamedEntries(dict):
-    """
-    A dict that still reads entries under their former names.
-
-    Until 0.4.0, `RENAMED_ENTRIES` maps each former name to the
-    current one, with a `DeprecationWarning`.
-    """
-
-    def __missing__(self, key):
-        name = _renamed(key)
-        if name is None:
-            raise KeyError(key)
-        return self[name]
-
-    def __contains__(self, key) -> bool:
-        if dict.__contains__(self, key):
-            return True
-        name = RENAMED_ENTRIES.get(key) if isinstance(key, str) else None
-        return name is not None and dict.__contains__(self, name) and _renamed(key) is not None
-
-    def get(self, key, default=None):
-        """
-        The entry `key`, also under a former name, else `default`.
-        """
-        if dict.__contains__(self, key):
-            return dict.__getitem__(self, key)
-        name = RENAMED_ENTRIES.get(key) if isinstance(key, str) else None
-        if name is not None and dict.__contains__(self, name):
-            _renamed(key)
-            return dict.__getitem__(self, name)
-        return default
-
-
-class RoutingReport(_RenamedEntries):
+class RoutingReport(dict):
     """
     The result of a routing.
 
     It is a dict of numeric arrays and scalars, in float epoch seconds.
-    Reports saved under the former entry names of `RENAMED_ENTRIES`,
-    `avg_bhp` for the brake power, are read under the current ones.
+    Reports saved under the former entry names of
+    `SAVED_ENTRY_NAMES`, `avg_bhp` for the brake power, are read under
+    the current ones.
     """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        for former, name in RENAMED_ENTRIES.items():
+        for former, name in SAVED_ENTRY_NAMES.items():
             if dict.__contains__(self, former) and not dict.__contains__(self, name):
                 self[name] = dict.pop(self, former)
 

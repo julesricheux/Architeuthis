@@ -182,8 +182,6 @@ Factors of marine fuels are the default values of FuelEU Maritime (Regulation (E
 
 `max_power`, in kW, is the power limit of the default constraints: `max_bhp` when `variables` lists it, else `bhp`, else `total_power` stays below it. `max_power=None`, the default, leaves the power free.
 
-Until 0.4.0, `max_bhp` and `sails_contribution` are still computed when the vessel has these models and `variables` does not list them, with a `DeprecationWarning`, so that the default constraints and existing scripts work as before. List them to keep them from 0.4.0.
-
 ### Additional variables
 
 The routing computes only what the objective and the vessel models need. `variables` asks for more quantities, which nothing has to use: they are computed at the middle of each segment, handed to the constraints in `ctx` and stored in the report under their name, so they can be limited, tabulated and plotted like `tws` or `swh`. The wind gust and the wave slope are typical: they do not enter the polar, but they measure comfort and safety.
@@ -443,7 +441,7 @@ Six stacked panels share a time axis in UTC, which runs from the first to the la
 | 5 | `tws` | `tws`, `tws_gust` | True wind, kt: average, and gust as a dashed line with a band | From 0 |
 | 6 | `aws` | `aws`, `aws_gust` | Apparent wind, kt: average, and gust as a dashed line with a band | From 0 |
 
-The gust lines are left out when the report has no gust, which happens unless `variables` lists `"gust"`. Likewise, `sails_contribution` and `max_bhp` are in the report only when `variables` lists them (or, until 0.4.0, when the vessel has them).
+The gust lines are left out when the report has no gust, which happens unless `variables` lists `"gust"`. Likewise, `sails_contribution` and `max_bhp` are in the report only when `variables` lists them.
 
 | Argument | Default | Meaning |
 | --- | --- | --- |
