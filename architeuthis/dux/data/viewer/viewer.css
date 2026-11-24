@@ -670,3 +670,19 @@ body.resizing, body.resizing * { cursor: ew-resize !important; user-select: none
   .maplibregl-ctrl-bottom-right { right: 170px; }
   body.panel-open #readout, body.panel-open #legend { display: none; }
 }
+.text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 8px 0 6px;
+  height: 26px;
+  background: var(--panel-strong);
+  font-size: 12px;
+  white-space: nowrap;
+  flex: none;
+}
+.text-button:hover { background: var(--hover); }
+.text-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.text-button svg { width: 15px; height: 15px; fill: currentColor; }

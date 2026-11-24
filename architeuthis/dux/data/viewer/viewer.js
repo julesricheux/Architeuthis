@@ -119,6 +119,7 @@
     moon: "M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1z",
     close: "M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z",
     plots: "M3.5 18.49 9.5 12.48l4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z",
+    print: "M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z",
   };
 
   // --------------------------------------------------------------------
@@ -1846,6 +1847,21 @@
   const LIGHTNING_COLOR = "#ffd54f";
   const FOG_COLOR = [0.86, 0.87, 0.88];
   const SNOW_TEMPERATURE = 274.15; // K
+  // The printed report: plots drawn on white, at this many pixels per CSS
+  // pixel and this width (an A4 page within its margins), their fills
+  // lighter by this factor to save ink, the sky white by day and light
+  // grey by night, and the comments marked in this colour.
+  let printing = false;
+  const PRINT_RATIO = 3;
+  const PRINT_WIDTH = 700;
+  const PRINT_INK = 0.45;
+  const PRINT_SKY = { day: [[1, 1, 1], [1, 1, 1]], night: [[0.965, 0.97, 0.975], [0.945, 0.95, 0.96]], lit: [0.88, 0.9, 0.92], shade: [0.58, 0.61, 0.66], snow: "#90a4ae", cirrus: "120, 130, 140" };
+  const PRINT_MARK = "#c1121f";
+
+  // The opacity of a fill, lighter on paper.
+  function ink(alpha) {
+    return printing ? alpha * PRINT_INK : alpha;
+  }
 
   // The route of the plots: the one chosen while it is shown, else the
   // first shown, else the first of the file.
@@ -1907,7 +1923,7 @@
   // A canvas of a plot with its geometry: time and value to pixels.
   function plotFrame(canvas, route, range) {
     // At least twice the pixels of the page, so that thin lines stay smooth.
-    const ratio = Math.max(2, window.devicePixelRatio || 1);
+    const ratio = printing ? PRINT_RATIO : Math.max(2, window.devicePixelRatio || 1);
     const width = canvas.clientWidth, height = canvas.clientHeight;
     if (canvas.width !== Math.round(width * ratio)) canvas.width = Math.round(width * ratio);
     if (canvas.height !== Math.round(height * ratio)) canvas.height = Math.round(height * ratio);
@@ -1931,7 +1947,7 @@
     c.strokeStyle = cssColor("--line");
     c.fillStyle = cssColor("--muted");
     // One pixel of the screen, aligned on it.
-    const pixel = 1 / (window.devicePixelRatio || 1);
+    const pixel = printing ? 0.5 : 1 / (window.devicePixelRatio || 1);
     const align = (value) => (Math.round(value / pixel) + 0.5) * pixel;
     c.lineWidth = pixel;
     c.font = "10px system-ui, sans-serif";
@@ -1987,11 +2003,11 @@
   // A vertical gradient along the scale of a layer, from `low` to `high`,
   // or a plain colour without that layer.
   function scaleFill(frame, layer, low, high, alpha, fallback) {
-    if (!scene.layers[layer] || !scene.layers[layer].colormap) return rgba(fallback, alpha);
+    if (!scene.layers[layer] || !scene.layers[layer].colormap) return rgba(fallback, ink(alpha));
     const gradient = frame.context.createLinearGradient(0, frame.y(low), 0, frame.y(high));
     for (let s = 0; s <= 8; s++) {
       const color = scaleColor(layer, low + (s / 8) * (high - low));
-      gradient.addColorStop(s / 8, rgba(color, alpha));
+      gradient.addColorStop(s / 8, rgba(color, ink(alpha)));
     }
     return gradient;
   }
@@ -2087,8 +2103,8 @@
         drawGrid(frame, range);
         if (sog) {
           const fill = frame.context.createLinearGradient(0, frame.top, 0, frame.bottom);
-          fill.addColorStop(0, rgba(PLOT_COLORS.sog, 0.35));
-          fill.addColorStop(1, rgba(PLOT_COLORS.sog, 0.02));
+          fill.addColorStop(0, rgba(PLOT_COLORS.sog, ink(0.35)));
+          fill.addColorStop(1, rgba(PLOT_COLORS.sog, ink(0.02)));
           fillSeries(frame, route, sog, fill);
         }
         if (stw) strokeSeries(frame, route, stw, PLOT_COLORS.stw, PLOT_LINE);
@@ -2110,8 +2126,8 @@
         const frame = plotFrame(canvas, route, range);
         drawGrid(frame, range);
         const fill = frame.context.createLinearGradient(0, frame.top, 0, frame.bottom);
-        fill.addColorStop(0, rgba(PLOT_COLORS.sails, 0.75));
-        fill.addColorStop(1, rgba(PLOT_COLORS.sails, 0.12));
+        fill.addColorStop(0, rgba(PLOT_COLORS.sails, ink(0.75)));
+        fill.addColorStop(1, rgba(PLOT_COLORS.sails, ink(0.12)));
         fillSeries(frame, route, values, fill);
         strokeSeries(frame, route, values, PLOT_COLORS.sails, PLOT_LINE);
         return frame;
@@ -2132,8 +2148,8 @@
         const frame = plotFrame(canvas, route, range);
         drawGrid(frame, range, (tick) => (tick >= 1000 ? `${tick / 1000}k` : String(tick)));
         // Hotel load at the bottom, propulsion stacked on it.
-        fillSeries(frame, route, parts.hotel, rgba(PLOT_COLORS.hotel, 0.8));
-        fillSeries(frame, route, total, rgba(PLOT_COLORS.propulsion, 0.75), (k) => frame.y(parts.hotel[k] || 0));
+        fillSeries(frame, route, parts.hotel, rgba(PLOT_COLORS.hotel, ink(0.8)));
+        fillSeries(frame, route, total, rgba(PLOT_COLORS.propulsion, ink(0.75)), (k) => frame.y(parts.hotel[k] || 0));
         if (upper) {
           // The fluctuation of the brake power around the total, in the
           // colour of its line.
@@ -2311,7 +2327,9 @@
   // stratiform layers with ragged edges, Cu as domes, Cb as towers with an
   // anvil, Ci as hooked strokes, then rain, snow, lightning and fog.
   function drawSky(frame, route, sky) {
-    const ratio = window.devicePixelRatio || 1;
+    const ratio = printing ? 2 : window.devicePixelRatio || 1;
+    const daySky = printing ? PRINT_SKY.day : DAY_SKY, nightSky = printing ? PRINT_SKY.night : NIGHT_SKY;
+    const cloudLit = printing ? PRINT_SKY.lit : CLOUD_LIT, cloudShade = printing ? PRINT_SKY.shade : CLOUD_SHADE;
     const left = frame.left, width = frame.right - frame.left;
     const top = frame.top, height = frame.bottom - frame.top;
     const W = Math.max(60, Math.min(1600, Math.round(width * ratio))), H = Math.max(40, Math.round(height * ratio));
@@ -2486,10 +2504,11 @@
         const darkness = a > 1e-6 ? Math.min(1, dark[index] / a) : 0;
         const mist = 0.85 * haze[px] * near;
         for (let c = 0; c < 3; c++) {
-          const day = DAY_SKY[0][c] * (1 - level) + DAY_SKY[1][c] * level;
-          const night = NIGHT_SKY[0][c] * (1 - level) + NIGHT_SKY[1][c] * level;
+          const day = daySky[0][c] * (1 - level) + daySky[1][c] * level;
+          const night = nightSky[0][c] * (1 - level) + nightSky[1][c] * level;
           const background = night * (1 - light) + day * light;
-          const cloud = (CLOUD_LIT[c] * (1 - darkness) + CLOUD_SHADE[c] * darkness) * (0.5 + 0.5 * light);
+          // On paper, clouds are grey on white, as dark by night as by day.
+          const cloud = (cloudLit[c] * (1 - darkness) + cloudShade[c] * darkness) * (printing ? 1 : 0.5 + 0.5 * light);
           const value = background * (1 - opacity) + cloud * opacity;
           pixels[4 * index + c] = Math.round(255 * Math.max(0, Math.min(1, value * (1 - mist) + FOG_COLOR[c] * (0.5 + 0.5 * light) * mist)));
         }
@@ -2518,7 +2537,7 @@
     c.lineWidth = 0.9;
     strokes.forEach((stroke) => {
       const x0 = xAt(stroke.x - 0.25), y0 = yOf(stroke.row), length = Math.max(5, 0.55 * segment);
-      c.strokeStyle = `rgba(255, 255, 255, ${(0.5 * (0.5 + 0.5 * stroke.light)).toFixed(2)})`;
+      c.strokeStyle = printing ? `rgba(${PRINT_SKY.cirrus}, 0.6)` : `rgba(255, 255, 255, ${(0.5 * (0.5 + 0.5 * stroke.light)).toFixed(2)})`;
       c.beginPath();
       c.moveTo(x0, y0);
       c.quadraticCurveTo(x0 + 0.75 * length, y0 - 1.5, x0 + length, y0 - 4);
@@ -2535,7 +2554,7 @@
         const snow = sky.t2m[k] !== null && sky.t2m[k] < SNOW_TEMPERATURE;
         const drops = Math.min(16, Math.round((1 + 2 * sky.prate[k]) * Math.max(0.5, (x1 - x0) / 6)));
         c.strokeStyle = RAIN_COLOR;
-        c.fillStyle = SNOW_COLOR;
+        c.fillStyle = printing ? PRINT_SKY.snow : SNOW_COLOR;
         c.lineWidth = 0.9;
         for (let d = 0; d < drops; d++) {
           const x = x0 + (x1 - x0) * random();
@@ -2628,6 +2647,11 @@
       });
       select.addEventListener("change", () => selectPlotRoute(select.value));
       head.append(swatch, select);
+      const print = element("button", "text-button small", `${icon("print")}<span>Print report</span>`);
+      print.type = "button";
+      print.title = "A printable report of this route: its plots and comments, to save as a PDF";
+      print.addEventListener("click", () => printReport(route));
+      head.append(print);
     } else {
       head.append(element("span", "muted", "No route"));
     }
@@ -2707,6 +2731,230 @@
       if (on) item.cursor.style.left = `${item.frame.x(state.t)}px`;
       item.values.innerHTML = on ? item.plot.readout(route, k) : '<span class="muted">off the route at this time</span>';
     });
+  }
+
+  // ---- The printed report ----
+
+  // The mean of a series over the route, weighted by the duration of its
+  // segments, and its extremes; null without values.
+  function seriesMean(route, values) {
+    let sum = 0, weight = 0;
+    (values || []).forEach((value, k) => {
+      if (value === null || value !== value) return;
+      const dt = route.tim[k + 1] - route.tim[k];
+      sum += value * dt;
+      weight += dt;
+    });
+    return weight > 0 ? sum / weight : null;
+  }
+
+  function seriesExtremes(values) {
+    const numbers = (values || []).filter((value) => value !== null && value === value);
+    return numbers.length ? [Math.min(...numbers), Math.max(...numbers)] : [null, null];
+  }
+
+  function formatDuration(seconds) {
+    const hours = Math.round(seconds / HOUR);
+    return hours < 48 ? `${hours} h` : `${Math.floor(hours / 24)} d ${hours % 24} h`;
+  }
+
+  // The figures at the top of the report: the voyage, then the extremes
+  // of the weather and of the vessel along it.
+  function reportFacts(route) {
+    const summary = route.summary || {};
+    const facts = [];
+    const add = (label, value) => { if (value !== null && value !== undefined && value !== "") facts.push([label, String(value)]); };
+    const fixed = (value, digits, unit) => (value === null || value === undefined ? null : `${value.toFixed(digits)} ${unit}`);
+    const max = (name) => seriesExtremes(series(route, name))[1];
+    add("Fuel", fixed(summary.fuel, 1, "t"));
+    add("Distance", fixed(summary.distance, 0, "nm"));
+    add("Mean SOG", fixed(summary.sog, 1, "kt"));
+    add("Duration", formatDuration(route.eta - route.etd));
+    add("Departure", formatDate(route.etd));
+    add("Arrival", formatDate(route.eta));
+    add("Vessel", summary.vessel);
+    // The member only where the file holds several of them.
+    const members = new Set(scene.routes.map((item) => String((item.summary || {}).member)));
+    const member = members.size > 1 && summary.member !== null && summary.member !== undefined ? `, member ${summary.member}` : "";
+    add("Forecast", summary.model ? `${String(summary.model).toUpperCase()}${member}` : null);
+    if (summary.solve !== null && summary.solve !== undefined) {
+      add("Route", Number(summary.solve) ? (summary.status === 2 ? "optimized, not converged" : "optimized") : "reference, not optimized");
+    }
+    add("Mean consumption", fixed(seriesMean(route, series(route, "hourly_consumption")), 0, "L/h"));
+    add("Max power", fixed(seriesExtremes(series(route, "bhp") || series(route, "total_power"))[1], 0, "kW"));
+    add("Mean sails", fixed(seriesMean(route, series(route, "sails_contribution")), 0, "% of the thrust"));
+    const wind = max("tws"), gust = max("tws_gust");
+    if (wind !== null) add("Max true wind", `${wind.toFixed(0)} kt${gust !== null ? `, gusts ${gust.toFixed(0)} kt` : ""}`);
+    add("Max Hs", fixed(max("swh"), 1, "m"));
+    const [low, high] = seriesExtremes(series(route, "pressure"));
+    if (low !== null) add("Pressure", `${low.toFixed(0)} to ${high.toFixed(0)} hPa`);
+    if (summary.max_z !== null && summary.max_z > 0) add("Warning", "touches land or an exclusion zone");
+    return facts;
+  }
+
+  // What the colours of a printed plot stand for.
+  function reportLegend(plot, route) {
+    const key = (color, label, dashed) => `<span class="key"><i class="${dashed ? "dashed" : ""}" style="--key:${color}"></i>${label}</span>`;
+    const fg = cssColor("--fg");
+    if (plot.id === "speed") {
+      return (series(route, "sog") ? key(PLOT_COLORS.sog, "SOG") : "") + (series(route, "stw") ? key(PLOT_COLORS.stw, "STW") : "");
+    }
+    if (plot.id === "sails") return key(PLOT_COLORS.sails, "share of the thrust");
+    if (plot.id === "power") {
+      const parts = powerParts(route);
+      return (parts.hasPropulsion ? key(PLOT_COLORS.propulsion, "propulsion") : "") + (parts.hasHotel ? key(PLOT_COLORS.hotel, "hotel load") : "") +
+        key(fg, "total") + (parts.fluctuation ? key(fg, "fluctuation", true) : "");
+    }
+    if (plot.id === "tws" || plot.id === "aws") {
+      return key(scaleColor("wind", 15) || PLOT_COLORS.wind, "mean") + (series(route, `${plot.id}_gust`) ? key(fg, "gusts", true) : "");
+    }
+    if (plot.id === "swh") return key(scaleColor("waves", 2) || PLOT_COLORS.waves, "significant height");
+    if (plot.id === "pressure") return key(scaleColor("pressure", 1013) || PLOT_COLORS.pressure, "mean sea level");
+    return "";
+  }
+
+  // The comments on a printed plot: a dashed line at the time of each, its
+  // number at the top, labels moved down a row where they would overlap.
+  function markComments(frame, route, comments) {
+    const c = frame.context;
+    c.save();
+    c.strokeStyle = PRINT_MARK;
+    c.lineWidth = 0.8;
+    c.setLineDash([3, 2]);
+    comments.forEach((item) => {
+      const x = frame.x(route.ctim[item.k]);
+      c.beginPath(); c.moveTo(x, frame.top); c.lineTo(x, frame.bottom); c.stroke();
+    });
+    c.setLineDash([]);
+    c.font = "600 8px system-ui, sans-serif";
+    c.textAlign = "center";
+    c.textBaseline = "middle";
+    const rows = [];
+    comments.forEach((item, index) => {
+      const x = frame.x(route.ctim[item.k]), text = String(index + 1);
+      const width = Math.max(11, c.measureText(text).width + 6), height = 11;
+      let row = rows.findIndex((right) => x - width / 2 > right + 1);
+      if (row < 0) { row = rows.length; rows.push(-Infinity); }
+      rows[row] = x + width / 2;
+      const y = frame.top + 1 + row * (height + 1);
+      c.beginPath();
+      c.roundRect(x - width / 2, y, width, height, 3);
+      c.fillStyle = "#fff";
+      c.fill();
+      c.stroke();
+      c.fillStyle = PRINT_MARK;
+      c.fillText(text, x, y + height / 2 + 0.5);
+    });
+    c.restore();
+  }
+
+  // The plots of a route as images, drawn on white with light fills, in
+  // the light theme whatever the page shows, with the comments marked.
+  function reportPlots(route, comments) {
+    const root = document.documentElement, theme = root.dataset.theme;
+    const box = element("div");
+    box.style.cssText = `position:fixed;left:${-2 * PRINT_WIDTH}px;top:0;width:${PRINT_WIDTH}px;visibility:hidden`;
+    document.body.append(box);
+    root.dataset.theme = "light";
+    printing = true;
+    try {
+      return PLOTS.filter((plot) => plot.available(route)).map((plot) => {
+        const canvas = element("canvas");
+        canvas.style.cssText = `display:block;width:${PRINT_WIDTH}px;height:${plot.height}px`;
+        box.append(canvas);
+        const frame = plot.draw(canvas, route);
+        markComments(frame, route, comments);
+        return { plot, frame, legend: reportLegend(plot, route), image: canvas.toDataURL("image/png") };
+      });
+    } finally {
+      printing = false;
+      if (theme === undefined) delete root.dataset.theme;
+      else root.dataset.theme = theme;
+      box.remove();
+    }
+  }
+
+  const REPORT_STYLE = `
+    @page { size: A4; margin: 12mm; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: #fff; color: #1d2125; }
+    body { font: 10pt/1.35 system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .eyebrow { color: #5d6670; font-size: 8.5pt; text-transform: uppercase; letter-spacing: 0.06em; }
+    h1 { display: flex; align-items: center; gap: 8px; margin: 2px 0 4px; font-size: 16pt; }
+    h1 i { width: 18px; height: 0; border-top: 5px solid var(--route); border-radius: 3px; flex: none; }
+    h2 { font-size: 11pt; margin: 14px 0 6px; }
+    .description { margin: 0 0 8px; white-space: pre-wrap; }
+    .facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px 12px; margin: 8px 0 12px; padding: 8px 0; border-top: 1px solid #d5d9dd; border-bottom: 1px solid #d5d9dd; }
+    .facts div { min-width: 0; }
+    .facts span { display: block; color: #5d6670; font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.04em; }
+    .facts b { font-weight: 600; }
+    figure { margin: 0 0 6px; break-inside: avoid; }
+    figcaption { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 8.5pt; margin-bottom: 1px; }
+    figcaption .unit { color: #5d6670; }
+    .key { display: inline-flex; align-items: center; gap: 4px; color: #5d6670; }
+    .key i { width: 12px; height: 0; border-top: 2.5px solid var(--key); }
+    .key i.dashed { border-top-style: dashed; border-top-width: 1.5px; }
+    img { display: block; width: 100%; }
+    .axis { position: relative; height: 14px; font-size: 8pt; color: #5d6670; break-before: avoid; }
+    .axis span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+    ol { list-style: none; margin: 0; padding: 0; }
+    li { display: grid; grid-template-columns: 22px 1fr; gap: 2px 8px; padding: 5px 0; border-bottom: 1px solid #e6e9ec; break-inside: avoid; }
+    .number { grid-row: span 2; align-self: start; display: flex; align-items: center; justify-content: center; height: 16px; border: 1px solid ${PRINT_MARK}; border-radius: 4px; color: ${PRINT_MARK}; font-weight: 600; font-size: 8.5pt; }
+    .when { color: #5d6670; font-size: 8.5pt; }
+    .text { white-space: pre-wrap; }
+    footer { margin-top: 14px; color: #8a929a; font-size: 7.5pt; }
+  `;
+
+  // The report of a route as a document to print: its name and figures,
+  // its plots with the comments numbered, then the comments themselves.
+  function reportDocument(route) {
+    const comments = routeComments(route);
+    const plots = reportPlots(route, comments);
+    const label = routeLabel(route), description = routeDescription(route).trim();
+    const facts = reportFacts(route).map(([name, value]) => `<div><span>${escapeHtml(name)}</span><b>${escapeHtml(value)}</b></div>`).join("");
+    const figures = plots.map((item) =>
+      `<figure><figcaption><b>${escapeHtml(item.plot.title)}</b><span class="unit">${escapeHtml(item.plot.unit)}</span>${item.legend}</figcaption>` +
+      `<img src="${item.image}" alt="${escapeHtml(item.plot.title)}"></figure>`).join("");
+    let axis = "";
+    if (plots.length) {
+      const frame = plots[0].frame;
+      for (let t = Math.ceil(frame.t0 / DAY) * DAY; t <= frame.t1; t += DAY) {
+        const date = new Date(t * 1000);
+        axis += `<span style="left:${((100 * frame.x(t)) / PRINT_WIDTH).toFixed(2)}%">${DAYS[date.getUTCDay()]} ${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]}</span>`;
+      }
+    }
+    const notes = comments.map((item, index) =>
+      `<li><span class="number">${index + 1}</span><span class="when">${escapeHtml(formatTime(route.ctim[item.k]))} · ${escapeHtml(formatPosition(route.clat[item.k], route.clon[item.k]))}</span>` +
+      `<span class="text">${escapeHtml(item.text)}</span></li>`).join("");
+    const title = (scene.title || "").trim();
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(label)} report</title><style>${REPORT_STYLE}</style></head><body>` +
+      `<header><div class="eyebrow">${title ? `${escapeHtml(title)} · ` : ""}Route report</div>` +
+      `<h1 style="--route:${route.color}"><i></i>${escapeHtml(label)}</h1>` +
+      (description ? `<p class="description">${escapeHtml(description)}</p>` : "") +
+      `<div class="facts">${facts}</div></header>` +
+      (figures ? `<section>${figures}<div class="axis">${axis}</div></section>` : "<p>No values along this route.</p>") +
+      (notes ? `<section><h2>Comments</h2><ol>${notes}</ol></section>` : "") +
+      `<footer>Times in UTC · printed ${escapeHtml(formatDate(Date.now() / 1000))} · Architeuthis</footer></body></html>`;
+  }
+
+  // Opens the print dialog on the report of a route, from which it can be
+  // saved as a PDF; the frame holding it goes once printed.
+  function printReport(route) {
+    const previous = document.getElementById("print-frame");
+    if (previous) previous.remove();
+    const frame = element("iframe");
+    frame.id = "print-frame";
+    frame.title = "Route report";
+    frame.setAttribute("aria-hidden", "true");
+    frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";
+    frame.addEventListener("load", () => {
+      const view = frame.contentWindow;
+      view.addEventListener("afterprint", () => setTimeout(() => frame.remove(), 0));
+      view.focus();
+      view.print();
+    }, { once: true });
+    frame.srcdoc = reportDocument(route);
+    document.body.append(frame);
   }
 
   // --------------------------------------------------------------------
@@ -3870,7 +4118,7 @@
     });
 
     // For the browser console and automated checks.
-    window.architeuthisViewer = { map, state, scene, setTime, applySettings, applyTheme, setPicker };
+    window.architeuthisViewer = { map, state, scene, setTime, applySettings, applyTheme, setPicker, reportDocument, printReport };
 
     window.addEventListener("message", (event) => {
       const data = event.data;
