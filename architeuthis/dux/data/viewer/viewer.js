@@ -61,6 +61,12 @@
   // taken for a system.
   const CENTRE_RADIUS = 6;
   const CENTRE_DEPTH = 1.5;
+  // Between two frames, a centre is the same system as the nearest one of its
+  // kind in the next frame if that one is within the way a system moving at
+  // CENTRE_SPEED knots goes in the time between them, and at least
+  // CENTRE_REACH degrees of latitude. Others fade out or in.
+  const CENTRE_SPEED = 60;
+  const CENTRE_REACH = 3;
 
   // Map colours of each theme. The weather is drawn the same in both: arrows
   // and barbs take the colour of the field under them, made vivid with
@@ -1098,11 +1104,73 @@
         if (!close) found.push({ i, j, lat, lon: g.lon0 + i * g.dlon, high: highest, value });
       }
     }
+    // Between the points of the grid, at the bottom (top) of a parabola
+    // through each point and its neighbours, so that a centre moves smoothly
+    // from one frame to the next.
+    found.forEach((centre) => {
+      const at = (di, dj) => values[(centre.j + dj) * n + centre.i + di];
+      const shift = (before, after) => {
+        const curvature = before - 2 * centre.value + after;
+        return curvature === curvature && Math.abs(curvature) > 1e-9 ? Math.max(-0.5, Math.min(0.5, (before - after) / (2 * curvature))) : 0;
+      };
+      const di = shift(at(-1, 0), at(1, 0)), dj = shift(at(0, -1), at(0, 1));
+      centre.lat = g.lat0 + (centre.j + dj) * g.dlat;
+      centre.lon = g.lon0 + (centre.i + di) * g.dlon;
+    });
     return found;
   }
 
-  function updateCentres(values, source) {
-    const centres = values && state.centres ? pressureCentres(values, source.grid) : [];
+  // The pressure of one frame of a source, in hPa.
+  function frameValues(source, name, index) {
+    const info = source.quantities[name], bytes = source.data[name][index];
+    const out = new Float32Array(bytes.length);
+    for (let k = 0; k < bytes.length; k++) out[k] = bytes[k] === NO_DATA ? NaN : info.offset + info.scale * bytes[k];
+    return out;
+  }
+
+  // The highs and lows of a frame, found once.
+  function frameCentres(source, index) {
+    source.centres = source.centres || [];
+    if (!source.centres[index]) source.centres[index] = pressureCentres(frameValues(source, "pressure", index), source.grid);
+    return source.centres[index];
+  }
+
+  // The highs and lows at time t, moving between the frames before and after
+  // it: each is paired with the nearest of its kind in the next frame, and
+  // its position and pressure interpolated in time, as the fields are. A
+  // centre without a pair fades out, a new one fades in.
+  function movingCentres(source, t) {
+    const frame = frameAt(source, t);
+    if (!frame) return [];
+    const first = frameCentres(source, frame.i0);
+    if (frame.i0 === frame.i1 || frame.a === 0) return first.map((centre) => ({ ...centre, opacity: 1 }));
+    const second = frameCentres(source, frame.i1);
+    if (frame.a === 1) return second.map((centre) => ({ ...centre, opacity: 1 }));
+    const hours = (source.times[frame.i1] - source.times[frame.i0]) / 3600;
+    const reach = Math.max(CENTRE_REACH, (CENTRE_SPEED * hours) / 60);
+    const pairs = [];
+    first.forEach((a, ia) => second.forEach((b, ib) => {
+      if (a.high !== b.high) return;
+      const distance = Math.hypot(b.lat - a.lat, (b.lon - a.lon) * Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180));
+      if (distance <= reach) pairs.push([distance, ia, ib]);
+    }));
+    pairs.sort((p, q) => p[0] - q[0]);
+    const pairedFirst = new Set(), pairedSecond = new Set(), out = [];
+    const a = frame.a, mix = (x, y) => x + a * (y - x);
+    pairs.forEach(([, ia, ib]) => {
+      if (pairedFirst.has(ia) || pairedSecond.has(ib)) return;
+      pairedFirst.add(ia);
+      pairedSecond.add(ib);
+      const c0 = first[ia], c1 = second[ib];
+      out.push({ high: c0.high, lat: mix(c0.lat, c1.lat), lon: mix(c0.lon, c1.lon), value: mix(c0.value, c1.value), opacity: 1 });
+    });
+    first.forEach((centre, index) => { if (!pairedFirst.has(index)) out.push({ ...centre, opacity: 1 - a }); });
+    second.forEach((centre, index) => { if (!pairedSecond.has(index)) out.push({ ...centre, opacity: a }); });
+    return out.filter((centre) => centre.opacity > 0.05);
+  }
+
+  function updateCentres(source) {
+    const centres = source && state.centres ? movingCentres(source, state.t) : [];
     while (centreMarkers.length < centres.length) {
       const element = document.createElement("div");
       element.className = "map-label pressure-centre";
@@ -1114,6 +1182,8 @@
         const element = item.marker.getElement();
         element.innerHTML = `<b>${centre.high ? "H" : "L"}</b><span>${Math.round(centre.value)}</span>`;
         element.title = `${centre.high ? "High" : "Low"}, ${Math.round(centre.value)} hPa`;
+        // On its content: MapLibre sets the opacity of the marker itself.
+        element.style.setProperty("--fade", centre.opacity < 1 ? centre.opacity.toFixed(2) : "1");
         item.marker.setLngLat([centre.lon, centre.lat]);
         if (!item.added) { item.marker.addTo(map); item.added = true; }
       } else if (item.added) {
@@ -1128,7 +1198,7 @@
     const features = [];
     const labels = [];
     const values = state.isobars && source && source.quantities.pressure && includedLayers(source).includes("pressure") ? grid(source, "pressure", state.t) : null;
-    updateCentres(values, source);
+    updateCentres(values ? source : null);
     if (values) {
       let low = Infinity, high = -Infinity;
       for (let k = 0; k < values.length; k++) {

@@ -479,6 +479,7 @@ body.plots-open .route-row.plotted { box-shadow: inset 2px 0 0 var(--accent); }
   color: var(--isobar);
   line-height: 1;
 }
+.pressure-centre > * { opacity: var(--fade, 1); }
 .pressure-centre b { font-size: 20px; font-weight: 700; }
 .pressure-centre span { font-size: 10px; font-weight: 600; margin-top: 1px; font-variant-numeric: tabular-nums; }
 
