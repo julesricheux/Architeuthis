@@ -40,6 +40,12 @@
   const SEAMARK_LEVELS = [[SEAMARK_ZOOM, 256], [SEAMARK_ZOOM - 1, 128], [SEAMARK_ZOOM - 2, 64]];
   // Valid time of a chart, in the window the timeline covers around it.
   const OVERLAY_MARGIN = 6 * HOUR;
+  // Size of the points of the routes, 1 for the radius of the first pages:
+  // it scales their radius and their white outline at every zoom.
+  const ROUTE_POINT_SCALE = 1.3;
+  // Spacings of the isobars offered in the layers, in hPa, and the first.
+  const ISOBAR_STEPS = [2, 4];
+  const DEFAULT_ISOBAR_STEP = 4;
 
   // Map colours of each theme. The weather is drawn the same in both: arrows
   // and barbs take the colour of the field under them, made vivid with
@@ -54,16 +60,17 @@
       land: "#3c4045",
       coast: "#000000",
       coastShade: 0.08,
-      graticule: "rgba(255,255,255,0.10)",
+      graticule: "rgba(255,255,255,0.24)",
     },
     light: {
       sea: "#c9ced3",
       land: "#f7f7f5",
       coast: "#000000",
       coastShade: 0.045,
-      graticule: "rgba(0,0,0,0.13)",
+      graticule: "rgba(0,0,0,0.26)",
     },
   };
+  const GRATICULE_WIDTH = 0.8;
 
   // The coastline: a thin line, shaded on the sea side by lines of growing
   // width offset towards the sea, which overlap most along the coast. Each
@@ -110,6 +117,7 @@
     arrowKind: null,
     isobars: true,
     isobarLabels: true,
+    isobarStep: DEFAULT_ISOBAR_STEP,
     opacity: 1,
     basemap: "offline",
     seamarks: false,
@@ -139,11 +147,12 @@
   scene.zones.forEach((zone) => { state.zones[zone.id] = zone.visible; });
   scene.overlays.forEach((overlay) => { state.overlays[overlay.id] = overlay.visible; });
   if (stored) {
-    ["speed", "source", "layer", "arrowKind", "isobars", "isobarLabels", "opacity", "basemap", "seamarks", "graticule", "panelOpen", "noteOpen", "theme", "picker"]
+    ["speed", "source", "layer", "arrowKind", "isobars", "isobarLabels", "isobarStep", "opacity", "basemap", "seamarks", "graticule", "panelOpen", "noteOpen", "theme", "picker"]
       .forEach((key) => { if (key in stored) state[key] = stored[key]; });
     ["hidden", "zones", "overlays"].forEach((key) => { Object.assign(state[key], stored[key] || {}); });
   }
   if (!OSM_ENABLED) state.basemap = "offline";
+  if (!ISOBAR_STEPS.includes(state.isobarStep)) state.isobarStep = DEFAULT_ISOBAR_STEP;
 
   function restore() {
     try {
@@ -162,7 +171,7 @@
         const view = map ? { center: map.getCenter().toArray(), zoom: map.getZoom(), bearing: map.getBearing() } : null;
         const keep = {
           t: state.t, view, speed: state.speed, source: state.source, layer: state.layer, arrowKind: state.arrowKind,
-          isobars: state.isobars, isobarLabels: state.isobarLabels, opacity: state.opacity, basemap: state.basemap,
+          isobars: state.isobars, isobarLabels: state.isobarLabels, isobarStep: state.isobarStep, opacity: state.opacity, basemap: state.basemap,
           seamarks: state.seamarks, graticule: state.graticule, hidden: state.hidden, zones: state.zones,
           overlays: state.overlays, panelOpen: state.panelOpen, noteOpen: state.noteOpen, theme: state.theme,
           picker: state.picker,
@@ -1020,7 +1029,8 @@
       for (let k = 0; k < values.length; k++) {
         if (values[k] === values[k]) { low = Math.min(low, values[k]); high = Math.max(high, values[k]); }
       }
-      for (let level = Math.ceil(low / 4) * 4; level <= high; level += 4) {
+      const spacing = state.isobarStep;
+      for (let level = Math.ceil(low / spacing) * spacing; level <= high; level += spacing) {
         const segments = contour(values, source.grid, level);
         if (!segments.length) continue;
         features.push({ type: "Feature", properties: { level }, geometry: { type: "MultiLineString", coordinates: segments } });
@@ -1657,7 +1667,11 @@
         weather.append(segmented(arrows, currentArrows(source) || "", (kind) => { state.arrowKind = kind; onFieldsChanged(); }));
       }
       if (source.quantities.pressure && includedLayers(source).includes("pressure")) {
-        weather.append(checkbox("Isobars, every 4 hPa", state.isobars, (on) => { state.isobars = on; onFieldsChanged(); }));
+        weather.append(checkbox("Isobars", state.isobars, (on) => { state.isobars = on; onFieldsChanged(); }));
+        const steps = segmented(ISOBAR_STEPS.map((step) => [step, `every ${step} hPa`]), state.isobarStep, (step) => { state.isobarStep = step; onFieldsChanged(); });
+        steps.classList.add("sub");
+        if (!state.isobars) steps.classList.add("disabled");
+        weather.append(steps);
         const labels = checkbox("Pressure labels", state.isobarLabels, (on) => { state.isobarLabels = on; onFieldsChanged(); }, { disabled: !state.isobars });
         labels.classList.add("sub");
         weather.append(labels);
@@ -2351,7 +2365,7 @@
       ...twins({ id: "land", type: "fill", source: "land", paint: { "fill-color": theme.land } }),
       ...line("coast", 0.5, COAST_OPACITY, 0)
     );
-    layers.push({ id: "graticule", type: "line", source: "graticule", paint: { "line-color": theme.graticule, "line-width": 0.6 } });
+    layers.push({ id: "graticule", type: "line", source: "graticule", paint: { "line-color": theme.graticule, "line-width": GRATICULE_WIDTH } });
     SEAMARK_LEVELS.forEach(([zoom], index) => {
       const layer = { id: `seamarks-${zoom}`, type: "raster", source: `seamarks-${zoom}`, layout: hidden, minzoom: zoom, paint: { "raster-fade-duration": 0 } };
       if (index > 0) layer.maxzoom = zoom + 1;
@@ -2386,12 +2400,12 @@
         source: "route-points",
         paint: {
           "circle-color": ["get", "color"],
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 2, 0.8, 5, 2, 8, 3.5],
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 2, 0.8 * ROUTE_POINT_SCALE, 5, 2 * ROUTE_POINT_SCALE, 8, 3.5 * ROUTE_POINT_SCALE],
           "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 4, 0, 6, 0.9],
+          "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 4, 0, 6, 0.9 * ROUTE_POINT_SCALE],
         },
       },
-      { id: "route-hit", type: "circle", source: "route-points", paint: { "circle-radius": 9, "circle-opacity": 0 } },
+      { id: "route-hit", type: "circle", source: "route-points", paint: { "circle-radius": Math.max(9, 4 * ROUTE_POINT_SCALE), "circle-opacity": 0 } },
       {
         id: "comments",
         type: "symbol",

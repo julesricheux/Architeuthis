@@ -182,6 +182,9 @@ button { cursor: pointer; }
 .seg button:hover { background: var(--faint); }
 .seg button.active { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
 .seg-label { font-size: 11px; color: var(--muted); margin: 0 0 4px; }
+.seg.sub { margin: 2px 0 4px 25px; }
+.seg.sub button { min-width: 0; padding: 3px 8px; }
+.seg.disabled { opacity: 0.45; pointer-events: none; }
 
 .check {
   display: flex;
