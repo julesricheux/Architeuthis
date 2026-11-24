@@ -7,7 +7,7 @@
  * page works offline. ui.py previews the same page in a frame and sends the
  * analyst's selection with postMessage ("architeuthis:settings"); in that
  * preview the analyst comments points of the routes, sent back to ui.py
- * ("architeuthis:comments").
+ * ("architeuthis:comments"), with the zones ticked ("architeuthis:zones").
  */
 (function () {
   "use strict";
@@ -1540,6 +1540,15 @@
     try { window.parent.postMessage({ type: "architeuthis:overlays", overlays }, "*"); } catch (error) { /* not embedded */ }
   }
 
+  // The zones ticked, sent to ui.py at each toggle and once loaded: the file
+  // it writes holds only those, shown.
+  function sendZones() {
+    if (window.parent === window) return;
+    const zones = {};
+    scene.zones.forEach((zone) => { zones[zone.id] = zone.outline.length >= 2 && !!state.zones[zone.id]; });
+    try { window.parent.postMessage({ type: "architeuthis:zones", zones }, "*"); } catch (error) { /* not embedded */ }
+  }
+
   // Every comment, sent to ui.py so that the file it writes holds them.
   function sendComments() {
     if (window.parent === window) return;
@@ -2873,8 +2882,9 @@
         const empty = zone.outline.length < 2;
         zones.append(checkbox(empty ? `${zone.label} (unavailable)` : zone.label, !empty && state.zones[zone.id], (on) => {
           state.zones[zone.id] = on;
-          updateZones();
+          sendZones();
           persist();
+          updateZones();
         }, { color: zone.color, line: true, disabled: empty }));
       });
       panel.append(zones);
@@ -3785,6 +3795,7 @@
     });
     if (window.parent !== window) {
       try { window.parent.postMessage({ type: "architeuthis:ready" }, "*"); } catch (error) { /* not embedded */ }
+      sendZones();
     }
   }
 

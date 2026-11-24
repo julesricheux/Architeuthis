@@ -476,7 +476,8 @@ def test_the_download_holds_the_choices(ui, tagged_reports):
     assert list(scene["variables"]) == ["twa", "sog"]
     assert [source["label"] for source in scene["sources"]] == ["GFS"]
     assert [(overlay["label"], overlay["visible"]) for overlay in scene["overlays"]] == [("NOAA surface analysis", True)]
-    assert {zone["label"] for zone in scene["zones"]} == {"Iceberg limit", "Safety margin"}
+    # Only the zones shown at first, as no preview sent its ticks: the library zone stays out.
+    assert [(zone["label"], zone["visible"]) for zone in scene["zones"]] == [("Iceberg limit", True)]
     assert (scene["title"], scene["note"]) == ("Crossing 12", "Keep north")
     assert scene["settings"] == {"routes": None, "sources": None, "overlays": None, "hover": None, "fields": None, "theme": "dark"}
     assert "fake maplibregl" in data["content"]
@@ -554,6 +555,39 @@ def test_a_download_without_title_is_named_after_the_departure(ui):
     assert [(overlay["label"], overlay["visible"]) for overlay in scene["overlays"]] == [("NOAA surface analysis", False)]
     assert scene["title"].startswith("Routes departing ")
     assert data["filename"].startswith("Routes_departing_")
+
+
+def shared_zones_of(ui, zones):
+    data, _ = ui["download"](1, "a_latest.json", [], [], [], "Zones", "", 1, False, *[None] * 7, zones)
+    return [(zone["label"], zone["visible"]) for zone in scene_of(data["content"])["zones"]]
+
+
+def test_only_the_zones_ticked_in_the_preview_are_shared_and_shown(ui, scene):
+    ids = {zone["label"]: zone["id"] for zone in scene["zones"]}
+
+    ticked = {ids["Iceberg limit"]: False, ids["Safety margin"]: True}
+    assert shared_zones_of(ui, ticked) == [("Safety margin", True)]
+    assert shared_zones_of(ui, {key: False for key in ids.values()}) == []
+    # The zone of the library is left as it is, hidden at first in the preview.
+    assert ui["exclusion_zones"][1].visible is False
+
+
+def test_before_the_preview_answers_the_zones_shown_at_first_are_shared(ui, scene):
+    shown = [zone["label"] for zone in scene["zones"] if zone["visible"] and len(zone["outline"]) >= 2]
+
+    assert [label for label, _ in shared_zones_of(ui, None)] == shown
+    assert ui["zones_shown"]() == {zone["id"]: zone["label"] in shown for zone in scene["zones"]}
+
+
+def test_the_preview_sends_the_zones_ticked_to_the_download(client):
+    dependencies = client.get("/_dash-dependencies").get_json()
+    download = next(item for item in dependencies if "download.data" in item["output"])
+
+    assert {"id": "zones-shown", "property": "data"} in download["state"]
+    # The page sends them, and the bridge of ui.py puts them in that store.
+    dux = Path(share.__file__).parent
+    assert 'type: "architeuthis:zones"' in (dux / "data" / "viewer" / "viewer.js").read_text(encoding="utf-8")
+    assert 'set_props("zones-shown"' in (dux / "ui.py").read_text(encoding="utf-8")
 
 
 def test_quick_selection_of_routes(client):

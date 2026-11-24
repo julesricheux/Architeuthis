@@ -358,6 +358,47 @@ def shared_zones() -> list:
 
 exclusion_zones = shared_zones()
 
+
+def zones_shown(zones=None) -> dict:
+    """
+    The zones shown at first in the preview, by their scene identifier.
+
+    Args:
+        zones: Zones of the preview, `exclusion_zones` by default.
+
+    Returns:
+        `{"z<index>": shown}`, as the preview sends its zones.
+    """
+    zones = exclusion_zones if zones is None else zones
+    return {
+        f"z{index}": bool(getattr(zone, "visible", True)) and len(getattr(zone, "outline", zone)) >= 2
+        for index, zone in enumerate(zones)
+    }
+
+
+def ticked_zones(shown=None) -> list:
+    """
+    The zones of the share file: those ticked in the preview.
+
+    The zones left unticked by the analyst are not shared, and those
+    shared are shown when the file opens.
+
+    Args:
+        shown: The zones ticked, as the preview sends them,
+            `{"z<index>": shown}`; those of `zones_shown` when None.
+
+    Returns:
+        Copies of the ticked zones of `exclusion_zones`, all visible.
+    """
+    shown = zones_shown() if shown is None else shown
+    zones = []
+    for index, zone in enumerate(exclusion_zones):
+        if shown.get(f"z{index}"):
+            zone = copy.copy(zone)
+            zone.visible = True
+            zones.append(zone)
+    return zones
+
 # MapLibre is put in the pages, so that shared files open offline, once downloaded.
 LIBRARY = "inline" if maplibre_files() is not None else "cdn"
 
@@ -777,6 +818,8 @@ app.layout = dmc.MantineProvider(
             # The analyst's comments on points of the routes, sent by the preview:
             # {"r<index>": {"<segment>": text}}.
             dcc.Store(id="route-comments", data={}),
+            # The zones ticked in the preview, the only ones shared: {"z<index>": shown}.
+            dcc.Store(id="zones-shown", data=zones_shown()),
         ],
     ),
 )
@@ -876,8 +919,9 @@ def quick_select(optimized, every, none, name):
 
 # The viewer answers "architeuthis:ready" once loaded: the bridge then sends it the current
 # choices, which may have changed while it was loading. The viewer sends back the comments
-# of the analyst ("architeuthis:comments"), its theme ("architeuthis:theme") and the charts
-# it shows ("architeuthis:overlays"), so that the NOAA box follows each toggle there.
+# of the analyst ("architeuthis:comments"), its theme ("architeuthis:theme"), the charts
+# it shows ("architeuthis:overlays"), so that the NOAA box follows each toggle there, and
+# the zones ticked ("architeuthis:zones"), the only ones the file shares.
 app.clientside_callback(
     """
     function (routes, hover, sources, title, note, noaa, texts, comments, light, names, fields, ids, nameIds) {
@@ -912,6 +956,8 @@ app.clientside_callback(
                     window.dash_clientside.set_props("route-comments", {data: data.comments || {}});
                 } else if (data.type === "architeuthis:overlays") {
                     window.dash_clientside.set_props("noaa-check", {checked: !!(data.overlays || {}).o0});
+                } else if (data.type === "architeuthis:zones") {
+                    window.dash_clientside.set_props("zones-shown", {data: data.zones || {}});
                 } else if (data.type === "architeuthis:theme") {
                     window.dash_clientside.set_props("theme-switch", {checked: data.theme === "light"});
                 }
@@ -1002,6 +1048,7 @@ def route_names(collection, names=None, ids=None) -> list:
     State({"type": "route-name", "index": ALL}, "value"),
     State({"type": "route-name", "index": ALL}, "id"),
     State("fields-select", "value"),
+    State("zones-shown", "data"),
     prevent_initial_call=True,
 )
 def download(
@@ -1021,6 +1068,7 @@ def download(
     names=None,
     name_ids=None,
     fields=None,
+    zones=None,
 ):
     """
     The share file of the current choices.
@@ -1043,6 +1091,9 @@ def download(
         names: Names of the routes, their label when empty.
         name_ids: Identifiers of their boxes.
         fields: Layers of the forecasts to share, all when None.
+        zones: Zones ticked in the preview, `{"z<index>": shown}`, the
+            only ones shared and shown at opening; when None, those
+            shown at first.
     """
     if not clicks:
         return no_update, no_update
@@ -1053,7 +1104,7 @@ def download(
         routes=sorted(int(route[1:]) for route in routes or []),
         forecasts={model.upper(): DS[model] for model in MODELS if model in (sources or [])},
         variables=hover or [],
-        zones=exclusion_zones,
+        zones=ticked_zones(zones),
         overlays=overlays(visible=bool(noaa)),
         labels=route_names(collection, names, name_ids),
         title=title,
