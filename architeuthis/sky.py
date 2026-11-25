@@ -87,9 +87,16 @@ THRESHOLDS = {
     "low_cover": 0.1,  # least low cover for a low genus
     "middle_cover": 0.1,
     "high_cover": 0.05,
-    "cb_cape": 1000.0,  # Cb: CAPE and rate...
-    "cb_rate": 2.0,
-    "cb_strong_cape": 2000.0,  # ...or a stronger CAPE and a lighter rate
+    # Cb: showers in unstable air, as over the winter sea, where the CAPE
+    # of a Cb is a few hundred J/kg (CAPE, rate and lower-tropospheric
+    # stability), or a strong CAPE and a rate whatever the stability.
+    # Checked on IFS and GFS over the North Atlantic in November: about
+    # 0.5 % of points and a tenth of those with rain, the rain of fronts
+    # (stable, CAPE near 0) left to Ns.
+    "cb_cape": 150.0,
+    "cb_rate": 0.5,
+    "cb_stability": 14.0,
+    "cb_strong_cape": 1000.0,
     "cb_strong_rate": 0.5,
     "cu_max_cover": 0.7,  # Cu: broken low cover and unstable air
     "cu_cape": 100.0,
@@ -331,10 +338,11 @@ def diagnose(
     below; an étage is `HIDDEN` where the étages below leave at most
     `visible_cover` of the sky open:
 
-    - Low: Cb (strong CAPE and rate), St (low cover over air near its
-      dewpoint), Cu (broken cover in unstable air), else Sc.
-    - Middle: Ns (thick middle and low covers, steady rain and weak
-      CAPE), As (thick middle cover), else Ac.
+    - Low: Cb (showers with some CAPE in unstable air, or a strong
+      CAPE), St (low cover over air near its dewpoint), Cu (broken
+      cover in unstable air), else Sc.
+    - Middle: Ns (thick middle and low covers and steady rain, where
+      there is no Cb), As (thick middle cover), else Ac.
     - High: Cs (wide cover), else Ci.
 
     Every genus present in the column is also given per étage, as a
@@ -375,9 +383,8 @@ def diagnose(
     stability = lower_tropospheric_stability(t2m, values["t700"])
 
     cumulonimbus = (
-        ((cape > limits["cb_cape"]) & (rate > limits["cb_rate"]))
-        | ((cape > limits["cb_strong_cape"]) & (rate > limits["cb_strong_rate"]))
-    )
+        (cape > limits["cb_cape"]) & (rate > limits["cb_rate"]) & (stability < limits["cb_stability"])
+    ) | ((cape > limits["cb_strong_cape"]) & (rate > limits["cb_strong_rate"]))
     low_clouds = lcc >= limits["low_cover"]
     low = onp.select(
         [
@@ -398,7 +405,7 @@ def diagnose(
             thick_middle
             & (lcc > limits["ns_low_cover"])
             & (rate > limits["ns_rate"])
-            & (cape <= limits["cb_cape"]),
+            & ~cumulonimbus,
             thick_middle,
             mcc >= limits["middle_cover"],
         ],
