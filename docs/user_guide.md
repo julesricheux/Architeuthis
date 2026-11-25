@@ -6,7 +6,7 @@ The reference of Architeuthis: data sources, reports, figures, exclusion zones a
 - [Keeping and reusing results](#keeping-and-reusing-results)
 - [Plotting](#plotting)
 - [Exclusion zones](#exclusion-zones)
-- [Displaying routes: `ui.py`](#displaying-routes-uipy)
+- [Sharing routes](#sharing-routes)
 
 ## Data sources
 
@@ -127,13 +127,13 @@ Each vessel model is evaluated separately, so a function that computes all compo
 
 ### Consumption
 
-The objective is the fuel, in tonnes: the integral over the passage of the consumption in kg/h, at the middle of each segment. The routing takes it from the first of these vessel models; the others, such as `max_bhp` or `sails_contribution`, are computed only when `variables` lists them.
+The objective is the fuel, in tonnes: the integral over the passage of the consumption in L/h, at the middle of each segment, times the fuel density in kg/L. Consumptions are volumes, in L/h, in `ctx`, the report, the tooltips and the figures; only the fuel of the voyage, `fuel`, is a mass, in tonnes. An `hourly_consumption` table or function gives litres per hour. The routing takes it from the first of these vessel models; the others, such as `max_bhp` or `sails_contribution`, are computed only when `variables` lists them.
 
-| Model | Consumption, kg/h | Report entries |
+| Model | Consumption, L/h | Report entries |
 | --- | --- | --- |
-| `hourly_consumption`, kg/h | the model itself | `hourly_consumption` |
-| `total_power`, kW: propulsion and hotel | `total_power * sfoc / 1e3` | `total_power`, `sfoc`, `hourly_consumption` |
-| `bhp`, kW: propulsion | `(bhp + hotel_load) * sfoc / 1e3` | `bhp`, `hotel_load`, `total_power`, `sfoc`, `hourly_consumption` |
+| `hourly_consumption`, L/h | the model itself, a table or function in litres per hour | `hourly_consumption` |
+| `total_power`, kW: propulsion and hotel | `total_power * sfoc / 1e3 / fuel_density` | `total_power`, `sfoc`, `hourly_consumption` |
+| `bhp`, kW: propulsion | `(bhp + hotel_load) * sfoc / 1e3 / fuel_density` | `bhp`, `hotel_load`, `total_power`, `sfoc`, `hourly_consumption` |
 
 Each model is a table, a function or a constant: `vessel.add_constant("bhp", 1500.)` registers a model without input. `hotel_load` (kW) and `sfoc` (g/kWh) are given to `Vessel` as numbers or as functions of the power, the brake power for `hotel_load` and the total power for `sfoc`. A model of the same key takes precedence, and may name `bhp`, `hotel_load` or `total_power` among its inputs, so an sfoc curve of the engine load is a table or a function of `total_power`:
 
@@ -143,13 +143,44 @@ vessel.add_interpolator("bhp", "stw", "tws", "twa", "hs", "wa")
 vessel.add_function("sfoc", lambda x: 175. + 2e-6 * (x["total_power"] - 3000.)**2, ["total_power"])
 ```
 
+The fuel density, in kg/L, is `Vessel(fuel_density=...)`, from the bunker delivery note for example, else that of `fuel_type`, a key of `fuels.FUELS`, an alias of `fuels.FUEL_ALIASES` or a `fuels.Fuel` of your own: marine diesel oil at 0.85 kg/L by default. The passage plan metadata records both.
+
+```python
+vessel = Vessel("vessel", fuel_type="hfo", sfoc=180., hotel_load=180., max_power=4100.)  # 0.985 kg/L
+vessel = Vessel("vessel", fuel_type="hfo", fuel_density=0.991, ...)                     # measured
+vessel.fuel.co2(report["fuel"])            # t of CO2, tank to wake
+vessel.fuel.ghg(report["fuel"])            # t of CO2 equivalent, well to wake (FuelEU Maritime)
+```
+
+| Key | Fuel | Density, kg/L | LCV, MJ/kg | CO2, g/g | Well to wake, gCO2e/MJ |
+| --- | --- | --- | --- | --- | --- |
+| `mdo` | Marine diesel oil (ISO 8217 DMB) | 0.85 | 42.7 | 3.206 | 90.8 |
+| `mgo` | Marine gas oil (ISO 8217 DMA) | 0.85 | 42.7 | 3.206 | 90.8 |
+| `lfo` | Light fuel oil (ISO 8217 RMA-RMD) | 0.93 | 41 | 3.151 | 91.4 |
+| `hfo` | Heavy fuel oil (ISO 8217 RME-RMK) | 0.985 | 40.5 | 3.114 | 91.7 |
+| `vlsfo` | Very low sulphur fuel oil, 0.5 % S (residual) | 0.94 | 40.5 | 3.114 | 91.7 |
+| `lng` | LNG, Otto dual fuel medium speed engine | 0.45 | 49.1 | 2.75 | 89.2 |
+| `lng_otto_slow` | LNG, Otto dual fuel slow speed engine | 0.45 | 49.1 | 2.75 | 82.9 |
+| `lng_diesel` | LNG, diesel dual fuel slow speed engine | 0.45 | 49.1 | 2.75 | 76.1 |
+| `lng_lbsi` | LNG, lean burn spark ignited engine | 0.45 | 49.1 | 2.75 | 86.9 |
+| `lpg_propane` | LPG, propane | 0.51 | 46 | 3 | 73.0 |
+| `lpg_butane` | LPG, butane | 0.58 | 46 | 3.03 | 73.7 |
+| `methanol` | Methanol from natural gas | 0.792 | 19.9 | 1.375 | 100.4 |
+| `ethanol` | Ethanol | 0.789 | 26.8 | 1.913 | – |
+| `ammonia` | Ammonia from natural gas, liquid at -33 deg C | 0.682 | 18.6 | 0 | 121.0 |
+| `hydrogen` | Hydrogen from natural gas, liquid at -253 deg C | 0.071 | 120 | 0 | 132.0 |
+| `fame` | Biodiesel, FAME (EN 14214) | 0.88 | 37.2 | 2.834 | – |
+| `hvo` | Hydrotreated vegetable oil (EN 15940) | 0.78 | 44 | 3.115 | – |
+| `diesel` | Road diesel (EN 590) | 0.835 | 43 | 3.186 | – |
+| `unleaded` | Unleaded petrol (EN 228) | 0.745 | 44.3 | 3.07 | – |
+
+Factors of marine fuels are the default values of FuelEU Maritime (Regulation (EU) 2023/1805, Annex II, with GWP 25 for CH4 and 298 for N2O), and of road fuels those of the IPCC 2006 guidelines. A `Fuel` also has `cf_ch4`, `cf_n2o` and `methane_slip` (LNG by engine type), `wtt`, `ttw_intensity` and `wtw_intensity`, `energy_density` (MJ/L) and `biogenic`: FuelEU counts the combustion CO2 of sustainable biofuels as zero, and the well to tank of biofuels and road fuels, which depends on their production, is left as None. Densities are typical at 15 deg C (liquid for the gases); that of a delivery is on its bunker note. Check the factors against the regulation in force before any regulatory use.
+
 `examples/vessel_definitions.py` compares five definitions of one vessel on a short-sea leg, without polar file or credentials: the brake power as a function or as a table, an sfoc curve of the total power, the total power, and the hourly consumption.
 
-`vessel.consumption(query)` gives these quantities for a query, and `vessel.consumption_model` the model it uses. Without any of the three models, the routing raises an error that says so. Without `sfoc` when it is needed, it is still 0 g/kWh until 0.4.0, a zero objective, with a `DeprecationWarning`; from 0.4.0 this is an error too. The entries of the table are in the report and in `ctx`, so a constraint can limit the consumption or the total power. `sfc`, the former name of `sfoc`, still works with a `DeprecationWarning` until 0.4.0.
+`vessel.consumption(query)` gives these quantities for a query, and `vessel.consumption_model` the model it uses. Without any of the three models, the routing raises an error that says so. Without `sfoc` when it is needed, it raises a `ValueError` too. The entries of the table are in the report and in `ctx`, so a constraint can limit the consumption or the total power.
 
-`max_power`, in kW, is the power limit of the default constraints: `max_bhp` when `variables` lists it, else `bhp`, else `total_power` stays below it. `max_power=None` leaves the power free. Left out, it is still 1e12 kW until 0.4.0, with a `DeprecationWarning`, and None from 0.4.0.
-
-Until 0.4.0, `max_bhp` and `sails_contribution` are still computed when the vessel has these models and `variables` does not list them, with a `DeprecationWarning`, so that the default constraints and existing scripts work as before. List them to keep them from 0.4.0.
+`max_power`, in kW, is the power limit of the default constraints: `max_bhp` when `variables` lists it, else `bhp`, else `total_power` stays below it. `max_power=None`, the default, leaves the power free.
 
 ### Additional variables
 
@@ -188,6 +219,7 @@ report.table(["tws", "tws_gust", "slope"])
 | Specification | Gives | Units |
 | --- | --- | --- |
 | `"gust"` | `tws_gust` and `aws_gust`, below | kt |
+| `"clouds"` | the nine fields of `sky.SKY_VARIABLES` from the atmosphere, all that the cloud plots need (`sky.from_report`, the plots of the share file); an IFS or GFS atmosphere downloaded with `sky.IFS_SKY_REGEX` or `GFS_SKY_REGEX` gets their models from `sky.add_sky_models` when it has none, else a `KeyError` names the fields missing | those of `sky.diagnose` |
 | a model key, such as `"slope"` or `"pres"` | the model of the first of `atmosphere`, `wave`, `current` and `vessel` that has this key | those of the model |
 | a model key with its source, such as `"wave.slope"` or `"vessel.leeway"` | the model of that source; in a list, the variable is named without the prefix, `slope` | those of the model |
 | `"tws_gust"` | the atmospheric model `gust` (m/s) converted to kt, or `tws * GUST_DEFAULT_RATIO` (1.23) when there is none | kt |
@@ -199,7 +231,7 @@ report.table(["tws", "tws_gust", "slope"])
 
 Forecasts are queried at the time and position of each segment, with the ensemble member of the analysis, and vessel models with the inputs they name, found as for the polars. A model of a variable may thus be an interpolator or a function, of any data object. Write functions with `architeuthis.numpy`, and keep them smooth when a constraint uses them: the period above is kept away from zero, its value on land and past the forecast horizon.
 
-`run(variables=...)` and `evaluate(variables=...)` add variables for one run or one evaluation to those of the analysis. `options={"include_gusts": ...}` is deprecated, with a `DeprecationWarning`, and will be removed in 0.4.0: list `"gust"` instead. Until then, an analysis without `options` still computes the gusts, and `options={}` leaves them out unless they are listed; from 0.4.0, they are computed only when listed. A variable cannot take the name of a routing quantity or of a report entry such as `status`, and an unknown key raises a `KeyError` that names it. The variables are recorded in the metadata of the passage plan, callables by their name.
+`run(variables=...)` and `evaluate(variables=...)` add variables for one run or one evaluation to those of the analysis. The gusts are computed only when `"gust"` (or `tws_gust`, `aws_gust`) is listed; `options={"include_gusts": ...}`, removed in 0.4.0, raises a `ValueError` that says so. A variable cannot take the name of a routing quantity or of a report entry such as `status`, and an unknown key raises a `KeyError` that names it. The variables are recorded in the metadata of the passage plan, callables by their name.
 
 `examples/function_polar_routing.py` computes the IFS gusts, the wave slope and the wind at 100 m this way.
 
@@ -224,13 +256,22 @@ print(sky.describe(fields | diagnosis))           # ["6/8 · Sc 600 m · As · l
 | `IFS_SKY_REGEX`, `GFS_SKY_REGEX` | Select the nine fields with Herbie. For GFS, only the instantaneous covers and rate, not the averages of the same names; GFS has no middle and high covers at step 0, so start at 3 h. |
 | `add_sky_models(forecast, model=None)` | Registers the fields under the keys of `SKY_VARIABLES`, in 0-1 covers, J/kg, mm/h and K, whatever their names and units in the model (`SKY_FIELDS`). |
 | `sample(forecast, valid_time, latitude, longitude)` | The nine fields at these points, as NumPy arrays. |
+| `from_report(report)` | The nine fields of a routing report and their `diagnose`, one value per segment, NaN read as 0; None when a field is missing. |
 | `diagnose(fields, thresholds=None)` | Per point: `cloud_oktas` (9 for fog), `cloud_base` in m, one genus per étage in `cloud_low`, `cloud_middle` and `cloud_high` (index in `load_genera()["genera"]`, `NONE` or `HIDDEN`), every genus present in the column in `cloud_low_genera`, `cloud_middle_genera` and `cloud_high_genera` (bit masks, whether hidden from deck or not), `fog` and the lower-tropospheric `stability` in K. |
 | `describe(sky, thresholds=None)` | One line per point: cover, low genera and their base, middle and high genera seen from deck, several genera of an étage joined by "+" (`Cb+Cu`), precipitation. |
 | `load_genera()`, `genus_index`, `genus_abbreviation` | The table of genera, and the codes of `diagnose`. |
 | `genera_present(mask, main=None)` | The genera of a bit mask of `diagnose`, the main one first. |
 | `draw(sky, valid_time, **kwargs)` | The meteogram of `plot_sky`, described with the figures below. |
 
-The rules take, in each étage, the first genus that applies. Low: Cb with a strong CAPE and precipitation rate, St with a low cover over air near its dewpoint, Cu with a broken cover in unstable air, else Sc. Middle: Ns with thick middle and low covers and steady rain, As with a thick middle cover, else Ac. High: Cs with a wide cover, else Ci. Other genera present beside the main one are kept: Cu around a Cb or beside Sc, Sc beside St, Ac beside As, Ci beside Cs or from the anvil of a Cb. An étage is `HIDDEN` where the étages below leave at most `visible_cover` (10%) of the sky open, coded "/" as in the WMO codes. The cloud base is the condensation level, 125 m per kelvin of dewpoint spread. Cirrocumulus would need the upper air and is reported as Cirrus. The thresholds, in `THRESHOLDS`, are first values that have not been calibrated against observations: replace some with `thresholds={...}`.
+The rules take, in each étage, the first genus that applies. Low: Cb with showers (precipitation and some CAPE, 150 J/kg, in unstable air, as over the winter sea) or a strong CAPE (1000 J/kg) and precipitation, St with a low cover over air near its dewpoint, Cu with a broken cover in unstable air, else Sc. Middle: Ns with thick middle and low covers and steady rain where there is no Cb, As with a thick middle cover, else Ac. High: Cs with a wide cover, else Ci. Other genera present beside the main one are kept: Cu around a Cb or beside Sc, Sc beside St, Ac beside As, Ci beside Cs or from the anvil of a Cb. An étage is `HIDDEN` where the étages below leave at most `visible_cover` (10%) of the sky open, coded "/" as in the WMO codes. The cloud base is the condensation level, 125 m per kelvin of dewpoint spread. Cirrocumulus would need the upper air and is reported as Cirrus. The thresholds, in `THRESHOLDS`, are first values that have not been calibrated against observations: replace some with `thresholds={...}`.
+
+A routing keeps the sky of its passage when its `variables` list `"clouds"`: the nine fields at the centre of each segment, in the report under their keys. `sky.from_report(report)` reads them back as `fields | diagnose(fields)`, or None without them, and the share file draws them in its cloud plot.
+
+```python
+analysis = RoutingAnalysis(..., atmosphere=forecast, variables=["clouds", "msl"])
+report = analysis.run()
+plot_sky(sky.from_report(report), report["ctim"], style="smooth", latitude=report["clat"], longitude=report["clon"])
+```
 
 `examples/sky_along_route.py` puts the skies of IFS and GFS side by side along a great circle.
 
@@ -355,6 +396,7 @@ reports = ReportCollection()
 reports.append(analysis.run(tags={"model": "ifs", "init_fac": 0.}))
 
 reports.save()                                  # ~/data/routes/output_<today>.json, displayed by ui.py
+reports.share(forecasts={"IFS": [atmosphere, wave]})  # one HTML file to send aboard
 reports = ReportCollection.latest()             # the most recent file of ~/data/routes/
 
 selected = reports.select(vessel="eff45", solve=1)
@@ -394,12 +436,12 @@ Six stacked panels share a time axis in UTC, which runs from the first to the la
 | --- | --- | --- | --- | --- |
 | 1 | `sog` | `sog` | Speed over ground, kt | Automatic |
 | 2 | `sails` | `sails_contribution` | Sails contribution, %. Without it, the panel says so | 0 to 100 |
-| 3 | `bhp` | `bhp`, `max_bhp` | Average BHP, kW. With `max_bhp`, load fluctuations are dashed lines and a band at average ± (max − average). Without `bhp`, `total_power` (kW), else `hourly_consumption` (kg/h) | From 0 |
+| 3 | `bhp` | `bhp`, `max_bhp` | Average BHP, kW. With `max_bhp`, load fluctuations are dashed lines and a band at average ± (max − average). Without `bhp`, `total_power` (kW), else `hourly_consumption` (L/h) | From 0 |
 | 4 | `swh` | `swh` | Significant wave height, m | From 0 |
 | 5 | `tws` | `tws`, `tws_gust` | True wind, kt: average, and gust as a dashed line with a band | From 0 |
 | 6 | `aws` | `aws`, `aws_gust` | Apparent wind, kt: average, and gust as a dashed line with a band | From 0 |
 
-The gust lines are left out when the report has no gust, which happens with `RoutingAnalysis(..., options={})` unless `variables` lists `"gust"`. Likewise, `sails_contribution` and `max_bhp` are in the report only when `variables` lists them (or, until 0.4.0, when the vessel has them).
+The gust lines are left out when the report has no gust, which happens unless `variables` lists `"gust"`. Likewise, `sails_contribution` and `max_bhp` are in the report only when `variables` lists them.
 
 | Argument | Default | Meaning |
 | --- | --- | --- |
@@ -560,13 +602,77 @@ The zones of a routing are yours: the package holds no geographic zone, and `exa
 
 `ExclusionZone.from_geojson(path, feature_id)` reads a polygon from a GeoJSON file. `visible` only concerns the display: a hidden zone still applies to the routing.
 
-## Displaying routes: `ui.py`
+## Sharing routes
 
-```bash
-cd architeuthis
-python ui.py
+The routes, the forecasts of the voyage and the exclusion zones go aboard as one HTML file. It opens in any browser, without a server or a connection, on a 3D globe with a timeline and a layers panel: send it by email, or copy it to the ship.
+
+```python
+from architeuthis.report import ReportCollection
+
+reports = ReportCollection.latest()
+reports.share(
+    forecasts={"IFS": [atmosphere, wave], "GFS": [gfs_atmosphere, gfs_wave]},
+    routes=[1, 3],                          # indices of the reports, all by default
+    variables=["sog", "tws", "twa", "swh"],   # shown on the routes, in this order
+    zones=[iceberg_zone(), zone],
+    title="Saint-Nazaire to Baltimore",
+    note="Expect the low to cross the route on Saturday: keep north.",
+)                                           # ~/data/shared/saint-nazaire-to-baltimore_<time>.html
 ```
 
-`ui.py` serves on port 8052 and must be started from the `architeuthis/` folder. It displays the most recently modified file of `~/data/routes/`, so `reports.save()` is all it takes for the latest routes to appear at its next start. Each report needs the entries `model`, `vessel`, `member`, `init_fac`, `solve` and `fuel`, and optimized routes (`solve` 1) are shown when the page opens.
+`ReportCollection.share(path=None, **options)` calls `architeuthis.dux.share.share_routes(reports, path=None, library="inline", verbose=True, **options)`, which returns the path of the file. Its options are those of `build_scene`:
 
-The iceberg limit and the zones of `~/data/exclusion_zones/` are drawn with their label on the map, whether or not a routing used them. Each one can be hidden in the layers control at the top right of the map. The iceberg limit is listed as `Iceberg limit (unavailable)` when no bulletin could be obtained, so that it is not taken for a limit far from the route.
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `forecasts` | `None` | Layers by label. Each value is a `Forecast`, an `xarray.Dataset` or a list of them, the others interpolated on the grid of the first. The built-in layers read `u10` and `v10` (or `si10` and `wdir10`), `gust` (or `i10fg`, `fg10`), `msl` (or `prmsl`), `swh` with `mwd` (or `dirpw`), `uo` and `vo`. `share.FIELDS` knows the wave period (`mwp`, `mp2`, `pp1d`, `perpw`), from which the wave slope is computed, the temperature (`t2m`, in °C), the CAPE (`mucape`, `cape`), the precipitation rate (`tprate`, `prate`, in mm/h) and type (`ptype`, in categories), each with its colour scale and arrows, and the clouds: a forecast with a total cloud cover (`tcc`) has one Clouds layer, as on Windy, the cover in % from a clear sky in olive brown to an overcast white (`windy_colormaps.CLOUD_COVER_STOPS`, covers from 0 to 1 or in %) with the precipitation rate over it, when the forecast has one, in mm per 3 h on the steps of Windy's legend (`CLOUD_RAIN_STOPS`: 0.6, 6, 8, 10, 15, 20, 31, 50 mm, from 0.2 mm; `share.CLOUD_RAIN`); the covers by étage (`lcc`, `mcc`, `hcc`) are never layers of their own. Any other field of time and position, and any `add_function` model of time and position of a `Forecast`, is a layer of its own, in its units, on a scale of its values. `share.forecast_fields(forecasts)` lists the layers. |
+| `routes` | all | Indices of the reports to share. A route keeps the colour of its index. |
+| `variables` | `share.DEFAULT_VARIABLES` that the reports have | Entries shown when hovering a route: any array of the report along the route (`segment_variables`), per segment, per node or sampled between nodes, as the topography `z`, shown by its largest value on each segment (`segment_values`). `share.variable_info` gives their label, unit and description, from `share.VARIABLES` or the name. |
+| `labels` | `route_label` | One name per report, by default from its tags: `IFS eff60`, `GFS eff45 m3 (baseline)`. |
+| `zones` | `()` | `ExclusionZone` objects or `[lat, lon]` lists. An empty one, such as the iceberg limit without a bulletin, is listed as unavailable. |
+| `overlays` | `()` | Images drawn over the globe: dicts with `label`, `url` (an address or `share.png_data_uri(content)`), `bounds` (`[[lat, lon], [lat, lon]]`), `visible`, `opacity` and `time`, the valid time of a chart (epoch seconds or a date, naive dates in UTC). Showing a chart with a time brings the page to that time. |
+| `comments` | `None` | The analyst's notes on the routes, by report index: `{index: {"description": text, "points": {segment: text}}}`, or just the description as a text. A segment is an index of `ctim`. A report's own `description` entry is used when none is given. |
+| `title`, `note` | today's date, `""` | Shown at the top of the page; the note is the analyst's message to the crew. |
+| `member` | first | Ensemble member of the forecasts. |
+| `fields` | all | Layers of the forecasts to put in the file, such as `["wind", "waves", "period"]`. A layer brings the fields of its arrows: wave arrows with the period. |
+| `settings` | `None` | Initial choices of the page: `theme` (`"dark"`, the default, or `"light"`), and for `ui.py` the routes, sources, overlays and tooltip variables shown. |
+| `resolution`, `margin`, `time_margin` | 0.5 deg, 10 deg, 12 h | Grid of the forecast frames, the forecast kept around the routes, and after the last arrival: every step before it is kept, from the first of the forecast, whenever the routes leave. |
+
+```python
+reports.share(
+    comments={
+        1: {
+            "description": "Northern option: shorter, but meets the low on Saturday.",
+            "points": {12: "Slow down here to let the front pass ahead."},
+        },
+    },
+    settings={"theme": "light"},
+)
+```
+
+The forecasts are kept around the routes only, and their fake final steps are left out. Each frame is a PNG of 8-bit values, so that a crossing with two models over a week weighs about 3 to 5 MB. Speeds are in knots and pressures in hPa. `library="inline"` puts MapLibre GL JS in the file, downloaded once to `~/data/viewer/`; when it cannot be downloaded, the file loads it from a CDN, and then needs a connection when it is opened, with a ⚠️ status. `library="cdn"` does that on purpose, for a lighter file. `build_scene` and `viewer_html(scene, library)` give the content and the page without writing a file.
+
+Each route also keeps, whatever the tooltip variables, the entries of `share.PLOT_VARIABLES` that its report has (speeds, sails, power, wind with gusts and waves), for the plots beside the globe, with its pressure and its sky when the routing computed them, never from the forecasts of the file. The pressure is the first entry of `share.PRESSURE_NAMES` (`pressure`, `msl`, `prmsl`, `mslp`) in the report, in Pa or hPa (`share.route_pressure`): list the `msl` of the atmosphere in the routing `variables`. The sky needs the nine fields of `sky.SKY_VARIABLES` in the report: list `"clouds"` in the routing `variables`, with an atmosphere downloaded with `sky.IFS_SKY_REGEX` or `GFS_SKY_REGEX`. `share.route_sky(report)` then gives the sky as the file stores it: the fields of `sky.diagnose` and the covers, CAPE, precipitation and temperature at the centre of each segment (`share.SKY_ENTRIES`), None where a field is missing, or None without the nine fields.
+
+In the page:
+
+- **Timeline**: play and pause, steps, a speed from 1 to 24 h of forecast per second, the frames of each source, and the schedule of each route, routes of the same schedule grouped in one bar, with a dot where the analyst commented on the route. Charts with a valid time have a lane of their own: clicking one shows it at its time. Click or drag anywhere on it; *Now* goes to the current time.
+- **Globe**: the boats move along their routes. Hovering a boat shows the description of its route; hovering a point of a route shows its time, the analyst's comment there, marked by a bubble and tinted in the colour of the route, and the chosen variables in two columns, pairs such as TWS and TWA, AWS and AWA or SOG and COG on one row, each gust alone under its speed; hovering the sea shows the position and the fields of the file, with the direction of wind, waves and current.
+- **Weather picker** (the target button under the zoom, or `P`): a dot to drag anywhere, or to move by clicking the map, with a line up to a card telling, as the time changes, the position, the model and time, the wind with its direction and gusts, the waves with their direction, the pressure, and the field shown when it is another one.
+- **Plots** (the chart button under the picker, or `G`, open at first on a wide screen): a panel on the right with the plots of one route, chosen at its top or by clicking it on the globe or in the list of routes, where it is marked, so that the crew can follow what is planned and compare it with what they see aboard: SOG and STW, the sails' share of the thrust, the hotel load and the propulsion power stacked, with dashed lines at the fluctuation of the power when the report has `max_bhp`, the true and the apparent wind with their gusts dashed and a translucent band between the mean wind and the gusts, the wave height, the pressure along the route and the clouds, painted as the smooth style of `plot_sky` (sky by day or night, layers, heaps and towers of their genera tagged with their abbreviations, rain, snow, lightning and fog). A plot shows only what the report has: pressure and clouds come from the routing, not from the forecasts of the file. A vertical line follows the time of the timeline, the values at that time head each plot, and clicking or dragging on a plot moves the time. Each axis fits the values of the route, from zero for the power, the wind and the waves and from 0 to 100 % for the sails. Dragging the inner edge of the plots or of the panel of the layers resizes them, and a double click on it gives back the first width. On a phone, the panel takes the place of the layers.
+- **Print report** (beside the route of the plots): opens the print dialog on a report of that route, to print or save as a PDF ("Save as PDF" as the printer) and keep aboard. An A4 page in light colours on white, its fills lighter to save ink and its sky white by day and light grey by night: the name of the route, its description and its figures (fuel, distance, mean SOG, duration, departure and arrival, vessel, forecast, optimized or not, mean consumption, maximum power, mean share of the sails, strongest wind and gusts, highest waves, pressure range, a warning when it touches land or a zone), then the plots shown in the panel, each comment marked by a red dashed line at its time with its number, and the comments numbered on a page of their own, with their time, position and text. The plots fill two pages, each with the days under its plots.
+- **Glyphs**: wind barbs and wave and current arrows take the colour of the field under them, made vivid, and sit on a fixed lattice that only the zoom changes. A wave glyph points where the waves go: a solid head for each 4 m and a thin chevron, smaller and touching the last head, for each metre left, so that 3 m is three chevrons, 4 m one head and 9 m two heads and a chevron; a dot is a sea under half a metre.
+- **Layers** (the button left of the title, or `L`): source, field (wind, gusts, waves, current, pressure and any other field of the file, one per row with an icon of the field (a mesh for a field it does not know) and its unit, switched with the up and down keys), the arrows drawn over it (those of the field at first: wind barbs over the gusts, wave arrows over the period and slope), each with the colour of the field under it, isobars every 2 or 4 hPa (4 at first) with or without their pressure labels, the highs and lows marked H and L with their pressure (the lowest or highest point within 6 deg, at least 1.5 hPa below or above the edge of that disc), found in each forecast frame and moving smoothly between frames, each paired with the nearest of its kind in the next frame (within the way a system goes at 60 kt) and the others fading out or in, and opacity (100 % at first); each route with its fuel, distance and description, and a badge when it did not converge or touches land or a zone (`max_z` > 0); the exclusion zones; the land of the file, offline (OpenStreetMap is disabled for now), OpenSeaMap sea marks, online, shown from zoom 7 with traffic separation schemes and restricted areas, latitude and longitude lines and the overlays.
+- **Theme** (the sun or moon button, or `T`): a dark or a light map, the panels and the land; the weather, its colour scales, glyphs and isobars, is drawn the same in both. The offline land is drawn flat over the weather, with a thin, faint coastline shaded on the sea side, from Natural Earth 1:10m: simplified at 0.05 deg on the globe and at about 500 m from zoom 5.
+- **Keys**: space plays, the left and right arrows step, Shift and these arrows jump a day, the up and down arrows switch the field, `G` shows or hides the plots, `Esc` closes a tooltip. The choices of the layers, the plots, the widths of the panels, the theme and the picker are kept when the page is reloaded.
+
+### The analyst's page: `dux/ui.py`
+
+```bash
+python -m architeuthis.dux.ui
+```
+
+`ui.py` needs the `dux` extra (`pip install "architeuthis[dux]"`) and serves on port 8052. It opens on the most recently modified file of `~/data/routes/`, so `reports.save()` is all it takes for the latest routes to appear, and the others can be chosen from a list. The page shows the share file as the crew will see it, and beside it what goes into it: the routes (optimized ones, `solve` 1, ticked at first) each with its name, its label at first, edited in place by clicking it, and a description for the crew, the variables of the route tooltips, the models and the fields shared, chosen in a list like the variables (all at first), the NOAA surface analysis, a title and a note. Clicking a point of a route in the preview opens a box to comment on it, to tell the crew what to expect or do there; `Ctrl+Enter` saves it, and clicking it again edits or deletes it. *Light map* switches the theme of the page and of the file. Each change shows at once in the preview, and *Download the share file* writes it. Comments belong to the routes of a file: choosing another file starts without any.
+
+The models, their fields and the domain are set at the top of the script (`PRODUCT`, `MODELS`, `ATMOSPHERE_FIELDS`, `WAVE_FIELDS`, `minimum_longitude`...), and every start downloads the forecasts: by default wind, gusts, pressure, CAPE and, for IFS, precipitation type, and waves with their period; precipitation rate and temperature are a line away. With `INCLUDE_CLOUDS` (on by default), it also downloads the nine cloud fields of each model (`sky.IFS_SKY_REGEX`, `GFS_SKY_REGEX`, from the deterministic run) and reads them along each route whose report lacks them, from the model of its `model` tag, so that every route of the file gets its cloud plot (`with_sky`); a routing that listed `"clouds"` keeps its own. On the map, their total cover and precipitation rate make one Clouds layer (`cloud_fields`, on the grid of each model), and the other sky fields stay off it: the precipitation is only offered as a layer of its own when `ATMOSPHERE_FIELDS` lists it. `GRIB_SEARCH` translates each field into the GRIB search of each model (`ifs`, `gfs`, `gfs_wave`), and a field a model lacks is left out with a warning. Any field added there can be shared. The preview offers the iceberg limit and the zones of `~/data/exclusion_zones/`, whether or not a routing used them: the iceberg limit is ticked at first, and the other zones are not, whatever their `visible`. The file holds only the zones ticked in the layers of the preview, each shown when it opens; the unticked ones are left out.
+
+The NOAA chart is always shared, hidden when the file opens unless its box is ticked, and the crew shows or hides it in the layers; showing or hiding it in the preview ticks or unticks the box. It gives its valid time only in its picture. `ui.py` takes it as the last synoptic hour (00, 06, 12 or 18 UTC) at least 1.5 h before the chart's `Last-Modified` date, as it is published about 2 hours after its time; the label of the option shows it. Showing the chart brings the preview to that time.

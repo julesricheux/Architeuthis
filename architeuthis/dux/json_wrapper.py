@@ -12,7 +12,10 @@ Created on Sun Jan 25 21:54:43 2026
 
 import pandas as pd
 
-from dash_extensions.javascript import assign
+from architeuthis.dux import require_extra
+
+with require_extra():
+    from dash_extensions.javascript import assign
 
 # The JSON codec lives in toolbox.json_utils, without Dash; it stays importable from here.
 from architeuthis.toolbox.json_utils import CustomEncoder, custom_decoder  # noqa: F401
@@ -22,13 +25,13 @@ def _power_line(bhp, max_bhp, consumption, i: int) -> str:
     """
     Tooltip line of the power at segment `i`, from what the report has.
 
-    This is the BHP and its maximum, else the consumption in kg/h.
+    This is the BHP and its maximum, else the consumption in L/h.
     """
     if bhp is not None:
         maximum = f" / MAX {max_bhp[i]:.0f}" if max_bhp is not None else ""
         return f"BHP {bhp[i]:.1f}{maximum}<br>"
     if consumption is not None:
-        return f"Consumption {consumption[i]:.0f} kg/h<br>"
+        return f"Consumption {consumption[i]:.0f} L/h<br>"
     return ""
 
 

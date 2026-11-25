@@ -7,7 +7,10 @@ So they can be built and tested without launching `ui.py`.
 
 from __future__ import annotations
 
-import dash_leaflet as dl
+from architeuthis.dux import require_extra
+
+with require_extra():
+    import dash_leaflet as dl
 
 
 def exclusion_zone_overlay(zone) -> dl.Overlay:

@@ -14,7 +14,7 @@ def json_wrapper(tmp_path, monkeypatch):
     # Importing this module makes dash_extensions write assets/dashExtensions_default.js
     # in the working directory, which must not be the repository.
     monkeypatch.chdir(tmp_path)
-    return importlib.import_module("architeuthis.wrappers.json_wrapper")
+    return importlib.import_module("architeuthis.dux.json_wrapper")
 
 
 def test_package_exposes_the_optimizer():

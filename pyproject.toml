@@ -74,7 +74,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-app = [
+# Display and user experience, architeuthis.dux: the analyst's page (dux/ui.py) and the
+# former Leaflet map wrappers. pip install "architeuthis[dux]" adds them to the routing.
+dux = [
     "flask",
     "dash>=4.5,<5",
     "dash-extensions",
@@ -84,7 +86,7 @@ app = [
     "dash-iconify",
 ]
 test = [
-    "architeuthis[app]",
+    "architeuthis[dux]",
     "pytest>=8",
     "pytest-cov",
 ]

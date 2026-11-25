@@ -10,6 +10,10 @@ import architeuthis.numpy as anp
 from architeuthis.common import GUST_DEFAULT_RATIO
 from architeuthis.core import Leg, RoutingAnalysis, Schedule, Voyage
 from architeuthis.toolbox.geo_utils import distances, poly_deviated_route
+from architeuthis.fuels import FUELS
+from architeuthis.vessel import DEFAULT_FUEL
+
+FUEL_DENSITY = FUELS[DEFAULT_FUEL].density
 
 HOUR = 3600.0
 DEPARTURE = np.array([48.0, -35.0])
@@ -129,7 +133,7 @@ def test_voyage_past_the_forecast_horizon_is_reported(analyse, open_sea, capsys)
 class TestBaseline:
     @pytest.fixture
     def report(self, route, open_sea):
-        return route(open_sea, solve=False)
+        return route(open_sea, solve=False, analysis_options={"variables": ["gust"]})
 
     def test_time_grid_follows_the_atmospheric_forecast(self, report):
         assert len(report["tim"]) == EXPECTED_NODES
@@ -197,12 +201,6 @@ class TestBaseline:
 
     def test_gusts_default_to_the_standard_ratio(self, report):
         assert report["tws_gust"] == pytest.approx(report["tws"] * GUST_DEFAULT_RATIO)
-
-    def test_gusts_can_be_disabled(self, route, open_sea):
-        report = route(open_sea, solve=False, analysis_options={"options": {}})
-
-        assert "tws_gust" not in report
-        assert "aws_gust" not in report
 
     def test_deviation_factor_selects_the_reference_route(self, route, open_sea):
         def deviated(divergence):
@@ -298,7 +296,7 @@ class TestOptimization:
 class TestEvaluation:
     @pytest.fixture
     def optimized(self, analyse, island):
-        analysis = analyse(island)
+        analysis = analyse(island, variables=["gust"])
         report = analysis.run(max_iter=500, solver_options=MUMPS)
         return analysis, report
 
@@ -465,9 +463,9 @@ def test_analysis_options_are_not_shared(analyse, open_sea):
     first = analyse(open_sea)
     second = analyse(open_sea)
 
-    first.options["include_gusts"] = False
+    first.options["key"] = "value"
 
-    assert second.options["include_gusts"] is True
+    assert "key" not in second.options
 
 
 def test_analysis_describes_its_exclusion_zones(analyse, open_sea):
@@ -637,6 +635,20 @@ def test_wind_at_a_height_without_its_components_is_reported(atmosphere, wave, c
 KNOTS = 3600.0 / 1852.0
 
 
+def ifs_sky_atmosphere(without=None):
+    """The wind of the atmosphere fixture plus the nine IFS sky fields, by their IFS names."""
+    from .conftest import uniform_forecast
+
+    fields = {
+        "u10": 5.0, "v10": 2.0, "tcc": 0.9, "lcc": 0.8, "mcc": 0.3, "hcc": 0.2,
+        "mucape": 400.0, "tprate": 2.0 / 3600.0, "t2m": 285.0, "d2m": 284.0, "t": 275.0,
+    }
+    fields.pop(without, None)
+    forecast = uniform_forecast("ifs", **fields)
+    forecast.model = "ifs"
+    return forecast
+
+
 def wave_with_period(period):
     """The wave fixture plus a mean wave period, and a wave slope computed from it."""
     from .conftest import uniform_forecast
@@ -678,14 +690,14 @@ def test_variables_take_names_lists_and_dicts():
 
 class TestAdditionalVariables:
     def test_gusts_can_be_asked_without_the_option(self, route, open_sea):
-        report = route(open_sea, solve=False, analysis_options={"options": {}, "variables": ["tws_gust"]})
+        report = route(open_sea, solve=False, analysis_options={"variables": ["tws_gust"]})
 
         assert report["tws_gust"] == pytest.approx(report["tws"] * GUST_DEFAULT_RATIO)
         assert "aws_gust" not in report
 
     def test_apparent_gusts_alone_still_come_from_the_gust(self, route, open_sea):
-        report = route(open_sea, solve=False, analysis_options={"options": {}, "variables": ["aws_gust"]})
-        reference = route(open_sea, solve=False)
+        report = route(open_sea, solve=False, analysis_options={"variables": ["aws_gust"]})
+        reference = route(open_sea, solve=False, analysis_options={"variables": ["gust"]})
 
         assert "tws_gust" not in report
         assert report["aws_gust"] == pytest.approx(reference["aws_gust"])
@@ -693,7 +705,7 @@ class TestAdditionalVariables:
     def test_gust_of_the_forecast_is_read_in_knots(self, analyse, open_sea):
         from .conftest import uniform_forecast
 
-        analysis = analyse(open_sea, options={}, variables=["tws_gust", {"gust_ms": "atmosphere.gust"}])
+        analysis = analyse(open_sea, variables=["tws_gust", {"gust_ms": "atmosphere.gust"}])
         analysis.atmosphere = uniform_forecast("atmosphere", u10=5.0, v10=2.0, gust=10.0)
         report = analysis.run(solve=False, solver_options=MUMPS)
 
@@ -702,25 +714,67 @@ class TestAdditionalVariables:
         assert np.ravel(report["gust_ms"]) == pytest.approx(10.0)
 
     def test_gust_asks_for_the_true_and_apparent_gusts(self, route, open_sea):
-        report = route(open_sea, solve=False, analysis_options={"options": {}, "variables": ["gust"]})
-        reference = route(open_sea, solve=False)
+        report = route(open_sea, solve=False, analysis_options={"variables": ["gust"]})
+        reference = route(open_sea, solve=False, analysis_options={"variables": ["gust"]})
 
         assert "gust" not in report
         assert report["tws_gust"] == pytest.approx(reference["tws_gust"])
         assert report["aws_gust"] == pytest.approx(reference["aws_gust"])
 
+    def test_clouds_asks_for_the_nine_fields_of_the_sky(self, analyse, open_sea):
+        analysis = analyse(open_sea, variables=["clouds"])
+        analysis.atmosphere = ifs_sky_atmosphere()
+        report = analysis.run(solve=False, solver_options=MUMPS)
+
+        assert "clouds" not in report
+        expected = {
+            "tcc": 0.9, "lcc": 0.8, "mcc": 0.3, "hcc": 0.2, "cape": 400.0,
+            "prate": 2.0, "t2m": 285.0, "d2m": 284.0, "t700": 275.0,
+        }
+        for key, value in expected.items():
+            assert np.ravel(report[key]) == pytest.approx(value), key
+            assert len(np.ravel(report[key])) == len(np.ravel(report["ctim"]))
+
+    def test_the_clouds_of_a_report_are_those_of_the_share_file(self, analyse, open_sea, tmp_path):
+        from architeuthis import sky
+        from architeuthis.dux import share
+        from architeuthis.report import ReportCollection
+
+        analysis = analyse(open_sea, variables=["clouds"])
+        analysis.atmosphere = ifs_sky_atmosphere()
+        report = analysis.run(solve=False, solver_options=MUMPS)
+        path = tmp_path / "reports.json"
+        ReportCollection([report]).save(path)
+
+        scene = share.build_scene(ReportCollection.load(path))
+        diagnosis = sky.diagnose({key: np.ravel(report[key]) for key in sky.SKY_VARIABLES})
+
+        route_sky = scene["routes"][0]["sky"]
+        assert route_sky["oktas"] == list(diagnosis["cloud_oktas"])
+        assert route_sky["low"] == list(diagnosis["cloud_low"])
+        assert route_sky["prate"] == pytest.approx([2.0] * len(route_sky["prate"]))
+        assert scene["cloud_genera"]
+        # The same sky, for plot_sky and describe
+        found = sky.from_report(report)
+        assert list(found["cloud_oktas"]) == route_sky["oktas"]
+        assert sky.from_report({"tcc": [0.5]}) is None
+
+    def test_clouds_need_the_fields_of_the_sky(self, analyse, open_sea):
+        analysis = analyse(open_sea, variables=["clouds"])
+        analysis.atmosphere = ifs_sky_atmosphere(without="mucape")
+
+        with pytest.raises(KeyError, match="IFS_SKY_REGEX"):
+            analysis.run(solve=False, solver_options=MUMPS)
+
     @pytest.mark.parametrize("include_gusts", [True, False])
-    def test_the_gust_option_is_deprecated(self, analyse, open_sea, include_gusts):
-        with pytest.warns(DeprecationWarning, match=r"variables=\['gust'\]"):
+    def test_the_gust_option_was_removed(self, analyse, open_sea, include_gusts):
+        with pytest.raises(ValueError, match=r"variables=\['gust'\]"):
             analyse(open_sea, options={"include_gusts": include_gusts})
 
-    def test_without_the_gust_option_nothing_is_deprecated(self, analyse, open_sea):
-        import warnings
+    def test_gusts_are_computed_only_when_listed(self, route, open_sea):
+        report = route(open_sea, solve=False)
 
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", DeprecationWarning)
-            analyse(open_sea)
-            analyse(open_sea, options={}, variables=["gust"])
+        assert "tws_gust" not in report and "aws_gust" not in report
 
     def test_a_forecast_function_is_computed_and_reported(self, analyse, open_sea):
         analysis = analyse(open_sea, variables=["slope", {"period": "wave.mwp"}])
@@ -730,8 +784,8 @@ class TestAdditionalVariables:
         assert np.ravel(report["slope"]) == pytest.approx(1.5 / 6.0)
         assert np.ravel(report["period"]) == pytest.approx(6.0)
         assert len(np.ravel(report["slope"])) == len(np.ravel(report["ctim"]))
-        # The gusts of the default options are still there
-        assert "tws_gust" in report and "aws_gust" in report
+        # The gusts are not listed
+        assert "tws_gust" not in report and "aws_gust" not in report
 
     def test_a_callable_sees_the_variables_before_it(self, route, open_sea):
         report = route(open_sea, solve=False, analysis_options={
@@ -789,7 +843,7 @@ class TestAdditionalVariables:
         assert report["awa100"] == pytest.approx(report["awa"])
 
     def test_run_and_evaluate_add_their_own_variables(self, analyse, open_sea):
-        analysis = analyse(open_sea, options={}, variables=["tws_gust"])
+        analysis = analyse(open_sea, variables=["tws_gust"])
         report = analysis.run(solve=False, solver_options=MUMPS, variables={"wind": "tws"})
         evaluation = analysis.evaluate(report, variables=["aws_gust"])
 
@@ -849,7 +903,7 @@ def consumption_vessel(formulation, **kwargs):
     else:
         vessel.add_function(
             "hourly_consumption",
-            lambda x: (cubic_bhp(x) + HOTEL_LOAD) * SFC / 1e3,
+            lambda x: (cubic_bhp(x) + HOTEL_LOAD) * SFC / 1e3 / FUEL_DENSITY,
             ["stw"],
         )
     return vessel
@@ -885,7 +939,8 @@ class TestConsumption:
     def test_fuel_integrates_the_hourly_consumption(self, reference):
         duration_h = np.diff(np.ravel(reference["tim"])) / HOUR
 
-        assert reference["fuel"] == pytest.approx(np.sum(np.ravel(reference["hourly_consumption"]) * duration_h) / 1e3)
+        # Litres per hour over each segment, times kg/L, in tonnes.
+        assert reference["fuel"] == pytest.approx(np.sum(np.ravel(reference["hourly_consumption"]) * duration_h) * FUEL_DENSITY / 1e3)
 
     def test_reports_hold_the_quantities_of_their_formulation(self, baseline, reference):
         total = baseline(consumption_vessel("total_power", sfoc=SFC))
@@ -914,44 +969,27 @@ class TestConsumption:
         assert np.ravel(listed["sails_contribution"]) == pytest.approx(0.0)
         assert not {"max_bhp", "sails_contribution"} & set(other)
 
-    def test_unlisted_max_bhp_and_sails_are_still_computed_until_0_4(self, vessel, baseline):
-        with pytest.warns(DeprecationWarning, match="from 0.4.0") as record:
-            default = baseline(vessel, variables=["max_bhp"])
+    def test_unlisted_vessel_models_are_not_computed(self, vessel, baseline):
+        default = baseline(vessel, variables=["max_bhp"])
 
-        assert "sails_contribution" in str(record[0].message)
-        assert "max_bhp," not in str(record[0].message)
-        assert {"max_bhp", "sails_contribution"} <= set(default)
+        assert "max_bhp" in default
+        assert "sails_contribution" not in default
 
-    def test_avg_bhp_is_the_deprecated_name_of_bhp(self, reference, baseline):
+    def test_avg_bhp_is_no_longer_an_alias_of_bhp(self, reference):
         import json
 
         from architeuthis.report import ReportCollection, RoutingReport
         from architeuthis.toolbox.json_utils import CustomEncoder
 
-        assert "avg_bhp" not in dict(reference)
-        with pytest.warns(DeprecationWarning, match="use 'bhp'"):
-            assert np.ravel(reference["avg_bhp"]) == pytest.approx(np.ravel(reference["bhp"]))
-        with pytest.warns(DeprecationWarning, match="use 'bhp'"):
-            assert "avg_bhp" in reference
-        with pytest.warns(DeprecationWarning, match="use 'bhp'"):
-            assert reference.get("avg_bhp") is reference["bhp"]
+        assert "avg_bhp" not in reference
+        with pytest.raises(KeyError):
+            reference["avg_bhp"]
 
         # Reports saved under the former name are read under the current one
         saved = {("avg_bhp" if key == "bhp" else key): value for key, value in reference.items()}
         loaded = ReportCollection(json.loads(json.dumps([saved], cls=CustomEncoder)))[0]
         assert isinstance(loaded, RoutingReport)
-        assert "bhp" in dict(loaded) and "avg_bhp" not in dict(loaded)
-
-        # Constraints written with the former name still work
-        seen = {}
-
-        def constraints(ctx):
-            with pytest.warns(DeprecationWarning, match="use 'bhp'"):
-                seen["avg_bhp"] = ctx["avg_bhp"]
-            return [ctx["z"] < 0.0]
-
-        baseline(consumption_vessel("bhp", hotel_load=HOTEL_LOAD, sfoc=SFC), constraints=constraints)
-        assert "avg_bhp" in seen
+        assert "bhp" in loaded and "avg_bhp" not in loaded
 
     def test_a_constant_brake_power(self, baseline):
         from architeuthis.vessel import Vessel
@@ -991,11 +1029,9 @@ class TestConsumption:
         with pytest.raises(KeyError, match="no consumption model"):
             baseline(vessel)
 
-    def test_a_missing_sfoc_is_zero_until_0_4(self, baseline):
-        with pytest.warns(DeprecationWarning, match="no sfoc"):
-            report = baseline(consumption_vessel("total_power", max_power=None))
-
-        assert report["fuel"] == 0.0
+    def test_a_missing_sfoc_is_reported(self, baseline):
+        with pytest.raises(ValueError, match="needs sfoc"):
+            baseline(consumption_vessel("total_power", max_power=None))
 
     def test_the_power_limit_is_optional(self, analyse, open_sea):
         def count(vessel):
@@ -1003,10 +1039,9 @@ class TestConsumption:
             return len(analysis.evaluate(analysis.run(solve=False, solver_options=MUMPS))["constraint_violations"])
 
         assert count(consumption_vessel("bhp", sfoc=SFC, max_power=None)) == 1
-        with pytest.warns(DeprecationWarning, match="max_power"):
-            unset = consumption_vessel("bhp", sfoc=SFC)
-        assert unset.max_power == 1e12
-        assert count(unset) == 2
+        unset = consumption_vessel("bhp", sfoc=SFC)
+        assert unset.max_power is None
+        assert count(unset) == 1
         assert count(consumption_vessel("bhp", sfoc=SFC, max_power=1e6)) == 2
         assert count(consumption_vessel("total_power", sfoc=SFC, max_power=1e6)) == 2
         assert count(consumption_vessel("hourly_consumption", max_power=1e6)) == 1

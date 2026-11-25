@@ -24,6 +24,8 @@ SKIES = {
     "altostratus": CALM | {"tcc": 1.0, "mcc": 0.9, "hcc": 0.8},
     # Thunderstorm.
     "cumulonimbus": CALM | {"tcc": 0.9, "lcc": 0.5, "mcc": 0.3, "hcc": 0.6, "cape": 1800.0, "prate": 6.0, "t2m": 300.0, "d2m": 295.0},
+    # Winter showers: polar air over a warmer sea, a few hundred J/kg.
+    "winter_shower": CALM | {"tcc": 0.8, "lcc": 0.6, "mcc": 0.4, "hcc": 0.3, "cape": 250.0, "prate": 1.5, "t2m": 281.0, "d2m": 277.0, "t700": 258.0},
     # Warm air over cold water.
     "fog": CALM | {"tcc": 1.0, "lcc": 1.0, "t2m": 284.0, "d2m": 283.8, "t700": 280.0},
     "clear": CALM,
@@ -44,12 +46,25 @@ def genera(diagnosis):
         ("warm_front", ("St", "Ns", "/")),
         ("altostratus", ("", "As", "/")),
         ("cumulonimbus", ("Cb", "Ac", "Ci")),
+        ("winter_shower", ("Cb", "Ac", "Ci")),
         ("clear", ("", "", "")),
         ("cirrus", ("", "", "Ci")),
     ],
 )
 def test_each_sky_gets_its_genera(name, expected):
     assert genera(sky.diagnose(SKIES[name])) == expected
+
+
+def test_showers_need_unstable_air_to_be_cumulonimbus():
+    """
+    Rain with some CAPE in stable air, as at a front, stays Ns.
+    """
+    front = SKIES["warm_front"] | {"cape": 300.0}
+    assert sky.lower_tropospheric_stability(front["t2m"], front["t700"]) > sky.THRESHOLDS["cb_stability"]
+    assert genera(sky.diagnose(front))[:2] == ("St", "Ns")
+    # The same shower without rain is Cu, and a strong CAPE is a Cb in any air.
+    assert genera(sky.diagnose(SKIES["winter_shower"] | {"prate": 0.0}))[0] == "Cu"
+    assert genera(sky.diagnose(front | {"cape": 1500.0}))[0] == "Cb"
 
 
 def test_low_layer_near_its_dewpoint_is_stratus_or_fog():
@@ -197,6 +212,24 @@ def test_gfs_search_keeps_the_nine_instantaneous_fields():
 
 def test_ifs_search_keeps_the_nine_fields():
     found = {line.split(":")[1] + (":700" if ":700:" in line else "") for line in IFS_INVENTORY if re.search(sky.IFS_SKY_REGEX, line)}
+
+    assert found == {"tcc", "lcc", "mcc", "hcc", "mucape", "tprate", "2t", "2d", "t:700"}
+
+
+def test_gfs_search_reads_the_lines_ending_with_a_colon():
+    # Herbie 2025 ends each line of the GFS inventory with a colon.
+    found = [line for line in GFS_INVENTORY if re.search(sky.GFS_SKY_REGEX, line + ":")]
+
+    assert len(found) == 9
+    assert ":TCDC:entire atmosphere:6 hour fcst" in found
+    assert ":TCDC:entire atmosphere:0-6 hour ave fcst" not in found
+
+
+def test_ifs_search_reads_the_empty_level_written_nan():
+    # Herbie 2025 writes the missing level of the surface fields "nan".
+    inventory = [line.replace(":sfc:", ":nan:sfc:").replace(":pl:", ":pl:nan:") for line in IFS_INVENTORY]
+
+    found = {line.split(":")[1] + (":700" if ":700:" in line else "") for line in inventory if re.search(sky.IFS_SKY_REGEX, line)}
 
     assert found == {"tcc", "lcc", "mcc", "hcc", "mucape", "tprate", "2t", "2d", "t:700"}
 

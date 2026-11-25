@@ -1,4 +1,5 @@
 import numpy as _onp
+from architeuthis.numpy import elementwise as _elementwise
 from numpy import pi as _pi
 
 _deg2rad = 180.0 / _pi
@@ -17,34 +18,34 @@ def radians(x):
 
 def sind(x):
     """Returns the sin of an angle x, given in degrees"""
-    return _onp.sin(radians(x))
+    return _elementwise.sin(radians(x))
 
 
 def cosd(x):
     """Returns the cos of an angle x, given in degrees"""
-    return _onp.cos(radians(x))
+    return _elementwise.cos(radians(x))
 
 
 def tand(x):
     """Returns the tangent of an angle x, given in degrees"""
-    return _onp.tan(radians(x))
+    return _elementwise.tan(radians(x))
 
 
 def arcsind(x):
     """Returns the arcsin of an x, in degrees"""
-    return degrees(_onp.arcsin(x))
+    return degrees(_elementwise.arcsin(x))
 
 
 def arccosd(x):
     """Returns the arccos of an x, in degrees"""
-    return degrees(_onp.arccos(x))
+    return degrees(_elementwise.arccos(x))
 
 
 def arctand(x):
     """Returns the arctan of an x, in degrees"""
-    return degrees(_onp.arctan(x))
+    return degrees(_elementwise.arctan(x))
 
 
 def arctan2d(y, x):
     """Returns the angle associated with arctan(y, x), in degrees"""
-    return degrees(_onp.arctan2(y, x))
+    return degrees(_elementwise.arctan2(y, x))

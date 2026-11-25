@@ -148,7 +148,7 @@ for i, vessel_data in enumerate(vessel_files):
 # global_corr_fac = 1.10 # global models speed correction (120% @ 10m, 105% @ 100m)
 global_corr_fac = 1.20 # global models speed correction (120% @ 10m, 105% @ 100m)
 
-recent = pd.Timestamp("now").floor("1d8h").floor("1d")
+recent = (pd.Timestamp.now("UTC").tz_localize(None) - pd.Timedelta("9h")).floor("1d")
 # recent = pd.Timestamp('2026-05-30 00:00')
 # mirror_end = pd.Timestamp('2025-12-21 12:00')
 
@@ -715,7 +715,6 @@ for solve, tf, model, vessel, fac, m, tpg in (
         # tws_gust and aws_gust in kt, and vessel models that the fuel does not need
         variables=["gust", "max_bhp", "sails_contribution"],
         # verbose=False,
-        # options=dict(include_gusts=True),
         # verbose=True,
         verbose=False,
     )
@@ -869,14 +868,19 @@ print(eval_table)
 options = {-1.: "Port route", 0.: "Ortho cst speed", 1.: "Starboard route"}
 # options = {-0.5: "North coast", 0.:"Ortho cst speed", 0.75: "North offshore", 3.: "South"}
 
-selected = reports.select(lambda report: report["model"] != "ifs", vessel="eff45")
+# The vessels that were routed, by their labels (eff1, eff90...), whatever polars and runs are chosen above.
+vessel_labels = [vessel.label for vessel in vessels if reports.select(vessel=vessel.label)]
+
+selected = reports.select(lambda report: report["model"] != "ifs", vessel=vessel_labels[0])
+# selected = reports.select(lambda report: report["model"] != "ifs", vessel="eff45")
 
 plot_fuel_vs_etd(reports)
 plot_variable(selected, "sog", unit="kts", labels=options)
 plot_power_and_weather(selected, labels=options)
 plot_variable(reports[1:], "tws", unit="kts", figsize=(9, 3), dpi=100)
 plot_variable(reports[-1:], "sails_contribution", unit="%", ylim=(-1., 101.), figsize=(10, 3), dpi=100)
-plot_fuel_distribution({f"Eff. {efficiency}%": reports.select(vessel=f"eff{efficiency}") for efficiency in [45, 60]})
+plot_fuel_distribution({label: reports.select(vessel=label) for label in vessel_labels})
+# plot_fuel_distribution({f"Eff. {efficiency}%": reports.select(vessel=f"eff{efficiency}") for efficiency in [45, 60]})
 
 #%% FIGURES: SPREAD OF SEVERAL RUNS
 
@@ -928,7 +932,8 @@ reports.select(solve=1).to_gpx()
 # See "Plotting" in docs/user_guide.md for the options, for example:
 # plot_report(report, save_as="report.pdf")  # a true A4 page
 # plot_report(report, ylim={"sog": (6., 13.), "bhp": (0., 3084.)})
-for report in reports.select(vessel="eff45"):
+for report in reports.select(vessel=vessel_labels[0]):
+# for report in reports.select(vessel="eff45"):
     plot_report(report)
 
 #%% FIGURE AND TABLE SETTINGS OF EARLIER STUDIES

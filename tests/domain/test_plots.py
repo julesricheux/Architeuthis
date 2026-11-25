@@ -152,7 +152,7 @@ class TestPlotReport:
 
     @pytest.mark.parametrize("key", ["tws", "aws"])
     def test_wind_panels_work_without_gust(self, routing, key):
-        report = routing(solve=False, analysis_options={"options": {}})
+        report = routing(solve=False, analysis_options={"variables": ["max_bhp", "sails_contribution"]})
         assert f"{key}_gust" not in report
 
         ax = plot_report(report, show=False).axes[REPORT_PANELS.index(key)]
@@ -175,7 +175,7 @@ class TestPlotReport:
 
     @pytest.mark.parametrize(
         "key, label",
-        [("total_power", "Total power / kW"), ("hourly_consumption", "Consumption / kg/h")],
+        [("total_power", "Total power / kW"), ("hourly_consumption", "Consumption / L/h")],
     )
     def test_power_panel_falls_back_on_the_consumption(self, baseline_report, key, label):
         report = {k: v for k, v in baseline_report.items() if k not in ("bhp", "total_power")}
@@ -567,6 +567,14 @@ def test_fuel_distribution_labels_each_group():
     assert ax.get_ylabel() == "Fuel / tons"
 
 
+def test_fuel_distribution_names_an_empty_group():
+    # A selection of a vessel that did not run, which matplotlib reports as a bare reduction error.
+    groups = {"eff45": [{"fuel": 90.0}], "eff60": []}
+
+    with pytest.raises(ValueError, match="eff60"):
+        plot_fuel_distribution(groups, show=False)
+
+
 # ------------------------------------------------------------------------------
 # User guide
 # ------------------------------------------------------------------------------
@@ -919,7 +927,9 @@ def test_smooth_sky_is_darker_at_night():
     image = plot_sky(columns, times, style="smooth", latitude=[0.0, 0.0], longitude=[0.0, 0.0], show=False).axes[0].get_images()[0]
     pixels = np.asarray(image.get_array())
 
-    assert pixels[:, : pixels.shape[1] // 4].mean() < 0.5 * pixels[:, -pixels.shape[1] // 4:].mean()
+    night, day = pixels[:, : pixels.shape[1] // 4].mean(), pixels[:, -pixels.shape[1] // 4:].mean()
+    # Darker, but only a hint that leaves the clouds readable.
+    assert 0.6 * day < night < 0.85 * day
 
 
 def test_sun_elevation_at_noon_and_midnight_on_the_equinox():

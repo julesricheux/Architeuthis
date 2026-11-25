@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import os
 import re
-import warnings
 
 import xarray as xr
 import architeuthis.numpy as np
@@ -21,6 +20,7 @@ from collections.abc import Callable
 from architeuthis.toolbox.inspect_tools import ensure_callable
 
 from architeuthis.common import ArchiteuthisData, VESSEL_KEYS, status
+from architeuthis.fuels import Fuel, fuel_key, get_fuel
 
 # Models that give the fuel consumption, by order of precedence. Routing
 # needs one of them: it is the objective.
@@ -32,9 +32,10 @@ CONSUMPTION_QUANTITIES = ("bhp", "hotel_load", "total_power", "sfoc", "hourly_co
 POLAR_KEYS = ("bhp", "max_bhp", "sails_contribution")
 POLAR_DIMS = ("stw", "tws", "twa", "hs", "wa")
 
-# Power limit when `max_power` is not given, until 0.4.0, where it becomes None.
-_DEFAULT_MAX_POWER = 1e12 # kW
-_UNSET = object()
+# Fuel type of a vessel by default, a key of `fuels.FUELS`, whose density
+# (0.85 kg/L) turns consumptions, volumes in L/h, into the fuel of a voyage,
+# a mass in tonnes.
+DEFAULT_FUEL = "mdo"
 
 
 def _label_from_path(filepath: str) -> str:
@@ -46,18 +47,6 @@ def _label_from_path(filepath: str) -> str:
     stem = os.path.splitext(os.path.basename(str(filepath)))[0]
     match = re.search(r"eff\d+$", stem)
     return match.group(0) if match else stem
-
-
-def _warn_sfc():
-    """
-    Deprecation warning of the former name of `sfoc`.
-    """
-    warnings.warn(
-        "Vessel 'sfc' is deprecated and will be removed in 0.4.0: use 'sfoc', "
-        "the specific fuel oil consumption in g/kWh.",
-        DeprecationWarning,
-        stacklevel=3,
-    )
 
 
 class Vessel(ArchiteuthisData):
@@ -73,20 +62,24 @@ class Vessel(ArchiteuthisData):
     Routing only needs the fuel consumption, its objective, given by
     the first of these models that the vessel has:
 
-    - `hourly_consumption`: the fuel consumption itself, in kg/h.
+    - `hourly_consumption`: the fuel consumption itself, in L/h.
     - `total_power`: the power of all consumers, propulsion and
       hotel, in kW, burnt at `sfoc`.
     - `bhp`: the brake power of the propulsion, in kW, plus
       `hotel_load`, burnt at `sfoc`.
+
+    Consumptions are volumes, in L/h: the mass burnt at `sfoc` is
+    divided by `fuel_density`, and the fuel of a voyage is the volume
+    times `fuel_density`, in tonnes. The density is that of
+    `fuel_type` in `fuels.FUELS` unless given.
 
     `hotel_load` and `sfoc` are numbers, functions of the power (the
     brake power for `hotel_load`, the total power for `sfoc`), or
     models of this key, which take precedence and may name `bhp` or
     `total_power` among their inputs. Any other model, such as
     `max_bhp` or `sails_contribution`, is computed only when the
-    routing lists it in its `variables` (until 0.4.0, these two are
-    still computed by default, with a `DeprecationWarning`). Each
-    model is given the inputs it names: see `RoutingAnalysis`.
+    routing lists it in its `variables`. Each model is given the
+    inputs it names: see `RoutingAnalysis`.
 
     `label` is a short identifier that tags the reports of this vessel
     and appears in the UI, `eff45` for example. By default it is taken
@@ -99,15 +92,21 @@ class Vessel(ArchiteuthisData):
         hotel_load: Hotel load in kW, added to `bhp`: a number or a
             function of the brake power.
         max_power: Power limit in kW of the default constraints, or
-            None for no limit. Not given, it is 1e12 kW with a
-            `DeprecationWarning`: None from 0.4.0.
+            None for no limit.
         sfoc: Specific fuel oil consumption in g/kWh, for `bhp` and
             `total_power`: a number or a function of the total power.
-            Missing when needed, it is 0 with a `DeprecationWarning`,
-            which makes the fuel zero: an error from 0.4.0.
+            Missing when needed, the consumption raises a
+            `ValueError`.
         verbose: Whether to report progress.
         label: Short identifier of the vessel in reports.
-        sfc: Former name of `sfoc`, deprecated: removed in 0.4.0.
+        fuel_type: Fuel burnt, a key of `fuels.FUELS` ("mdo",
+            "hfo", "lng", "methanol", "unleaded"...) or of
+            `fuels.FUEL_ALIASES`, or a `fuels.Fuel`: marine diesel oil
+            by default. It gives `fuel_density` when that is not
+            given, and its emission factors (`fuel`).
+        fuel_density: Density of the fuel in kg/L, from the bunker
+            delivery note for example; None for that of `fuel_type`
+            (0.85 for "mdo").
 
     Example:
         >>> vessel = Vessel("ship", sfoc=190., max_power=4000.)
@@ -119,11 +118,12 @@ class Vessel(ArchiteuthisData):
         name: str,
         filepath: Optional[str] = None,
         hotel_load: Union[Callable, float, int] = 0., # kW
-        max_power: Optional[float] = _UNSET, # kW
+        max_power: Optional[float] = None, # kW
         sfoc: Union[Callable, float, int, None] = None, # g/kWh
         verbose: bool = True,
         label: Optional[str] = None,
-        sfc: Union[Callable, float, int, None] = None,
+        fuel_type: Union[str, Fuel] = DEFAULT_FUEL,
+        fuel_density: Optional[float] = None, # kg/L
     ):
         super().__init__(name, verbose)
 
@@ -132,40 +132,14 @@ class Vessel(ArchiteuthisData):
             label = _label_from_path(filepath) if filepath is not None else name
         self.label = label
 
-        if sfc is not None:
-            _warn_sfc()
-            if sfoc is not None:
-                raise TypeError("Give sfoc only: sfc is its former name.")
-            sfoc = sfc
-
+        self.fuel = get_fuel(fuel_type)
+        self.fuel_type = fuel_key(self.fuel) or self.fuel.label
+        self.fuel_density = self.fuel.density if fuel_density is None else float(fuel_density)
+        if not self.fuel_density > 0.:
+            raise ValueError(f"The fuel density of {name} should be positive, in kg/L: {fuel_density}.")
         self.hotel_load = ensure_callable(hotel_load)
         self.sfoc = ensure_callable(sfoc)
-        if max_power is _UNSET:
-            warnings.warn(
-                "Vessel max_power not given: it is 1e12 kW, a slack that can unsettle "
-                "IPOPT. From 0.4.0, its default is None, no power limit. Give "
-                "max_power=... or max_power=None.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            max_power = _DEFAULT_MAX_POWER
         self.max_power = max_power
-
-    @property
-    def sfc(self):
-        """
-        Former name of `sfoc`, deprecated: removed in 0.4.0.
-        """
-        _warn_sfc()
-        return self.sfoc
-
-    @sfc.setter
-    def sfc(self, value):
-        """
-        Set `sfoc` through its former name, deprecated.
-        """
-        _warn_sfc()
-        self.sfoc = ensure_callable(value)
 
     @property
     def consumption_model(self) -> Optional[str]:
@@ -182,7 +156,7 @@ class Vessel(ArchiteuthisData):
             raise KeyError(
                 f"{self.name} has no consumption model. Add one of 'bhp' (with "
                 "hotel_load and sfoc), 'total_power' (with sfoc) or "
-                "'hourly_consumption' (kg/h), with add_interpolator, "
+                "'hourly_consumption' (L/h), with add_interpolator, "
                 "add_function or add_constant."
             )
         return formulation
@@ -220,15 +194,6 @@ class Vessel(ArchiteuthisData):
         if key in self.models:
             return self(key, query)
         function = getattr(self, key)
-        if function is None and key == "sfoc":
-            warnings.warn(
-                f"{self.name} has no sfoc for its {self.consumption_model} model: it "
-                "is 0 g/kWh, which makes the fuel zero. From 0.4.0, this raises "
-                "an error. Give Vessel(sfoc=...) or a model 'sfoc'.",
-                DeprecationWarning,
-                stacklevel=4,
-            )
-            return 0.
         if function is None:
             raise ValueError(
                 f"{self.name} needs {key} for its {self.consumption_model} model: "
@@ -243,8 +208,9 @@ class Vessel(ArchiteuthisData):
 
         With a `bhp` model, the total power is `bhp + hotel_load`. The
         total power, from it or from a `total_power` model, is burnt
-        at `sfoc`. An `hourly_consumption` model gives the consumption
-        directly. Each model takes the inputs it names in `query`, and
+        at `sfoc`, and the mass divided by `fuel_density`. An
+        `hourly_consumption` model gives the consumption directly, in
+        L/h. Each model takes the inputs it names in `query`, and
         those computed before it: `bhp`, `hotel_load`, `total_power`.
 
         Args:
@@ -254,7 +220,7 @@ class Vessel(ArchiteuthisData):
         Returns:
             A dict of the quantities of `consumption_quantities`, in
             order: `bhp` and `hotel_load` (kW), `total_power` (kW),
-            `sfoc` (g/kWh) and `hourly_consumption` (kg/h). A constant
+            `sfoc` (g/kWh) and `hourly_consumption` (L/h). A constant
             may stay a scalar.
 
         Example:
@@ -279,7 +245,8 @@ class Vessel(ArchiteuthisData):
         query["total_power"] = total_power
 
         sfoc = self._load("sfoc", query, total_power)
-        hourly_consumption = np.abs(total_power) * sfoc / 1e3 # kW * g/kWh = g/h, in kg/h
+        # kW * g/kWh = g/h, in kg/h, then in L/h
+        hourly_consumption = np.abs(total_power) * sfoc / 1e3 / self.fuel_density
 
         return quantities | {
             "total_power": total_power,

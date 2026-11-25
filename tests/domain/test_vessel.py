@@ -1,7 +1,10 @@
 import numpy as np
 import pytest
 
-from architeuthis.vessel import POLAR_KEYS, Vessel
+from architeuthis.fuels import FUELS, Fuel
+from architeuthis.vessel import DEFAULT_FUEL, POLAR_KEYS, Vessel
+
+FUEL_DENSITY = FUELS[DEFAULT_FUEL].density
 
 POLAR_DIMS = ("stw", "tws", "twa", "hs", "wa")
 POLAR_POWER_COEFFICIENT = 1.2  # as built by the `polar` fixture
@@ -27,28 +30,11 @@ def test_max_power_stays_a_raw_value():
     assert Vessel("ship", filepath="polar.nc", max_power=3100.0).max_power == 3100.0
 
 
-def test_max_power_defaults_to_1e12_until_0_4():
-    with pytest.warns(DeprecationWarning, match="max_power"):
-        vessel = Vessel("ship", verbose=False)
+def test_max_power_defaults_to_none():
+    vessel = Vessel("ship", verbose=False)
 
-    assert vessel.max_power == 1e12
+    assert vessel.max_power is None
     assert vessel.sfoc is None
-    assert Vessel("ship", max_power=None, verbose=False).max_power is None
-
-
-def test_sfc_is_the_deprecated_name_of_sfoc():
-    with pytest.warns(DeprecationWarning, match="sfoc"):
-        vessel = Vessel("ship", sfc=224.0, verbose=False)
-    assert vessel.sfoc(0.0) == 224.0
-
-    with pytest.warns(DeprecationWarning, match="sfoc"):
-        assert vessel.sfc(0.0) == 224.0
-    with pytest.warns(DeprecationWarning, match="sfoc"):
-        vessel.sfc = 190.0
-    assert vessel.sfoc(0.0) == 190.0
-
-    with pytest.warns(DeprecationWarning), pytest.raises(TypeError, match="sfoc only"):
-        Vessel("ship", sfc=224.0, sfoc=190.0, verbose=False)
 
 
 def cubic(x):
@@ -74,7 +60,8 @@ def test_consumption_of_a_brake_power():
     assert list(consumption) == vessel.consumption_quantities()
     assert list(consumption) == ["bhp", "hotel_load", "total_power", "sfoc", "hourly_consumption"]
     assert consumption["total_power"] == pytest.approx(BHP + 200.0)
-    assert consumption["hourly_consumption"] == pytest.approx((BHP + 200.0) * 180.0 / 1e3)
+    # Burnt at the sfoc, in kg/h, then in L/h.
+    assert consumption["hourly_consumption"] == pytest.approx((BHP + 200.0) * 180.0 / 1e3 / FUEL_DENSITY)
 
 
 def test_consumption_of_a_total_power():
@@ -86,7 +73,7 @@ def test_consumption_of_a_total_power():
     # The hotel load is part of the total power
     assert list(consumption) == ["total_power", "sfoc", "hourly_consumption"]
     assert consumption["sfoc"] == pytest.approx(150.0 + BHP / 100.0)
-    assert consumption["hourly_consumption"] == pytest.approx(BHP * (150.0 + BHP / 100.0) / 1e3)
+    assert consumption["hourly_consumption"] == pytest.approx(BHP * (150.0 + BHP / 100.0) / 1e3 / FUEL_DENSITY)
 
 
 def test_an_hourly_consumption_needs_no_sfoc():
@@ -132,7 +119,43 @@ def test_a_constant_model_takes_no_input():
 
     assert vessel.input_names("bhp") == []
     assert float(vessel("bhp", {"stw": 12.0})) == 900.0
-    assert float(vessel.consumption({})["hourly_consumption"]) == pytest.approx(1000.0 * 200.0 / 1e3)
+    assert float(vessel.consumption({})["hourly_consumption"]) == pytest.approx(1000.0 * 200.0 / 1e3 / FUEL_DENSITY)
+
+
+def test_consumptions_are_volumes_of_the_fuel_density():
+    vessel = Vessel("ship", hotel_load=100.0, sfoc=200.0, fuel_density=0.99, max_power=None, verbose=False)
+    vessel.add_constant("bhp", 900.0)
+
+    assert float(vessel.consumption({})["hourly_consumption"]) == pytest.approx(1000.0 * 200.0 / 1e3 / 0.99)
+
+
+def test_the_fuel_is_marine_diesel_oil_at_0_85_by_default():
+    vessel = Vessel("default", max_power=None, verbose=False)
+
+    assert vessel.fuel_type == "mdo"
+    assert vessel.fuel_density == 0.85
+    assert vessel.fuel is FUELS["mdo"]
+
+
+def test_the_fuel_type_gives_the_density_unless_it_is_given():
+    hfo = Vessel("hfo", fuel_type="HFO", max_power=None, verbose=False)
+    measured = Vessel("measured", fuel_type="hfo", fuel_density=0.991, max_power=None, verbose=False)
+    alias = Vessel("petrol", fuel_type="petrol", max_power=None, verbose=False)
+
+    assert (hfo.fuel_type, hfo.fuel_density) == ("hfo", FUELS["hfo"].density)
+    assert (measured.fuel_type, measured.fuel_density) == ("hfo", 0.991)
+    assert alias.fuel_type == "unleaded"
+
+
+def test_a_fuel_of_its_own_and_a_wrong_fuel():
+    own = Fuel("Blend", density=0.9, lcv=41.5, cf_co2=3.15)
+    vessel = Vessel("own", fuel_type=own, max_power=None, verbose=False)
+
+    assert (vessel.fuel_type, vessel.fuel_density) == ("Blend", 0.9)
+    with pytest.raises(KeyError, match="Unknown fuel type"):
+        Vessel("ship", fuel_type="kerosene", max_power=None, verbose=False)
+    with pytest.raises(ValueError, match="positive"):
+        Vessel("ship", fuel_density=0.0, max_power=None, verbose=False)
 
 
 def test_a_vessel_without_consumption_model_is_reported():
@@ -144,14 +167,12 @@ def test_a_vessel_without_consumption_model_is_reported():
         vessel.consumption(QUERY)
 
 
-def test_a_missing_sfoc_is_zero_until_0_4():
+def test_a_missing_sfoc_is_reported():
     vessel = Vessel("ship", max_power=None, verbose=False)
     vessel.add_function("bhp", cubic, ["stw"])
 
-    with pytest.warns(DeprecationWarning, match="no sfoc"):
-        consumption = values(vessel.consumption(QUERY))
-
-    assert consumption["hourly_consumption"] == pytest.approx(0.0)
+    with pytest.raises(ValueError, match="needs sfoc"):
+        vessel.consumption(QUERY)
 
 
 def test_a_missing_hotel_load_is_reported():
@@ -172,7 +193,7 @@ def test_consumption_is_differentiable():
     rate = vessel.consumption({"stw": stw})["hourly_consumption"]
     gradient = ca.Function("gradient", [stw], [ca.jacobian(rate, stw)])
 
-    assert float(gradient(10.0)) == pytest.approx(3.0 * POLAR_POWER_COEFFICIENT * 100.0 * 180.0 / 1e3)
+    assert float(gradient(10.0)) == pytest.approx(3.0 * POLAR_POWER_COEFFICIENT * 100.0 * 180.0 / 1e3 / FUEL_DENSITY)
 
 
 def test_missing_polar_file_is_reported():

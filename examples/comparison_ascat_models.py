@@ -221,8 +221,9 @@ def compare_ascat_vs_models(
     
         # Interpolation
         model_si = atmos("si10", ascat_query)
-        model_u = atmos("u10", ascat_query)
-        model_v = atmos("v10", ascat_query)
+        # Queries give casadi DM columns: NumPy arrays for the NumPy functions below.
+        model_u = atmos("u10", ascat_query).full()
+        model_v = atmos("v10", ascat_query).full()
     
         model_wdir = (np.degrees(np.arctan2(model_u, model_v)).ravel() + 360.0) % 360.0
     

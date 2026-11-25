@@ -4,7 +4,7 @@ Compare ways of defining the consumption of a vessel, on a short-sea leg.
 
 The routing only needs the consumption of the vessel, its objective. The
 vessel gives it through the first of these models that it has:
-hourly_consumption (kg/h), total_power (kW) burnt at the sfoc, or bhp plus the
+hourly_consumption (L/h), total_power (kW) burnt at the sfoc, or bhp plus the
 hotel load burnt at the sfoc. Each model can be a function, a table or a
 constant, and the hotel load and sfoc can be numbers or models too.
 
@@ -29,11 +29,12 @@ import architeuthis.numpy as np
 from architeuthis.core import RoutingAnalysis, Voyage
 from architeuthis.forecast import DeterministicHerbieForecast, Topography
 from architeuthis.report import ReportCollection
+from architeuthis.fuels import FUELS
 from architeuthis.vessel import Vessel
 
 domain = {"min_lon": -8.0, "max_lon": 0.0, "min_lat": 42.0, "max_lat": 49.0}
 steps = list(range(0, 73, 3))
-recent = pd.Timestamp("now").floor("1d8h").floor("1d")  # latest 00 UTC run
+recent = (pd.Timestamp.now("UTC").tz_localize(None) - pd.Timedelta("9h")).floor("1d")  # latest 00 UTC run
 
 HOTEL_LOAD = 172.  # kW
 SFOC = 196.  # g/kWh
@@ -113,9 +114,11 @@ sfoc_model.add_function("sfoc", sfoc_curve, ["total_power"])
 total_power = Vessel("total_power", sfoc=SFOC, max_power=MAX_POWER)
 total_power.add_function("total_power", lambda x: dummy_bhp(x) + HOTEL_LOAD, polar_inputs)
 
-# 5. The fuel consumption itself, in kg/h: no power, so no power limit
+# 5. The fuel consumption itself, in L/h (kg/h over the fuel density, that of
+# marine diesel oil, the default fuel_type): no power, so no power limit
+FUEL_DENSITY = FUELS["mdo"].density # kg/L
 hourly = Vessel("hourly_consumption", max_power=None)
-hourly.add_function("hourly_consumption", lambda x: SFOC / 1e3 * (dummy_bhp(x) + HOTEL_LOAD), polar_inputs)
+hourly.add_function("hourly_consumption", lambda x: SFOC / 1e3 * (dummy_bhp(x) + HOTEL_LOAD) / FUEL_DENSITY, polar_inputs)
 
 vessels = [bhp_function, bhp_table, sfoc_model, total_power, hourly]
 

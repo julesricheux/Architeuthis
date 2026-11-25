@@ -181,3 +181,113 @@ def get_satellite_cmap(name="infra", quantity=None):
     cmap = mcolors.LinearSegmentedColormap.from_list(f"satellite_{name}", color_tuples, N=1024)
 
     return cmap, norm
+
+
+# Colour scales of the other forecast fields that the share page draws: a
+# matplotlib colormap and its range, in the units the page shows. A field
+# without a scale here is drawn with DEFAULT_FIELD_COLORMAP over most of
+# its values.
+FIELD_COLORMAPS = {
+    "current": ("viridis", 0.0, 3.0),  # kt
+    "pressure": ("RdYlBu_r", 960.0, 1050.0),  # hPa
+    "period": ("YlGnBu", 0.0, 20.0),  # s
+    "slope": ("magma", 0.0, 8.0),  # %
+    "temperature": ("RdYlBu_r", -30.0, 40.0),  # degC
+    "cape": ("inferno", 0.0, 3000.0),  # J/kg
+    "precipitation": ("YlGnBu", 0.0, 10.0),  # mm/h
+    "clouds": ("clouds", 0.0, 100.0),  # %, CLOUD_COVER_STOPS
+}
+DEFAULT_FIELD_COLORMAP = "viridis"
+
+# Windy's Clouds layer, which the share page draws from the total cloud
+# cover and the precipitation rate: the cover from a clear sky in olive
+# brown to an overcast white (%, read on its map), and the precipitation
+# over it in mm per CLOUD_RAIN_HOURS, on the steps of its legend.
+CLOUD_COVER_STOPS = (
+    (0.0, "#7d704b"),
+    (30.0, "#8e8770"),
+    (60.0, "#b0b0ab"),
+    (85.0, "#d8d8d8"),
+    (100.0, "#f2f2f2"),
+)
+CLOUD_RAIN_STOPS = (
+    (0.0, "#6f6f6f"),
+    (0.6, "#3c74a0"),
+    (6.0, "#3ba1a1"),
+    (8.0, "#3ba13d"),
+    (10.0, "#82a13b"),
+    (15.0, "#a1a13b"),
+    (20.0, "#a13b3b"),
+    (31.0, "#a13ba1"),
+    (50.0, "#a8a8a8"),
+)
+CLOUD_RAIN_HOURS = 3.0
+
+# Precipitation types, WMO GRIB2 code table 4.201, as IFS gives them in
+# `ptype`: label and colour, None for no precipitation.
+PRECIPITATION_TYPES = {
+    0: ("None", None),
+    1: ("Rain", "#3a86ff"),
+    2: ("Thunderstorm", "#8338ec"),
+    3: ("Freezing rain", "#ff006e"),
+    4: ("Mixed, ice", "#fb5607"),
+    5: ("Snow", "#ffffff"),
+    6: ("Wet snow", "#a8dadc"),
+    7: ("Rain and snow", "#90be6d"),
+    8: ("Ice pellets", "#ffbe0b"),
+    9: ("Graupel", "#f4a261"),
+    10: ("Hail", "#e63946"),
+    11: ("Drizzle", "#8ecae6"),
+    12: ("Freezing drizzle", "#f72585"),
+}
+
+
+def get_field_cmap(name, low=None, high=None):
+    """
+    The colormap of a forecast field of `FIELD_COLORMAPS`.
+
+    Args:
+        name: A key of `FIELD_COLORMAPS`, or any other name for
+            `DEFAULT_FIELD_COLORMAP`, which then needs `low` and
+            `high`.
+        low: Value of the first colour, instead of that of the scale.
+        high: Value of the last colour, instead of that of the scale.
+
+    Returns:
+        The colormap and its norm.
+
+    Example:
+        cmap, norm = get_field_cmap("cape")
+    """
+    from matplotlib import colormaps
+
+    colormap, first, last = FIELD_COLORMAPS.get(name, (DEFAULT_FIELD_COLORMAP, low, high))
+    low = first if low is None else low
+    high = last if high is None else high
+    if low is None or high is None:
+        raise ValueError(f"{name} has no colour scale of its own: give low and high.")
+    return named_cmap(colormap), mcolors.Normalize(vmin=low, vmax=high)
+
+
+def named_cmap(name):
+    """
+    A colormap by name: one of matplotlib, or "clouds".
+
+    Args:
+        name: A matplotlib colormap, or "clouds", the cloud cover
+            of `CLOUD_COVER_STOPS` from 0 to 1.
+
+    Returns:
+        The colormap.
+
+    Example:
+        cmap = named_cmap("clouds")
+    """
+    from matplotlib import colormaps
+
+    if name == "clouds":
+        top = CLOUD_COVER_STOPS[-1][0]
+        return mcolors.LinearSegmentedColormap.from_list(
+            "clouds", [(value / top, colour) for value, colour in CLOUD_COVER_STOPS]
+        )
+    return colormaps[name]

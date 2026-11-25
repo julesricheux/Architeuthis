@@ -484,7 +484,7 @@ def plot_report(report, save_as=None, show=True, figsize=A4_PORTRAIT, dpi=300, y
             panels["bhp"].set_ylabel("Total power / kW")
         else:
             panels["bhp"].step(ctim, onp.asarray(report["hourly_consumption"], dtype=float), color=C0, **step_kw)
-            panels["bhp"].set_ylabel("Consumption / kg/h")
+            panels["bhp"].set_ylabel("Consumption / L/h")
         panels["bhp"].set_ylim(0., None)
 
         # 4. SWH
@@ -887,7 +887,13 @@ def plot_fuel_distribution(groups, horizontal=False, figsize=(8, 3), save_as=Non
 
     Returns:
         The figure.
+
+    Raises:
+        ValueError: A group holds no report.
     """
+    empty = [label for label, group in groups.items() if len(group) == 0]
+    if empty:
+        raise ValueError(f"No report to plot in {', '.join(map(str, empty))}.")
     data = [[report["fuel"] for report in group] for group in groups.values()]
 
     with plot_style():
@@ -932,9 +938,13 @@ _FOG_HEIGHT = 0.15  # part of the low row
 _SKY_CMAP = matplotlib.colors.ListedColormap(plt.get_cmap("Greys")(onp.linspace(0.0, 0.8, 256)))
 
 # Smooth style: sky by day and by night, top and horizon, and clouds lit
-# and in shade.
+# and in shade. The night is only a hint: a darker blue, from the Sun at
+# _TWILIGHT[0] deg (civil twilight) to day at _TWILIGHT[1] (sunset), and
+# the clouds keep _NIGHT_CLOUD_LIGHT of their brightness in it.
 _DAY_SKY = ((0.18, 0.44, 0.73), (0.74, 0.87, 0.96))
-_NIGHT_SKY = ((0.07, 0.13, 0.27), (0.24, 0.32, 0.48))
+_NIGHT_SKY = ((0.10, 0.23, 0.43), (0.42, 0.52, 0.67))
+_TWILIGHT = (-6.0, 0.0)
+_NIGHT_CLOUD_LIGHT = 0.85
 _CLOUD_LIT = onp.array([1.0, 1.0, 1.0])
 _CLOUD_SHADE = onp.array([0.33, 0.36, 0.42])
 _LIGHTNING_COLOR = "#ffd54f"
@@ -1462,7 +1472,7 @@ def _cirrus_strokes(layers, data, light_at):
             xs = x0 + column_width * 0.55 * s
             ys = y0 + 0.07 * s + 0.05 * _smoothstep(0.7, 1.0, s) ** 2
             lines.append(onp.column_stack((xs, ys)))
-            colors.append(to_rgba("white", 0.75 * (0.5 + 0.5 * light_at(x0))))
+            colors.append(to_rgba("white", 0.75 * (_NIGHT_CLOUD_LIGHT + (1.0 - _NIGHT_CLOUD_LIGHT) * light_at(x0))))
     return lines, colors
 
 
@@ -1512,7 +1522,7 @@ def _draw_sky_smooth(ax, data, labels, latitude, longitude):
         )
         from scipy.ndimage import gaussian_filter1d
 
-        daylight = gaussian_filter1d(_smoothstep(-10.0, 4.0, elevation), sigma=width / max(data.count, 1) * 0.4)
+        daylight = gaussian_filter1d(_smoothstep(*_TWILIGHT, elevation), sigma=width / max(data.count, 1) * 0.1)
     else:
         daylight = onp.ones(width)
     vertical = (rows / 3.0)[:, None, None]
@@ -1524,14 +1534,15 @@ def _draw_sky_smooth(ax, data, labels, latitude, longitude):
     layers = _genus_layers(data)
     alpha, darkness = _cloud_field(layers, data, x, rows)
     color = _CLOUD_LIT * (1.0 - darkness[..., None]) + _CLOUD_SHADE * darkness[..., None]
-    color = color * (0.5 + 0.5 * light)
+    dimmed = _NIGHT_CLOUD_LIGHT + (1.0 - _NIGHT_CLOUD_LIGHT) * light
+    color = color * dimmed
     opacity = (alpha ** 0.85)[..., None]
     image = background * (1.0 - opacity) + color * opacity
 
     # Fog: haze rising from the sea.
     fog = onp.interp(x, data.centers, data.fog.astype(float))
     haze = (fog[None, :] * (1.0 - _smoothstep(0.0, 0.25, rows))[:, None])[..., None]
-    image = image * (1.0 - 0.85 * haze) + onp.array([0.86, 0.87, 0.88]) * (0.5 + 0.5 * light) * 0.85 * haze
+    image = image * (1.0 - 0.85 * haze) + onp.array([0.86, 0.87, 0.88]) * dimmed * 0.85 * haze
 
     ax.imshow(
         onp.clip(image, 0.0, 1.0),

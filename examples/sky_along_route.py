@@ -29,7 +29,7 @@ from architeuthis.toolbox.geo_utils import great_circle_route
 
 domain = {"min_lon": -35.0, "max_lon": 0.0, "min_lat": 30.0, "max_lat": 55.0}
 steps = list(range(3, 121, 3))
-recent = pd.Timestamp("now").floor("1d8h").floor("1d")  # latest 00 UTC run
+recent = (pd.Timestamp.now("UTC").tz_localize(None) - pd.Timedelta("9h")).floor("1d")  # latest 00 UTC run
 
 # Brest to Ponta Delgada (Azores) at 12 kt, leaving at the first step
 departure = [48.2, -5.0]

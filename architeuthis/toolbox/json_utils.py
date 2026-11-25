@@ -4,7 +4,7 @@ JSON encoding of routing reports, which hold numpy arrays and scalars.
 
 This module only needs numpy, so reports can be written and read without
 the Dash stack. `CustomEncoder` and `custom_decoder` also remain
-importable from `wrappers.json_wrapper`.
+importable from `dux.json_wrapper`.
 """
 
 import json
