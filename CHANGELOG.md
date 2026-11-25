@@ -260,6 +260,7 @@ and this project follows Semantic Versioning https://semver.org
 - `RoutingAnalysis(options=...)` defaults to an empty dict, and `options={"include_gusts": ...}` raises a `ValueError` that asks for `variables=["gust"]`.
 - `sky.diagnose` finds the Cumulonimbus of the winter sea: showers (over 0.5 mm/h) with some CAPE (over 150 J/kg) in unstable air (lower-tropospheric stability under 14 K, `cb_stability`), or a CAPE over 1000 J/kg with the same rate. The former rule asked 1000 J/kg and 2 mm/h, or 2000 J/kg, which the North Atlantic hardly ever reaches outside summer: IFS and GFS over it in November gave a Cb at 0.004 % of points, against about 0.5 % now (IFS, 40 to 55 N), a tenth of those with rain. Ns gives way wherever there is a Cb, rather than wherever the CAPE is weak, and frontal rain, in stable air, stays Ns.
 - The plots of the printed report have more values on their vertical axes, about one every 24 pixels of their height, and the cloud plot those of `plot_sky` (0 to 2 km by 0.5, then 4, 6, 9 and 12 km).
+- Routes take saturated colours of mid lightness (`share.ROUTE_COLORS`) rather than bright pastels, easier to read on the maps, over the weather and on the printed report.
 
 ### Removed
 - `RoutingAnalysis(options={"include_gusts": ...})`, deprecated since 0.3.1: give `variables=["gust"]`.
