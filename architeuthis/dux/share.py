@@ -177,18 +177,21 @@ SKY_ENTRIES = (
     ("fog", "fog", 0),
 )
 
-# Route colours, chosen to stand out on the wind and wave scales.
+# Route colours: saturated and of mid lightness, to read on the dark and
+# light maps, over the wind and wave scales (with the white outline of
+# the routes) and on the white of the printed report, and distinct from
+# each other.
 ROUTE_COLORS = (
-    "#ffd60a",
-    "#ff4d6d",
-    "#4cc9f0",
-    "#80ffdb",
-    "#ff9e00",
-    "#e0aaff",
-    "#f1faee",
-    "#b5e48c",
-    "#ff70a6",
-    "#70d6ff",
+    "#ffb703",
+    "#e5383b",
+    "#1e88e5",
+    "#2a9d3f",
+    "#f3722c",
+    "#8e44ad",
+    "#00a6a6",
+    "#d81b78",
+    "#6a8d00",
+    "#3949ab",
 )
 
 # Entries of a report that are geometry, not tooltip variables.
