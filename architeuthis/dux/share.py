@@ -177,21 +177,22 @@ SKY_ENTRIES = (
     ("fog", "fog", 0),
 )
 
-# Route colours: saturated and of mid lightness, to read on the dark and
-# light maps, over the wind and wave scales (with the white outline of
-# the routes) and on the white of the printed report, and distinct from
-# each other.
+# Route colours: bright and distinct, after seaborn's "bright" palette
+# without its brown and grey, which vanish over the weather, and with the
+# lime of routing software, whose routes are vivid over their wind maps.
+# Neighbours differ most, since the routes compared are often in a row;
+# the white outline keeps the darker blue and violet readable on the dark
+# map.
 ROUTE_COLORS = (
-    "#ffb703",
-    "#e5383b",
-    "#1e88e5",
-    "#2a9d3f",
-    "#f3722c",
-    "#8e44ad",
-    "#00a6a6",
-    "#d81b78",
-    "#6a8d00",
-    "#3949ab",
+    "#ffc400",  # yellow
+    "#e8000b",  # red
+    "#00d7ff",  # cyan
+    "#1ac938",  # green
+    "#f14cc1",  # magenta
+    "#ff7c00",  # orange
+    "#023eff",  # blue
+    "#c6ff00",  # lime
+    "#8b2be2",  # violet
 )
 
 # Entries of a report that are geometry, not tooltip variables.
