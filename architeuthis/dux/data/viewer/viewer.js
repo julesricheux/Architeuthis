@@ -1940,6 +1940,11 @@
     return (unit <= 1 ? 1 : unit <= 2 ? 2 : unit <= 2.5 ? 2.5 : unit <= 5 ? 5 : 10) * power;
   }
 
+  // About how many y ticks a plot gets: 3 on screen, more on the taller
+  // printed plots, one per PRINT_TICK_SPACING pixels (reportPlots).
+  let tickCount = 3;
+  const PRINT_TICK_SPACING = 24;
+
   // The range of a plot over some series: `low` and `high` where given
   // (null leaves a bound free), else the extremes of the values with a
   // little room, and round ticks inside it.
@@ -1954,7 +1959,7 @@
     if (room < 1e-9) room = Math.max(0.5, 0.05 * Math.abs(to));
     low = low === null ? min - room : low;
     high = high === null ? Math.max(max + room, low + 1e-6) : high;
-    const step = niceStep(high - low, 3);
+    const step = niceStep(high - low, tickCount);
     const ticks = [];
     for (let tick = Math.ceil(low / step - 1e-9) * step; tick <= high + step * 1e-9; tick += step) ticks.push(Math.round(tick * 1e6) / 1e6);
     return { low, high, ticks };
@@ -2270,7 +2275,7 @@
         const frame = plotFrame(canvas, route, null);
         frame.y = (km) => frame.bottom - (kmToRow(km) / 3) * (frame.bottom - frame.top);
         drawSky(frame, route, route.sky);
-        drawGrid(frame, { ticks: [0, 2, 6, 12] });
+        drawGrid(frame, { ticks: printing ? [0, 0.5, 1, 1.5, 2, 4, 6, 9, 12] : [0, 2, 6, 12] });
         return frame;
       },
       readout(route, k) {
@@ -2966,12 +2971,14 @@
         const canvas = element("canvas");
         canvas.style.cssText = `display:block;width:${PRINT_WIDTH}px;height:${height}px`;
         box.append(canvas);
+        tickCount = Math.max(3, Math.round(height / PRINT_TICK_SPACING));
         const frame = plot.draw(canvas, route);
         markComments(frame, route, comments);
         return { plot, frame, legend: reportLegend(plot, route), image: canvas.toDataURL("image/png") };
       });
     } finally {
       printing = false;
+      tickCount = 3;
       if (theme === undefined) delete root.dataset.theme;
       else root.dataset.theme = theme;
       box.remove();
